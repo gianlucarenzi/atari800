@@ -511,6 +511,22 @@ void MEMORY_StateRead(UBYTE SaveVerbose, UBYTE StateVersion)
 		}
 	}
 
+	if (Atari800_machine_type == Atari800_MACHINE_XLXE && StateVersion >= 5) {
+		StateSav_ReadINT(&MEMORY_retrobitmegaram_num_banks, 1);
+		if (MEMORY_retrobitmegaram_num_banks > 0){
+			StateSav_ReadINT(&retrobitmegaram_curbank, 1);
+			if (StateVersion < 7) {
+				int temp;
+				/* Read max bank number, then increase by 1 to get number of banks. */
+				StateSav_ReadINT(&MEMORY_retrobitmegaram_num_banks, 1);
+				++ MEMORY_retrobitmegaram_num_banks;
+				StateSav_ReadINT(&temp, 1);
+			}
+			alloc_retrobitmegaram_memory();
+			StateSav_ReadUBYTE(retrobitmegaram_ram, MEMORY_retrobitmegaram_num_banks * 0x4000);
+		}
+	}
+
 	if (StateVersion >= 7)
 		/* Read amount of base RAM in kilobytes. */
 		StateSav_ReadINT(&base_ram_kb, 1);
@@ -1036,12 +1052,19 @@ static void RetroBitMegaRamPutByte(UWORD addr, UBYTE byte)
 {
 	int newbank;
 	/* */
-	if (addr != 0xd530) return;
-#ifdef DEBUG
-	Log_print("RetroBitMegaRamPutByte:%4X:%2X", addr, byte);
-#endif
+	if (addr != 0xd530) {
+		Log_print("RetroBitMegaRamPutByte: Invalid Address 0x%04x", addr);
+		return;
+	}
+	if (!retrobitmegaram_enable) {
+		Log_print("RetroBitMegaRamPutByte: NOT ENABLED\n");
+		return;
+	}
 	newbank = (byte&retrobitmegaram_current_bankmask);
 	if (newbank == retrobitmegaram_curbank) return;
+#ifdef DEBUG
+	Log_print("RetroBitMegaRamPutByte:%4X Activating Bank:%2X", addr, byte);
+#endif
 	memcpy(retrobitmegaram_ram + retrobitmegaram_curbank*0x4000, MEMORY_mem + 0x4000, 0x4000);
 	memcpy(MEMORY_mem + 0x4000, retrobitmegaram_ram + newbank*0x4000, 0x4000);
 	retrobitmegaram_curbank = newbank;
@@ -1052,6 +1075,7 @@ static UBYTE RetroBitMegaRamGetByte(UWORD addr, int no_side_effects)
 #ifdef DEBUG
 	Log_print("RetroBitMegaRam%4X",addr);
 #endif
+
 	return MEMORY_mem[addr];
 }
 
@@ -1185,7 +1209,7 @@ UBYTE MEMORY_HwGetByte(UWORD addr, int no_side_effects)
 			if (MEMORY_retrobitmegaram_num_banks > 0) {
 				if (retrobitmegaram_enable) {
 #ifdef DEBUG
-					Log_print("MEMORY_HwGetByte: MEGARAM ENABLE Call GetByte\n");
+					Log_print("MEMORY_HwGetByte: MEGARAM ENABLE Call GetByte");
 #endif
 					byte = RetroBitMegaRamGetByte(addr, no_side_effects);
 					break;
@@ -1193,7 +1217,7 @@ UBYTE MEMORY_HwGetByte(UWORD addr, int no_side_effects)
 			}
 		}
 #ifdef DEBUG
-		Log_print("MEMORY_HwGetByte: MEGARAM DISABLE or not XL/XE\n");
+		Log_print("MEMORY_HwGetByte: MEGARAM DISABLE or not XL/XE");
 #endif
 		byte = CARTRIDGE_GetByte(addr, no_side_effects);
 		break;
@@ -1279,7 +1303,7 @@ void MEMORY_HwPutByte(UWORD addr, UBYTE byte)
 						if (retrobitmegaram_enable) {
 							/* RetroBitLab MegaRam expansion for XL/XE */
 #ifdef DEBUG
-							Log_print("MEMORY_HwPutByte $D530: Put Memory in Expansion\n");
+							Log_print("MEMORY_HwPutByte $D530: Put Memory in Expansion");
 #endif
 							RetroBitMegaRamPutByte(addr, byte);
 						}
@@ -1287,7 +1311,7 @@ void MEMORY_HwPutByte(UWORD addr, UBYTE byte)
 					case 0xd531:
 						retrobitmegaram_enable = byte & 0x01;
 #ifdef DEBUG
-						Log_print("MEMORY_HwPutByte $D531: MEMORY IS %s\n", retrobitmegaram_enable == 1 ? "ENABLED" : "DISABLED");
+						Log_print("MEMORY_HwPutByte $D531: MEMORY IS %s", retrobitmegaram_enable == 1 ? "ENABLED" : "DISABLED");
 #endif
 						break;
 				}
