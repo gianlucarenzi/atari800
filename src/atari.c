@@ -224,6 +224,12 @@ void Atari800_Warmstart(void)
 		CPU_NMI();
 	}
 	else {
+		if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
+			if (MEMORY_retrobitmegaram_num_banks > 0) {
+				MEMORY_PutByte(0xd350, 0);
+				MEMORY_PutByte(0xd351, 0);
+			}
+		}
 		PBI_Reset();
 		PIA_Reset();
 		ANTIC_Reset();
@@ -606,6 +612,17 @@ int Atari800_Initialise(int *argc, char *argv[])
 				}
 				else a_m = TRUE;
 			}
+			else if (strcmp(argv[i], "-retrobit") == 0) {
+				if (i_a) {
+					int total_ram = Util_sscandec(argv[++i]);
+					MEMORY_retrobitmegaram_num_banks = (total_ram / 16);
+					if ((total_ram) % 16 != 0 || MEMORY_retrobitmegaram_num_banks > 256 || MEMORY_retrobitmegaram_num_banks < 0) {
+						Log_print("Invalid RetroBit Lab total RAM size");
+						return FALSE;
+					}
+				}
+				else a_m = TRUE;
+			}
 			else if (strcmp(argv[i], "-mapram") == 0)
 				MEMORY_enable_mapram = TRUE;
 			else if (strcmp(argv[i], "-no-mapram") == 0)
@@ -681,6 +698,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 					Log_print("\t-axlon <n>       Use Atari 800 Axlon memory expansion: <n> k total RAM");
 					Log_print("\t-axlon0f         Use Axlon shadow at 0x0fc0-0x0fff");
 					Log_print("\t-mosaic <n>      Use 400/800 Mosaic memory expansion: <n> k total RAM");
+					Log_print("\t-retrobit        Use XL/XE RetroBit Lab memory expansion: <n> k total RAM");
 					Log_print("\t-mapram          Enable MapRAM for Atari XL/XE");
 					Log_print("\t-no-mapram       Disable MapRAM");
 #ifdef R_IO_DEVICE
@@ -749,7 +767,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 		|| !AF80_Initialise(argc, argv)
 #endif
 #ifdef BIT3
-		|| !BIT3_Initialise(argc, argv) 
+		|| !BIT3_Initialise(argc, argv)
 #endif
 #ifdef NTSC_FILTER
 		|| !FILTER_NTSC_Initialise(argc, argv)
@@ -855,7 +873,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 		AF80_InsertRightCartridge();
 	}
 #endif
-	
+
 	/* Load Atari executable, if any */
 	if (run_direct != NULL)
 		BINLOAD_Loader(run_direct);
