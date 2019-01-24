@@ -260,6 +260,7 @@ static void SystemSettings(void)
 		UI_MENU_ACTION(MEMORY_RAM_320_COMPY_SHOP, "320 KB (Compy-Shop)"),
 		UI_MENU_ACTION(576, "576 KB"),
 		UI_MENU_ACTION(1088, "1088 KB"),
+		UI_MENU_ACTION(4096, "4096 KB (RetroBitLab)"),
 		UI_MENU_END
 	};
 	static UI_tMenuItem os800_menu_array[] = {
@@ -373,6 +374,7 @@ static void SystemSettings(void)
 		UI_MENU_ACTION(12, "1200XL option jumper J1:"),
 		UI_MENU_ACTION(13, "Keyboard:"),
 		UI_MENU_ACTION(14, "MapRAM:"),
+		UI_MENU_SUBMENU_SUFFIX(15, "RetroBitLab RAM:", NULL), 
 		UI_MENU_END
 	};
 
@@ -733,6 +735,7 @@ static void SystemSettings(void)
 				need_initialise = TRUE;
 			}
 			break;
+
 		default:
 			if (new_tv_mode != Atari800_tv_mode) {
 				Atari800_SetTVMode(new_tv_mode);
