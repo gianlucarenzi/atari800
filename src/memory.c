@@ -43,6 +43,7 @@
 #ifndef BASIC
 #include "statesav.h"
 #endif
+#include "retrobit_video.h"
 
 UBYTE MEMORY_mem[65536 + 2];
 
@@ -73,6 +74,9 @@ map_save save_map[2] = {
 };
 
 #endif /* PAGED_ATTRIB */
+
+#define DEBUG
+#undef DEBUG
 
 UBYTE MEMORY_basic[8192];
 UBYTE MEMORY_os[16384];
@@ -112,14 +116,10 @@ static int mosaic_current_num_banks = 0;
 static int mosaic_curbank = 0x3f;
 int MEMORY_mosaic_num_banks = 0;
 
-/* Retrobit MegaRam2/4 expansion XL/XE only */
-static void RetroBitMegaRamPutByte(UWORD addr, UBYTE byte);
-static UBYTE RetroBitMegaRamGetByte(UWORD addr, int no_side_effects);
-static UBYTE *retrobitmegaram_ram = NULL;
-static int retrobitmegaram_current_bankmask = 0;
-static int retrobitmegaram_enable = 0;
-int retrobitmegaram_curbank = 0;
-int MEMORY_retrobitmegaram_num_banks = 0x00;
+/* Retrobit Video Expansion XL/XE only */
+static void RetroBit_Video_PutByte(UWORD addr, UBYTE byte);
+static UBYTE RetroBit_Video_GetByte(UWORD addr, int no_side_effects);
+int MEMORY_retrobit_video_enable = FALSE;
 
 int MEMORY_enable_mapram = FALSE;
 
@@ -156,23 +156,6 @@ static void alloc_mosaic_memory(void){
 			free(mosaic_ram);
 			mosaic_ram = NULL;
 			mosaic_current_num_banks = 0;
-		}
-	}
-}
-
-static void alloc_retrobitmegaram_memory(void){
-	if (MEMORY_retrobitmegaram_num_banks > 0 && Atari800_machine_type == Atari800_MACHINE_XLXE) {
-		int size = MEMORY_retrobitmegaram_num_banks * 0x4000;
-		if (retrobitmegaram_ram == NULL || retrobitmegaram_current_bankmask != MEMORY_retrobitmegaram_num_banks - 1) {
-			retrobitmegaram_current_bankmask = MEMORY_retrobitmegaram_num_banks - 1;
-			retrobitmegaram_ram = (UBYTE *)Util_realloc(retrobitmegaram_ram, size);
-		}
-		memset(retrobitmegaram_ram, 0, size);
-	} else {
-		if (retrobitmegaram_ram != NULL) {
-			free(retrobitmegaram_ram);
-			retrobitmegaram_ram = NULL;
-			retrobitmegaram_current_bankmask = 0;
 		}
 	}
 }
@@ -325,10 +308,6 @@ void MEMORY_InitialiseMachine(void)
 					/* only ?fc0-?fff are used, but mark the whole page*/
 				}
 			}
-			if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-				/* Only BANKCTL & BANKSEL are affected */
-				if (MEMORY_retrobitmegaram_num_banks > 0) MEMORY_SetHARDWARE(0xd530, 0xd531);
-			}
 #else
 			MEMORY_readmap[0xd0] = GTIA_GetByte;
 			MEMORY_readmap[0xd1] = PBI_D1GetByte;
@@ -345,8 +324,9 @@ void MEMORY_InitialiseMachine(void)
 			MEMORY_writemap[0xd4] = ANTIC_PutByte;
 			MEMORY_writemap[0xd5] = CARTRIDGE_PutByte;
 			if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-				if (MEMORY_retrobitmegaram_num_banks > 0)
-					MEMORY_writemap[0xd5] = RetroBitMegaRamPutByte;
+				if (MEMORY_retrobit_video_enable == TRUE) {
+					MEMORY_readmap[0xd5] = RetroBit_Video_GetByte;
+					MEMORY_writemap[0xd5] = RetroBit_Video_PutByte;
 			}
 			MEMORY_writemap[0xd6] = PBI_D6PutByte;
 			MEMORY_writemap[0xd7] = PBI_D7PutByte;
@@ -365,10 +345,8 @@ void MEMORY_InitialiseMachine(void)
 	AllocXEMemory();
 	alloc_axlon_memory();
 	alloc_mosaic_memory();
-	alloc_retrobitmegaram_memory();
 	axlon_curbank = 0;
 	mosaic_curbank = 0x3f;
-	retrobitmegaram_curbank = 0;
 	AllocMapRAM();
 	Atari800_Coldstart();
 }
@@ -511,22 +489,6 @@ void MEMORY_StateRead(UBYTE SaveVerbose, UBYTE StateVersion)
 		}
 	}
 
-	if (Atari800_machine_type == Atari800_MACHINE_XLXE && StateVersion >= 5) {
-		StateSav_ReadINT(&MEMORY_retrobitmegaram_num_banks, 1);
-		if (MEMORY_retrobitmegaram_num_banks > 0){
-			StateSav_ReadINT(&retrobitmegaram_curbank, 1);
-			if (StateVersion < 7) {
-				int temp;
-				/* Read max bank number, then increase by 1 to get number of banks. */
-				StateSav_ReadINT(&MEMORY_retrobitmegaram_num_banks, 1);
-				++ MEMORY_retrobitmegaram_num_banks;
-				StateSav_ReadINT(&temp, 1);
-			}
-			alloc_retrobitmegaram_memory();
-			StateSav_ReadUBYTE(retrobitmegaram_ram, MEMORY_retrobitmegaram_num_banks * 0x4000);
-		}
-	}
-
 	if (StateVersion >= 7)
 		/* Read amount of base RAM in kilobytes. */
 		StateSav_ReadINT(&base_ram_kb, 1);
@@ -589,11 +551,12 @@ void MEMORY_StateRead(UBYTE SaveVerbose, UBYTE StateVersion)
 					MEMORY_writemap[i] = ANTIC_PutByte;
 					break;
 				case 0xd5:
-					if (MEMORY_retrobitmegaram_num_banks == 0) {
+					if (MEMORY_retrobit_video_enable == FALSE) {
 						MEMORY_readmap[i] = CARTRIDGE_GetByte;
 						MEMORY_writemap[i] = CARTRIDGE_PutByte;
 					} else {
-						MEMORY_writemap[0xd5] = RetroBitMegaRamPutByte;
+						MEMORY_readmap[0xd5] = RetroBit_Video_GetByte;
+						MEMORY_writemap[0xd5] = RetroBit_Video_PutByte;
 					}
 					break;
 				case 0xd6:
@@ -1042,41 +1005,21 @@ static UBYTE AxlonGetByte(UWORD addr, int no_side_effects)
 	return MEMORY_mem[addr];
 }
 
-/* RetroBit MegaRam banking scheme:
- * writing <1> to 0xD530 selects a bank.  All 8-bits are used for a
- * total of 256 banks.  Banks are 16k, at 0x4000-0x7fff.
- * The total ram was 16*numbanks k.  The RetroBit MegaRam does not homebank
- * on reset. nRST involved? Maybe it is possible...
- */
-static void RetroBitMegaRamPutByte(UWORD addr, UBYTE byte)
+static void RetroBit_Video_PutByte(UWORD addr, UBYTE byte)
 {
-	int newbank;
-	/* */
-	if (addr != 0xd530) {
-		Log_print("RetroBitMegaRamPutByte: Invalid Address 0x%04x", addr);
-		return;
-	}
-	if (!retrobitmegaram_enable) {
-		Log_print("RetroBitMegaRamPutByte: NOT ENABLED\n");
-		return;
-	}
-	newbank = (byte&retrobitmegaram_current_bankmask);
-	if (newbank == retrobitmegaram_curbank) return;
 #ifdef DEBUG
-	Log_print("RetroBitMegaRamPutByte:%4X Activating Bank:%2X", addr, byte);
+	Log_print("RetroBit_Video_PutByte:$%04X Data:$%02X", addr, byte);
 #endif
-	memcpy(retrobitmegaram_ram + retrobitmegaram_curbank*0x4000, MEMORY_mem + 0x4000, 0x4000);
-	memcpy(MEMORY_mem + 0x4000, retrobitmegaram_ram + newbank*0x4000, 0x4000);
-	retrobitmegaram_curbank = newbank;
+	retrobit_video_card_write(addr, byte);
 }
 
-static UBYTE RetroBitMegaRamGetByte(UWORD addr, int no_side_effects)
+static UBYTE RetroBit_Video_GetByte(UWORD addr, int no_side_effects)
 {
 #ifdef DEBUG
-	Log_print("RetroBitMegaRam%4X",addr);
+	Log_print("RetroBit_Video_GetByte $%04X",addr);
 #endif
-
-	return MEMORY_mem[addr];
+	no_side_effects = no_side_effects;
+	return retrobit_video_card_read(addr);
 }
 
 void MEMORY_Cart809fDisable(void)
@@ -1206,14 +1149,12 @@ UBYTE MEMORY_HwGetByte(UWORD addr, int no_side_effects)
 		break;
 	case 0xd500:				/* bank-switching cartridges, RTIME-8 */
 		if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-			if (MEMORY_retrobitmegaram_num_banks > 0) {
-				if (retrobitmegaram_enable) {
+			if (MEMORY_retrobit_video_enable == TRUE) {
 #ifdef DEBUG
-					Log_print("MEMORY_HwGetByte: MEGARAM ENABLE Call GetByte");
+					Log_print("MEMORY_HwGetByte: Get Byte");
 #endif
-					byte = RetroBitMegaRamGetByte(addr, no_side_effects);
+					byte = RetroBit_Video_GetByte(addr, no_side_effects);
 					break;
-				}
 			}
 		}
 #ifdef DEBUG
@@ -1297,23 +1238,15 @@ void MEMORY_HwPutByte(UWORD addr, UBYTE byte)
 		break;
 	case 0xd500:				/* bank-switching cartridges, RTIME-8 */
 		if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-			if (MEMORY_retrobitmegaram_num_banks > 0) {
-				switch (addr) {
-					case 0xd530:
-						if (retrobitmegaram_enable) {
-							/* RetroBitLab MegaRam expansion for XL/XE */
+			if (MEMORY_retrobit_video_enable == TRUE) {
+
+				switch (addr & 0x00ff) {
+					default:
 #ifdef DEBUG
-							Log_print("MEMORY_HwPutByte $D530: Put Memory in Expansion");
+							Log_print("MEMORY_HwPutByte $D5XX: Put Memory in Expansion @ $%02X", addr & 0x00ff);
 #endif
-							RetroBitMegaRamPutByte(addr, byte);
-						}
-						break;
-					case 0xd531:
-						retrobitmegaram_enable = byte & 0x01;
-#ifdef DEBUG
-						Log_print("MEMORY_HwPutByte $D531: MEMORY IS %s", retrobitmegaram_enable == 1 ? "ENABLED" : "DISABLED");
-#endif
-						break;
+							RetroBit_Video_PutByte(addr, byte);
+							break;
 				}
 			}
 		}
