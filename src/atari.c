@@ -29,7 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef HAVE_SIGNAL_H
+#if defined(HAVE_SIGNAL_H) && !defined(LIBATARI800)
+#define CTRL_C_HANDLER
 #include <signal.h>
 #endif
 #ifdef HAVE_UNISTD_H
@@ -73,6 +74,9 @@
 #include "monitor.h"
 #ifdef IDE
 #  include "ide.h"
+#endif
+#ifdef POKEYREC
+#include "pokeyrec.h"
 #endif
 #include "pia.h"
 #include "platform.h"
@@ -173,7 +177,7 @@ int Atari800_auto_frameskip = FALSE;
 static double benchmark_start_time;
 #endif
 
-#ifdef HAVE_SIGNAL
+#ifdef CTRL_C_HANDLER
 volatile sig_atomic_t sigint_flag = FALSE;
 
 static RETSIGTYPE sigint_handler(int num)
@@ -419,7 +423,10 @@ int Atari800_Initialise(int *argc, char *argv[])
 	/* try to find ROM images if the configuration file is not found
 	   or it does not specify some ROM paths (blank paths count as specified) */
 #ifndef ANDROID
-	SYSROM_FindInDir(".", TRUE); /* current directory */
+	{
+		char current_dir[FILENAME_MAX];
+		SYSROM_FindInDir(Util_getcwd(current_dir, FILENAME_MAX), TRUE);
+	}
 #if defined(unix) || defined(__unix__) || defined(__linux__)
 	SYSROM_FindInDir("/usr/share/atari800", TRUE);
 #endif
@@ -736,6 +743,9 @@ int Atari800_Initialise(int *argc, char *argv[])
 #ifdef IDE
 		|| !IDE_Initialise(argc, argv)
 #endif
+#ifdef POKEYREC
+		|| !POKEYREC_Initialise(argc, argv)
+#endif
 		|| !SIO_Initialise (argc, argv)
 		|| !CARTRIDGE_Initialise(argc, argv)
 		|| !CASSETTE_Initialise(argc, argv)
@@ -753,7 +763,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 		|| !AF80_Initialise(argc, argv)
 #endif
 #ifdef BIT3
-		|| !BIT3_Initialise(argc, argv)
+		|| !BIT3_Initialise(argc, argv) 
 #endif
 #ifdef NTSC_FILTER
 		|| !FILTER_NTSC_Initialise(argc, argv)
@@ -767,6 +777,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 #endif
 #if !defined(BASIC) && !defined(CURSES_BASIC)
 		|| !Screen_Initialise(argc, argv)
+		|| !UI_Initialise(argc, argv)
 #endif
 		/* Initialise Custom Chips */
 		|| !ANTIC_Initialise(argc, argv)
@@ -859,7 +870,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 		AF80_InsertRightCartridge();
 	}
 #endif
-
+	
 	/* Load Atari executable, if any */
 	if (run_direct != NULL)
 		BINLOAD_Loader(run_direct);
@@ -873,7 +884,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 	}
 #endif
 
-#ifdef HAVE_SIGNAL
+#ifdef CTRL_C_HANDLER
 	/* Install CTRL-C Handler */
 	signal(SIGINT, sigint_handler);
 #endif
@@ -950,10 +961,10 @@ int Atari800_Exit(int run_monitor)
 	}
 #endif /* STAT_UNALIGNED_WORDS */
 	restart = PLATFORM_Exit(run_monitor);
-#ifdef HAVE_SIGNAL
+#ifdef CTRL_C_HANDLER
 	/* If a user pressed Ctrl+C in the monitor, avoid immediate return to it. */
 	sigint_flag = FALSE;
-#endif /* HAVE_SIGNAL */
+#endif /* CTRL_C_HANDLER */
 #ifndef __PLUS
 	if (!restart) {
 		/* We'd better save the configuration before calling the *_Exit() functions -
@@ -984,6 +995,9 @@ int Atari800_Exit(int run_monitor)
 		SIO_Exit();	/* umount disks, so temporary files are deleted */
 #ifdef IDE
 		IDE_Exit();
+#endif
+#ifdef POKEYREC
+		POKEYREC_Exit();
 #endif
 		Devices_Exit();
 #ifdef R_IO_DEVICE
@@ -1222,13 +1236,13 @@ void Atari800_Frame(void)
 #ifndef BASIC
 	static int refresh_counter = 0;
 
-#ifdef HAVE_SIGNAL
+#ifdef CTRL_C_HANDLER
 	if (sigint_flag) {
 		sigint_flag = FALSE;
 		INPUT_key_code = AKEY_UI;
 		UI_alt_function = UI_MENU_MONITOR;
 	}
-#endif /* HAVE_SIGNAL */
+#endif /* CTRL_C_HANDLER */
 
 	switch (INPUT_key_code) {
 	case AKEY_COLDSTART:

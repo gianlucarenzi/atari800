@@ -376,7 +376,9 @@ void MEMORY_StateSave(UBYTE SaveVerbose)
 	/* Save amount of base RAM in kilobytes. */
 	temp = MEMORY_ram_size > 64 ? 64 : MEMORY_ram_size;
 	StateSav_SaveINT(&temp, 1);
+	STATESAV_TAG(base_ram);
 	StateSav_SaveUBYTE(&MEMORY_mem[0], 65536);
+	STATESAV_TAG(base_ram_attrib);
 #ifndef PAGED_ATTRIB
 	StateSav_SaveUBYTE(&MEMORY_attrib[0], 65536);
 #else
@@ -925,8 +927,8 @@ void MEMORY_HandlePORTB(UBYTE byte, UBYTE oldval)
 	}
 }
 
-/* Mosaic banking scheme: writing to 0xffc0+<n> selects ram bank <n>, if
- * that is past the last available bank, selects rom.  Banks are 4k,
+/* Mosaic banking scheme: writing to 0xffc0+<n> selects ram bank <n>, if 
+ * that is past the last available bank, selects rom.  Banks are 4k, 
  * located at 0xc000-0xcfff.  Tested: Rambrandt (drawing program), Topdos1.5.
  * Reverse engineered from software that uses it.  May be incorrect in some
  * details.  Unknown:  were there mirrors of the bank addresses?  Was the RAM
