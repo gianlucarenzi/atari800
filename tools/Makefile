@@ -164,12 +164,12 @@ ETAGS = etags
 CTAGS = ctags
 am__DIST_COMMON = $(srcdir)/Makefile.in $(top_srcdir)/depcomp
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
-ACLOCAL = ${SHELL} /home/debian/Progetti/ATARI/atari800-retrobit/missing aclocal-1.16
+ACLOCAL = ${SHELL} /home/gianluca/Progetti/ATARI/atari800/missing aclocal-1.16
 AMTAR = $${TAR-tar}
 AM_DEFAULT_VERBOSITY = 0
-AUTOCONF = ${SHELL} /home/debian/Progetti/ATARI/atari800-retrobit/missing autoconf
-AUTOHEADER = ${SHELL} /home/debian/Progetti/ATARI/atari800-retrobit/missing autoheader
-AUTOMAKE = ${SHELL} /home/debian/Progetti/ATARI/atari800-retrobit/missing automake-1.16
+AUTOCONF = ${SHELL} /home/gianluca/Progetti/ATARI/atari800/missing autoconf
+AUTOHEADER = ${SHELL} /home/gianluca/Progetti/ATARI/atari800/missing autoheader
+AUTOMAKE = ${SHELL} /home/gianluca/Progetti/ATARI/atari800/missing automake-1.16
 AWK = gawk
 CC = gcc
 CCAS = vasm
@@ -197,10 +197,10 @@ JAVACFLAGS =
 JAVAFLAGS = 
 LDFLAGS = 
 LIBOBJS = 
-LIBS = -lm -lpng -lz  -L/usr/lib/x86_64-linux-gnu -lSDL
+LIBS = -ltermcap -lm -lpng -lz  -L/usr/lib/x86_64-linux-gnu -lSDL
 LTLIBOBJS = 
 MAINT = 
-MAKEINFO = ${SHELL} /home/debian/Progetti/ATARI/atari800-retrobit/missing makeinfo
+MAKEINFO = ${SHELL} /home/gianluca/Progetti/ATARI/atari800/missing makeinfo
 MKDIR_P = /usr/bin/mkdir -p
 OBJEXT = o
 PACKAGE = atari800
@@ -221,10 +221,10 @@ STRIP =
 VERSION = 4.2.0
 WINDRES = :
 XMKMF = 
-abs_builddir = /home/debian/Progetti/ATARI/atari800-retrobit/tools
-abs_srcdir = /home/debian/Progetti/ATARI/atari800-retrobit/tools
-abs_top_builddir = /home/debian/Progetti/ATARI/atari800-retrobit
-abs_top_srcdir = /home/debian/Progetti/ATARI/atari800-retrobit
+abs_builddir = /home/gianluca/Progetti/ATARI/atari800/tools
+abs_srcdir = /home/gianluca/Progetti/ATARI/atari800/tools
+abs_top_builddir = /home/gianluca/Progetti/ATARI/atari800
+abs_top_srcdir = /home/gianluca/Progetti/ATARI/atari800
 ac_ct_CC = gcc
 ac_ct_WINDRES = 
 am__include = include
@@ -252,7 +252,7 @@ host_vendor = unknown
 htmldir = ${docdir}
 includedir = ${prefix}/include
 infodir = ${datarootdir}/info
-install_sh = ${SHELL} /home/debian/Progetti/ATARI/atari800-retrobit/install-sh
+install_sh = ${SHELL} /home/gianluca/Progetti/ATARI/atari800/install-sh
 libdir = ${exec_prefix}/lib
 libexecdir = ${exec_prefix}/libexec
 localedir = ${datarootdir}/locale
@@ -261,7 +261,7 @@ mandir = ${datarootdir}/man
 mkdir_p = $(MKDIR_P)
 oldincludedir = /usr/include
 pdfdir = ${docdir}
-prefix = /home/debian
+prefix = /home/gianluca
 program_transform_name = s,x,x,
 psdir = ${docdir}
 runstatedir = ${localstatedir}/run
@@ -288,9 +288,9 @@ $(srcdir)/Makefile.in:  $(srcdir)/Makefile.am  $(am__configure_deps)
 	      exit 1;; \
 	  esac; \
 	done; \
-	echo ' cd $(top_srcdir) && $(AUTOMAKE) --foreign tools/Makefile'; \
+	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu tools/Makefile'; \
 	$(am__cd) $(top_srcdir) && \
-	  $(AUTOMAKE) --foreign tools/Makefile
+	  $(AUTOMAKE) --gnu tools/Makefile
 Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	@case '$?' in \
 	  *config.status*) \
