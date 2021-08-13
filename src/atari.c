@@ -98,7 +98,7 @@
 #endif /* BASIC */
 #if defined(SOUND) && !defined(__PLUS)
 #include "pokeysnd.h"
-#include "sndsave.h"
+#include "multimedia.h"
 #include "sound.h"
 #endif
 #ifdef R_IO_DEVICE
@@ -567,9 +567,6 @@ int Atari800_Initialise(int *argc, char *argv[])
 		else if (strcmp(argv[i], "-turbo") == 0) {
 			Atari800_turbo = TRUE;
 		}
-		else if (strcmp(argv[i], "-retrobit") == 0) {
-			MEMORY_retrobit_video_enable = TRUE;
-		}
 		else {
 			/* parameters that take additional argument follow here */
 			int i_a = (i + 1 < *argc);		/* is argument available? */
@@ -693,7 +690,6 @@ int Atari800_Initialise(int *argc, char *argv[])
 					Log_print("\t-mosaic <n>      Use 400/800 Mosaic memory expansion: <n> k total RAM");
 					Log_print("\t-mapram          Enable MapRAM for Atari XL/XE");
 					Log_print("\t-no-mapram       Disable MapRAM");
-					Log_print("\t-retrobit        Use XL/XE RetroBit Lab Video Card expansion");
 #ifdef R_IO_DEVICE
 					Log_print("\t-rdevice [<dev>] Enable R: emulation (using serial device <dev>)");
 #endif
@@ -1004,7 +1000,7 @@ int Atari800_Exit(int run_monitor)
 		RDevice_Exit(); /* R: Device cleanup */
 #endif
 #ifdef SOUND
-		SndSave_CloseSoundFile();
+		Multimedia_CloseFile();
 #endif
 		MONITOR_Exit();
 #ifdef SDL
@@ -1330,6 +1326,9 @@ void Atari800_Frame(void)
 #endif /* BASIC */
 	POKEY_Frame();
 #ifdef SOUND
+#ifdef AVI_VIDEO_RECORDING
+	Multimedia_WriteVideo();
+#endif
 	Sound_Update();
 #endif
 	Atari800_nframes++;

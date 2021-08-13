@@ -80,7 +80,7 @@
 #endif /* BIT3 */
 #ifdef SOUND
 #include "pokeysnd.h"
-#include "sndsave.h"
+#include "multimedia.h"
 #include "sound.h"
 #endif /* SOUND */
 #ifdef DIRECTX
@@ -1007,14 +1007,14 @@ static void DiskManagement(void)
 
 int UI_SelectCartType(int k)
 {
-	UI_tMenuItem menu_array[CARTRIDGE_LAST_SUPPORTED+1] = { 0 };
+	UI_tMenuItem menu_array[CARTRIDGE_TYPE_COUNT] = { 0 };
 	int cart_entry;
 	int menu_entry = 0;
 	int option = 0;
 
 	UI_driver->fInit();
 
-	for (cart_entry = 1; cart_entry <= CARTRIDGE_LAST_SUPPORTED;
+	for (cart_entry = 1; cart_entry < CARTRIDGE_TYPE_COUNT;
 	     cart_entry++) {
 		if (CARTRIDGES[cart_entry].kb == k) {
 			menu_array[menu_entry].flags = UI_ITEM_ACTION;
@@ -1272,14 +1272,14 @@ static void CartManagement(void)
 #if defined(SOUND) && !defined(DREAMCAST)
 static void SoundRecording(void)
 {
-	if (!SndSave_IsSoundFileOpen()) {
+	if (!Multimedia_IsFileOpen()) {
 		int no = 0;
 		do {
 			char buffer[32];
 			snprintf(buffer, sizeof(buffer), "atari%03d.wav", no);
 			if (!Util_fileexists(buffer)) {
 				/* file does not exist - we can create it */
-				FilenameMessage(SndSave_OpenSoundFile(buffer)
+				FilenameMessage(Multimedia_OpenSoundFile(buffer)
 					? "Recording sound to file \"%s\""
 					: "Can't write to file \"%s\"", buffer);
 				return;
@@ -1288,18 +1288,54 @@ static void SoundRecording(void)
 		UI_driver->fMessage("All atariXXX.wav files exist!", 1);
 	}
 	else {
-		SndSave_CloseSoundFile();
+		Multimedia_CloseFile();
 		UI_driver->fMessage("Recording stopped", 1);
 	}
 }
+
+#ifdef AVI_VIDEO_RECORDING
+static void VideoRecording(void)
+{
+	if (!Multimedia_IsFileOpen()) {
+		int no = 0;
+		do {
+			char buffer[32];
+			snprintf(buffer, sizeof(buffer), "atari%03d.avi", no);
+			if (!Util_fileexists(buffer)) {
+				/* file does not exist - we can create it */
+				FilenameMessage(Multimedia_OpenVideoFile(buffer)
+					? "Recording video to file \"%s\""
+					: "Can't write to file \"%s\"", buffer);
+				return;
+			}
+		} while (++no < 1000);
+		UI_driver->fMessage("All atariXXX.avi files exist!", 1);
+	}
+	else {
+		Multimedia_CloseFile();
+		UI_driver->fMessage("Recording stopped", 1);
+	}
+}
+#endif /* AVI_VIDEO_RECORDING */
 #endif /* defined(SOUND) && !defined(DREAMCAST) */
 
 static int AutostartFile(void)
 {
 	static char filename[FILENAME_MAX];
 	if (UI_driver->fGetLoadFilename(filename, UI_atari_files_dir, UI_n_atari_files_dir)) {
-		if (AFILE_OpenFile(filename, TRUE, 1, FALSE))
+		int file_type = AFILE_OpenFile(filename, TRUE, 1, FALSE);
+		if (file_type != 0) {
+			int rom_kb;
+			if ((file_type & 0xff) == AFILE_ROM
+			    && (rom_kb = (file_type & ~0xff) >> 8) != 0) {
+				int cart_type = UI_SelectCartType(rom_kb);
+				if (cart_type == CARTRIDGE_NONE)
+					/* User chose nothing - go back to parent menu. */
+					return FALSE;
+				CARTRIDGE_SetTypeAutoReboot(&CARTRIDGE_main, cart_type);
+			}
 			return TRUE;
+		}
 		CantLoad(filename);
 	}
 	return FALSE;
@@ -4214,6 +4250,9 @@ void UI_Run(void)
 		UI_MENU_SUBMENU_ACCEL(UI_MENU_SOUND, "Sound Settings", "Alt+O"),
 #ifndef DREAMCAST
 		UI_MENU_ACTION_ACCEL(UI_MENU_SOUND_RECORDING, "Sound Recording Start/Stop", "Alt+W"),
+#ifdef AVI_VIDEO_RECORDING
+		UI_MENU_ACTION_ACCEL(UI_MENU_VIDEO_RECORDING, "Video Recording Start/Stop", "Alt+V"),
+#endif
 #endif
 #endif
 #ifndef CURSES_BASIC
@@ -4337,6 +4376,11 @@ void UI_Run(void)
 		case UI_MENU_SOUND_RECORDING:
 			SoundRecording();
 			break;
+#ifdef AVI_VIDEO_RECORDING
+		case UI_MENU_VIDEO_RECORDING:
+			VideoRecording();
+			break;
+#endif
 #endif
 #endif
 		case UI_MENU_SAVESTATE:

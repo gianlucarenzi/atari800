@@ -43,7 +43,6 @@
 #ifndef BASIC
 #include "statesav.h"
 #endif
-#include "retrobit_video.h"
 
 UBYTE MEMORY_mem[65536 + 2];
 
@@ -74,9 +73,6 @@ map_save save_map[2] = {
 };
 
 #endif /* PAGED_ATTRIB */
-
-#define DEBUG
-#undef DEBUG
 
 UBYTE MEMORY_basic[8192];
 UBYTE MEMORY_os[16384];
@@ -115,11 +111,6 @@ static UBYTE *mosaic_ram = NULL;
 static int mosaic_current_num_banks = 0;
 static int mosaic_curbank = 0x3f;
 int MEMORY_mosaic_num_banks = 0;
-
-/* Retrobit Video Expansion XL/XE only */
-static void RetroBit_Video_PutByte(UWORD addr, UBYTE byte);
-static UBYTE RetroBit_Video_GetByte(UWORD addr, int no_side_effects);
-int MEMORY_retrobit_video_enable = FALSE;
 
 int MEMORY_enable_mapram = FALSE;
 
@@ -323,11 +314,6 @@ void MEMORY_InitialiseMachine(void)
 			MEMORY_writemap[0xd3] = PIA_PutByte;
 			MEMORY_writemap[0xd4] = ANTIC_PutByte;
 			MEMORY_writemap[0xd5] = CARTRIDGE_PutByte;
-			if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-				if (MEMORY_retrobit_video_enable == TRUE) {
-					MEMORY_readmap[0xd5] = RetroBit_Video_GetByte;
-					MEMORY_writemap[0xd5] = RetroBit_Video_PutByte;
-			}
 			MEMORY_writemap[0xd6] = PBI_D6PutByte;
 			MEMORY_writemap[0xd7] = PBI_D7PutByte;
 			if (Atari800_machine_type == Atari800_MACHINE_800) {
@@ -520,6 +506,10 @@ void MEMORY_StateRead(UBYTE SaveVerbose, UBYTE StateVersion)
 						MEMORY_readmap[i] = CARTRIDGE_BountyBob2GetByte;
 						MEMORY_writemap[i] = CARTRIDGE_BountyBob2PutByte;
 					}
+					else if (i == 0xbf) {
+						MEMORY_readmap[i] = CARTRIDGE_5200SuperCartGetByte;
+						MEMORY_writemap[i] = CARTRIDGE_5200SuperCartPutByte;
+					}
 					/* else something's wrong, so we keep current values */
 				}
 				else {
@@ -553,13 +543,8 @@ void MEMORY_StateRead(UBYTE SaveVerbose, UBYTE StateVersion)
 					MEMORY_writemap[i] = ANTIC_PutByte;
 					break;
 				case 0xd5:
-					if (MEMORY_retrobit_video_enable == FALSE) {
-						MEMORY_readmap[i] = CARTRIDGE_GetByte;
-						MEMORY_writemap[i] = CARTRIDGE_PutByte;
-					} else {
-						MEMORY_readmap[0xd5] = RetroBit_Video_GetByte;
-						MEMORY_writemap[0xd5] = RetroBit_Video_PutByte;
-					}
+					MEMORY_readmap[i] = CARTRIDGE_GetByte;
+					MEMORY_writemap[i] = CARTRIDGE_PutByte;
 					break;
 				case 0xd6:
 					MEMORY_readmap[i] = PBI_D6GetByte;
@@ -1007,23 +992,6 @@ static UBYTE AxlonGetByte(UWORD addr, int no_side_effects)
 	return MEMORY_mem[addr];
 }
 
-static void RetroBit_Video_PutByte(UWORD addr, UBYTE byte)
-{
-#ifdef DEBUG
-	Log_print("RetroBit_Video_PutByte:$%04X Data:$%02X", addr, byte);
-#endif
-	retrobit_video_card_write(addr, byte);
-}
-
-static UBYTE RetroBit_Video_GetByte(UWORD addr, int no_side_effects)
-{
-#ifdef DEBUG
-	Log_print("RetroBit_Video_GetByte $%04X",addr);
-#endif
-	no_side_effects = no_side_effects;
-	return retrobit_video_card_read(addr);
-}
-
 void MEMORY_Cart809fDisable(void)
 {
 	if (cart809F_enabled) {
@@ -1104,15 +1072,14 @@ UBYTE MEMORY_HwGetByte(UWORD addr, int no_side_effects)
 	switch (addr & 0xff00) {
 	case 0x4f00:
 	case 0x8f00:
-		if (!no_side_effects)
-			CARTRIDGE_BountyBob1(addr);
-		byte = 0;
+		byte = CARTRIDGE_BountyBob1GetByte(addr, no_side_effects);
 		break;
 	case 0x5f00:
 	case 0x9f00:
-		if (!no_side_effects)
-			CARTRIDGE_BountyBob2(addr);
-		byte = 0;
+		byte = CARTRIDGE_BountyBob2GetByte(addr, no_side_effects);
+		break;
+	case 0xbf00:
+		byte = CARTRIDGE_5200SuperCartGetByte(addr, no_side_effects);
 		break;
 	case 0xd000:				/* GTIA */
 	case 0xc000:				/* GTIA - 5200 */
@@ -1150,18 +1117,6 @@ UBYTE MEMORY_HwGetByte(UWORD addr, int no_side_effects)
 		byte = ANTIC_GetByte(addr, no_side_effects);
 		break;
 	case 0xd500:				/* bank-switching cartridges, RTIME-8 */
-		if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-			if (MEMORY_retrobit_video_enable == TRUE) {
-#ifdef DEBUG
-					Log_print("MEMORY_HwGetByte: Get Byte");
-#endif
-					byte = RetroBit_Video_GetByte(addr, no_side_effects);
-					break;
-			}
-		}
-#ifdef DEBUG
-		Log_print("MEMORY_HwGetByte: MEGARAM DISABLE or not XL/XE");
-#endif
 		byte = CARTRIDGE_GetByte(addr, no_side_effects);
 		break;
 	case 0xff00:				/* Mosaic memory expansion for 400/800 */
@@ -1197,11 +1152,14 @@ void MEMORY_HwPutByte(UWORD addr, UBYTE byte)
 	switch (addr & 0xff00) {
 	case 0x4f00:
 	case 0x8f00:
-		CARTRIDGE_BountyBob1(addr);
+		CARTRIDGE_BountyBob1PutByte(addr, byte);
 		break;
 	case 0x5f00:
 	case 0x9f00:
-		CARTRIDGE_BountyBob2(addr);
+		CARTRIDGE_BountyBob2PutByte(addr, byte);
+		break;
+	case 0xbf00:
+		CARTRIDGE_5200SuperCartPutByte(addr, byte);
 		break;
 	case 0xd000:				/* GTIA */
 	case 0xc000:				/* GTIA - 5200 */
@@ -1239,19 +1197,6 @@ void MEMORY_HwPutByte(UWORD addr, UBYTE byte)
 		ANTIC_PutByte(addr, byte);
 		break;
 	case 0xd500:				/* bank-switching cartridges, RTIME-8 */
-		if (Atari800_machine_type == Atari800_MACHINE_XLXE) {
-			if (MEMORY_retrobit_video_enable == TRUE) {
-
-				switch (addr & 0x00ff) {
-					default:
-#ifdef DEBUG
-							Log_print("MEMORY_HwPutByte $D5XX: Put Memory in Expansion @ $%02X", addr & 0x00ff);
-#endif
-							RetroBit_Video_PutByte(addr, byte);
-							break;
-				}
-			}
-		}
 		CARTRIDGE_PutByte(addr, byte);
 		break;
 	case 0xff00:				/* Mosaic memory expansion for 400/800 */
