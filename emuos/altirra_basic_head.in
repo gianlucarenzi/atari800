@@ -12,7 +12,9 @@
  * without any warranty.
  */
 
+#include "config.h"
 #include "atari.h"
 
+#if 1
 UBYTE const ROM_altirra_basic[] =
 {

@@ -147,9 +147,12 @@
 #ifdef SDL
 #include "sdl/init.h"
 #endif
-#ifdef DIRECTX
-#include "win32\main.h"
-#endif
+#ifdef NETSIO
+#include "netsio.h"
+
+#define NETSIO_STARTUP_WAIT_TIMEOUT_MS 5000
+#define NETSIO_STARTUP_WAIT_POLL_MS 10
+#endif /* NETSIO */
 
 int Atari800_machine_type = Atari800_MACHINE_XLXE;
 
@@ -172,6 +175,7 @@ int Atari800_nframes = 0;
 int Atari800_refresh_rate = 1;
 int Atari800_collisions_in_skipped_frames = FALSE;
 int Atari800_turbo = FALSE;
+int Atari800_turbo_speed = 0; /* percentage speed or 0 for max turbo */
 int Atari800_start_in_monitor = FALSE;
 int Atari800_auto_frameskip = FALSE;
 
@@ -241,6 +245,10 @@ void Atari800_Warmstart(void)
 #ifdef __PLUS
 	HandleResetEvent();
 #endif
+#ifdef NETSIO
+	if (netsio_enabled)
+		netsio_warm_reset();
+#endif /* NETSIO */
 }
 
 void Atari800_Coldstart(void)
@@ -273,6 +281,10 @@ void Atari800_Coldstart(void)
 		BIT3_Reset();
 	}
 #endif
+#ifdef NETSIO
+	if(netsio_enabled)
+		netsio_cold_reset();
+#endif /* NETSIO */
 }
 
 int Atari800_LoadImage(const char *filename, UBYTE *buffer, int nbytes)
@@ -586,21 +598,52 @@ int Atari800_Initialise(int *argc, char *argv[])
 #ifdef STEREO_SOUND
 		else if (strcmp(argv[i], "-stereo") == 0) {
 			POKEYSND_stereo_enabled = TRUE;
-#ifdef SOUND_THIN_API
 			Sound_desired.channels = 2;
-#endif /* SOUND_THIN_API */
 		}
 		else if (strcmp(argv[i], "-nostereo") == 0) {
 			POKEYSND_stereo_enabled = FALSE;
-#ifdef SOUND_THIN_API
 			Sound_desired.channels = 1;
-#endif /* SOUND_THIN_API */
 		}
 #endif /* STEREO_SOUND */
 		else if (strcmp(argv[i], "-turbo") == 0) {
 			Atari800_turbo = TRUE;
 		}
-		else {
+#ifdef NETSIO
+		else if (strcmp(argv[i], "-netsio") == 0) {
+			/* Optional UDP port argument (default 9997). */
+			unsigned int port = 9997;
+			/* Disable patched SIO for all devices */
+			ESC_enable_sio_patch = Devices_enable_h_patch = Devices_enable_p_patch = Devices_enable_r_patch = FALSE;
+			if (i + 1 < *argc && argv[i + 1][0] != '-') {
+				int p = Util_sscandec(argv[i + 1]);
+				if (p >= 1 && p <= 65535) {
+					port = (unsigned int) p;
+					++i; /* consume the port argument */
+				}
+				else {
+					Log_print("Invalid netsio port '%s', using default 9997", argv[i + 1]);
+					++i; /* consume the invalid argument to avoid confusing other parsers */
+				}
+			}
+
+			if (netsio_init((uint16_t)port) < 0) {
+				Log_print("netsio: init failed");
+			} else {
+				int waited_ms = 0;
+				Log_print("netsio initialized with port %d", port);
+				while (!netsio_enabled && waited_ms < NETSIO_STARTUP_WAIT_TIMEOUT_MS) {
+					Util_sleep((double)NETSIO_STARTUP_WAIT_POLL_MS / 1000.0);
+					waited_ms += NETSIO_STARTUP_WAIT_POLL_MS;
+				}
+				if (netsio_enabled)
+					Log_print("netsio connected after %d ms", waited_ms);
+				else
+					Log_print("netsio not connected after %d ms, continuing startup",
+					          NETSIO_STARTUP_WAIT_TIMEOUT_MS);
+			}
+		}
+#endif /* NETSIO */
+			else {
 			/* parameters that take additional argument follow here */
 			int i_a = (i + 1 < *argc);		/* is argument available? */
 			int a_m = FALSE;			/* error, argument missing! */
@@ -728,7 +771,19 @@ int Atari800_Initialise(int *argc, char *argv[])
 #ifdef R_IO_DEVICE
 					Log_print("\t-rdevice [<dev>] Enable R: emulation (using serial device <dev>)");
 #endif
+#ifdef NETSIO
+					Log_print("\t-netsio [port]   Enable NetSIO emulation (for FujiNet-PC support). Optional UDP port, default 9997");
+#endif
+#ifdef STEREO_SOUND
+					Log_print("\t-stereo          Turn on emulation of two POKEYs");
+					Log_print("\t-nostereo        Turn off emulation of two POKEYs");
+#endif
 					Log_print("\t-turbo           Run emulated Atari as fast as possible");
+					Log_print("\t-monitor         Start emulated Atari in the monitor");
+#ifdef MONITOR_BREAK
+					Log_print("\t-bbrk            Break on BRK instruction");
+					Log_print("\t-bpc <addr>      Break on PC=<addr>");
+#endif
 #ifdef MONITOR_HINTS
 					Log_print("\t-label-file <f>  Load monitor labels from file <f>");
 #endif
@@ -870,6 +925,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 			case AFILE_XFD_GZ:
 			case AFILE_DCM:
 			case AFILE_PRO:
+			case AFILE_ATX:
 				j++;
 				break;
 			default:
@@ -937,7 +993,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 	benchmark_start_time = Util_time();
 #endif
 
-#if defined (SOUND) && defined(SOUND_THIN_API)
+#ifdef SOUND
 	if (Sound_enabled) {
 		/* Up to this point the Sound_enabled flag indicated that we _want_ to
 		   enable sound. From now on, the flag will indicate whether audio
@@ -951,7 +1007,7 @@ int Atari800_Initialise(int *argc, char *argv[])
 			/* Start sound if opening audio output was successful. */
 				Sound_Continue();
 	}
-#endif /* defined (SOUND) && defined(SOUND_THIN_API) */
+#endif /* SOUND */
 
 	return TRUE;
 }
@@ -1100,13 +1156,16 @@ void Atari800_Sync(void)
 	double deltatime = 1.0 / ((Atari800_tv_mode == Atari800_TV_PAL) ? Atari800_FPS_PAL : Atari800_FPS_NTSC);
 	double curtime;
 
-#ifdef SYNCHRONIZED_SOUND
+#if defined(SOUND) && !defined(__PLUS)
 	deltatime *= Sound_AdjustSpeed();
 #endif
 #ifdef ALTERNATE_SYNC_WITH_HOST
 	if (! UI_is_active)
 		deltatime *= Atari800_refresh_rate;
 #endif
+	if (Atari800_turbo && Atari800_turbo_speed > 0) {
+		deltatime /= Atari800_turbo_speed / 100.0;
+	}
 	lasttime += deltatime;
 	curtime = Util_time();
 	if (Atari800_auto_frameskip)
@@ -1351,6 +1410,7 @@ void Atari800_Frame(void)
 		Screen_DrawAtariSpeed(Util_time());
 		Screen_DrawDiskLED();
 		Screen_Draw1200LED();
+		Screen_DrawStatusText();
 #endif /* CURSES_BASIC */
 #ifdef DONT_DISPLAY
 		Atari800_display_screen = FALSE;
@@ -1392,7 +1452,7 @@ void Atari800_Frame(void)
 #ifdef ALTERNATE_SYNC_WITH_HOST
 	if (refresh_counter == 0)
 #endif
-		if (Atari800_turbo) {
+		if (Atari800_turbo && Atari800_turbo_speed == 0) {
 			/* No need to draw Atari frames with frequency higher than display
 			   refresh rate. */
 			static double last_display_screen_time = 0.0;
@@ -1551,15 +1611,8 @@ void Atari800_SetTVMode(int mode)
 		VIDEOMODE_SetVideoSystem(mode);
 #endif
 #ifdef SOUND
-#ifdef SOUND_THIN_API
 		if (Sound_enabled)
 			POKEYSND_Init(POKEYSND_FREQ_17_EXACT, Sound_out.freq, Sound_out.channels, Sound_out.sample_size == 2 ? POKEYSND_BIT16 : 0);
-#elif defined(SUPPORTS_SOUND_REINIT)
-		Sound_Reinit();
-#endif /* defined(SUPPORTS_SOUND_REINIT) */
 #endif /* SOUND */
-#if defined(DIRECTX)
-		SetTVModeMenuItem(mode);
-#endif
 	}
 }
