@@ -37,6 +37,10 @@
 
 /* Atari800 includes */
 #include "atari.h"
+#ifdef PBI_VERAX16
+#include "../pbi_verax16.h"
+#include "../vera_video.h"
+#endif
 #include "../input.h"
 #include "log.h"
 #include "monitor.h"
@@ -202,8 +206,13 @@ int main(int argc, char **argv)
 #endif
 		SDL_INPUT_Mouse();
 		Atari800_Frame();
-		if (Atari800_display_screen)
+		if (Atari800_display_screen) {
 			PLATFORM_DisplayScreen();
+#ifdef PBI_VERAX16
+			if (PBI_VERAX16_enabled)
+				VERA_VIDEO_Frame();
+#endif
+		}
 	}
 }
 
