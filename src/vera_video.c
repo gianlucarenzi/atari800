@@ -83,7 +83,7 @@ static int vera_open_window(void)
         return 0;
     }
 
-    vera_ren = SDL_CreateRenderer(vera_win, -1, 0);
+    vera_ren = SDL_CreateRenderer(vera_win, -1, SDL_RENDERER_SOFTWARE);
     if (!vera_ren) {
         Log_print("VERA_VIDEO: SDL_CreateRenderer: %s", SDL_GetError());
         SDL_DestroyWindow(vera_win);

@@ -191,7 +191,11 @@ UBYTE PBI_D1GetByte(UWORD addr, int no_side_effects)
 	if (result == PBI_NOT_HANDLED && PBI_PROTO80_enabled) result = PBI_PROTO80_D1GetByte(addr, no_side_effects);
 #endif
 #ifdef PBI_VERAX16
-	if (result == PBI_NOT_HANDLED && PBI_VERAX16_enabled) result = PBI_VERAX16_D1GetByte(addr, no_side_effects);
+	if (PBI_VERAX16_enabled) {
+		int r = PBI_VERAX16_D1GetByte(addr, no_side_effects);
+		if (r != PBI_NOT_HANDLED) return (UBYTE)r;
+		result = PBI_NOT_HANDLED;
+	}
 #endif
 	if(result != PBI_NOT_HANDLED) return (UBYTE)result;
 	/* Each bit of D1FF is set by one of the 8 PBI devices to signal IRQ */

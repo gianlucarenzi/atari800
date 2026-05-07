@@ -782,6 +782,8 @@ int PLATFORM_Keyboard(void)
 		} break;
 
 		case SDL_WINDOWEVENT:
+			if (SDL_VIDEO_wnd && event.window.windowID != SDL_GetWindowID(SDL_VIDEO_wnd))
+				break; /* ignore events from secondary windows (e.g. VERA) */
 			switch (event.window.event) {
 			case SDL_WINDOWEVENT_SIZE_CHANGED:
 			case SDL_WINDOWEVENT_RESIZED:

@@ -94,6 +94,7 @@ static UBYTE *verax16_rom               = NULL;
 static char   verax16_rom_filename[FILENAME_MAX] = "";
 
 int PBI_VERAX16_enabled = FALSE;
+static int verax16_cs    = FALSE;  /* chip select: TRUE after $D1FF written with device mask */
 
 /* ------------------------------------------------------------------ */
 /* VERA chip constants                                                  */
@@ -447,8 +448,10 @@ void PBI_VERAX16_Exit(void)
 
 void PBI_VERAX16_Reset(void)
 {
-    if (PBI_VERAX16_enabled)
+    if (PBI_VERAX16_enabled) {
+        verax16_cs = FALSE;
         vera_chip_reset();
+    }
 }
 
 int PBI_VERAX16_ReadConfig(char *string, char *ptr)
@@ -478,10 +481,9 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
 
 int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 {
-    int offset = (int)addr - (int)VERA_REG_BASE;
-    if (offset >= 0 && offset < (int)VERA_REG_COUNT)
-        return (int)vera_read_reg(offset, no_side_effects);
-    return PBI_NOT_HANDLED;
+    if (!verax16_cs)
+        return PBI_NOT_HANDLED;
+    return (int)vera_read_reg((int)addr & 0x1F, no_side_effects);
 }
 
 /* ------------------------------------------------------------------ */
@@ -490,9 +492,9 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 
 void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 {
-    int offset = (int)addr - (int)VERA_REG_BASE;
-    if (offset >= 0 && offset < (int)VERA_REG_COUNT)
-        vera_write_reg(offset, byte);
+    if (!verax16_cs)
+        return;
+    vera_write_reg((int)addr & 0x1F, byte);
 }
 
 /* ------------------------------------------------------------------ */
@@ -502,14 +504,21 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 
 int PBI_VERAX16_D1ffPutByte(UBYTE byte)
 {
-    if (!PBI_VERAX16_enabled || byte != verax16_pbi_mask)
+    if (!PBI_VERAX16_enabled)
         return PBI_NOT_HANDLED;
 
-    if (verax16_rom != NULL) {
-        memcpy(MEMORY_mem + 0xd800, verax16_rom, 0x800);
-        Log_print("VeraX16: ROM mapped at $D800 (MPD+EXSEL asserted)");
+    if (byte == verax16_pbi_mask) {
+        verax16_cs = TRUE;
+        if (verax16_rom != NULL) {
+            memcpy(MEMORY_mem + 0xd800, verax16_rom, 0x800);
+            Log_print("VeraX16: selected (CS=1), ROM mapped at $D800");
+        }
+        return 0;
     }
-    return 0;
+
+    /* Any other D1FF value deselects this device */
+    verax16_cs = FALSE;
+    return PBI_NOT_HANDLED;
 }
 
 /* Returns this device's IRQ status bit for the $D1FF read */
