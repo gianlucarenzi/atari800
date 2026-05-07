@@ -419,11 +419,24 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
 
     /* Optionally load OS handler ROM */
     if (verax16_rom_filename[0] != '\0') {
+        char cwd[FILENAME_MAX];
+        const char *cwd_str;
+
+        if (getcwd(cwd, sizeof(cwd)) != NULL)
+            cwd_str = cwd;
+        else
+            cwd_str = "(unknown)";
+
         verax16_rom = (UBYTE *)Util_malloc(0x800);
         if (!Atari800_LoadImage(verax16_rom_filename, verax16_rom, 0x800)) {
             free(verax16_rom);
             verax16_rom = NULL;
-            Log_print("VeraX16: WARNING - ROM not loaded (no $D800 handler)");
+            Log_print("VeraX16: WARNING - ROM not loaded from %s (cwd: %s)",
+                      verax16_rom_filename, cwd_str);
+            fprintf(stderr,
+                    "VeraX16: WARNING - cannot load ROM '%s' (cwd: %s). "
+                    "Use an absolute path or a path relative to the launch directory.\n",
+                    verax16_rom_filename, cwd_str);
         } else {
             Log_print("VeraX16: ROM loaded from %s", verax16_rom_filename);
         }
