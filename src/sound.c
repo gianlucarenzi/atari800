@@ -31,6 +31,9 @@
 #include "log.h"
 #include "platform.h"
 #include "pokeysnd.h"
+#ifdef PBI_VERAX16
+#include "pbi_verax16.h"
+#endif
 #include "util.h"
 
 #define DEBUG 0 || __MINT__
@@ -240,6 +243,9 @@ int Sound_Setup(void)
 #endif /* !SOUND_CALLBACK */
 
 	POKEYSND_Init(POKEYSND_FREQ_17_EXACT, Sound_out.freq, Sound_out.channels, Sound_out.sample_size == 2 ? POKEYSND_BIT16 : 0);
+#ifdef PBI_VERAX16
+	PBI_VERAX16_SoundInit(Sound_out.freq, Sound_out.channels, Sound_out.sample_size);
+#endif
 
 	Sound_SetLatency(Sound_latency);
 
@@ -261,6 +267,9 @@ void Sound_Exit(void)
 	if (Sound_enabled) {
 		PLATFORM_SoundExit();
 		Sound_enabled = FALSE;
+#ifdef PBI_VERAX16
+		PBI_VERAX16_SoundInit(0, 0, 0);
+#endif
 #ifndef SOUND_CALLBACK
 		free(process_buffer);
 		process_buffer = NULL;
@@ -402,6 +411,10 @@ static void UpdateSyncBuffer(void)
 
 	/* produce samples from the sound emulation */
 	samples_written = POKEYSND_UpdateProcessBuffer();
+#ifdef PBI_VERAX16
+	if (PBI_VERAX16_enabled && samples_written > 0)
+		PBI_VERAX16_SoundMix(POKEYSND_process_buffer, samples_written, Sound_out.channels, Sound_out.sample_size);
+#endif
 	bytes_written = Sound_out.sample_size * samples_written;
 
 	/* if there isn't enough room... */

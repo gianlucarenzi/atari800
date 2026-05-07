@@ -77,6 +77,7 @@
 #include "util.h"
 #include "log.h"
 #include "memory.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -147,6 +148,35 @@ static UBYTE vera_l1[7];        /* CONFIG, MAPBASE, TILEBASE, HSCROLL_L/H, VSCRO
 static UBYTE vera_audio_ctrl = 0;
 static UBYTE vera_audio_rate = 0;
 
+#define VERA_AUDIO_FIFO_SIZE   4096u
+#define VERA_AUDIO_FIFO_MASK   (VERA_AUDIO_FIFO_SIZE - 1u)
+#define VERA_AUDIO_AFLOW_MASK  0x08u
+#define VERA_PSG_VOICE_COUNT   16
+#define VERA_PSG_REG_BASE      0x1F9C0u
+#define VERA_DAC_RATE          (25000000.0 / 512.0)
+#define VERA_PCM_MIX_SCALE     0.50
+#define VERA_PSG_MIX_SCALE     2048.0
+
+static UBYTE vera_pcm_fifo[VERA_AUDIO_FIFO_SIZE];
+static unsigned int vera_pcm_fifo_read = 0;
+static unsigned int vera_pcm_fifo_write = 0;
+static unsigned int vera_pcm_fifo_count = 0;
+static int vera_pcm_loop = FALSE;
+static unsigned int vera_pcm_loop_base = 0;
+static unsigned int vera_pcm_loop_length = 0;
+static unsigned int vera_pcm_loop_pos = 0;
+static double vera_pcm_phase = 0.0;
+static int vera_pcm_current_left = 0;
+static int vera_pcm_current_right = 0;
+static int vera_pcm_current_valid = FALSE;
+
+static unsigned int vera_host_playback_freq = 0;
+static unsigned int vera_host_channels = 1;
+static int vera_host_sample_size = 2;
+
+static double vera_psg_phase[VERA_PSG_VOICE_COUNT];
+static UWORD vera_psg_noise_lfsr[VERA_PSG_VOICE_COUNT];
+
 /* SPI (stub — not used on the PBI card variant) */
 static UBYTE vera_spi_data = 0xFF;
 static UBYTE vera_spi_ctrl = 0;
@@ -179,6 +209,255 @@ static void vera_advance(int p)
     }
 }
 
+static void vera_update_irq(void)
+{
+    if (vera_isr & vera_ien)
+        PBI_IRQ |= verax16_pbi_mask;
+    else
+        PBI_IRQ &= ~verax16_pbi_mask;
+}
+
+static void vera_audio_update_aflow(void)
+{
+    if (vera_audio_rate != 0 && vera_pcm_fifo_count < (VERA_AUDIO_FIFO_SIZE / 4u))
+        vera_isr |= VERA_AUDIO_AFLOW_MASK;
+    else
+        vera_isr &= ~VERA_AUDIO_AFLOW_MASK;
+    vera_update_irq();
+}
+
+static void vera_audio_reset_state(void)
+{
+    int i;
+
+    vera_pcm_fifo_read = 0;
+    vera_pcm_fifo_write = 0;
+    vera_pcm_fifo_count = 0;
+    vera_pcm_loop = FALSE;
+    vera_pcm_loop_base = 0;
+    vera_pcm_loop_length = 0;
+    vera_pcm_loop_pos = 0;
+    vera_pcm_phase = 0.0;
+    vera_pcm_current_left = 0;
+    vera_pcm_current_right = 0;
+    vera_pcm_current_valid = FALSE;
+    memset(vera_pcm_fifo, 0, sizeof(vera_pcm_fifo));
+
+    for (i = 0; i < VERA_PSG_VOICE_COUNT; i++) {
+        vera_psg_phase[i] = 0.0;
+        vera_psg_noise_lfsr[i] = (UWORD)(0xACE1u ^ (UWORD)(i * 0x1111u));
+        if (vera_psg_noise_lfsr[i] == 0)
+            vera_psg_noise_lfsr[i] = 1;
+    }
+}
+
+static int vera_pcm_frame_bytes(void)
+{
+    int bytes = (vera_audio_ctrl & 0x20u) ? 2 : 1;
+    if (vera_audio_ctrl & 0x10u)
+        bytes *= 2;
+    return bytes;
+}
+
+static int vera_pcm_can_read_frame(void)
+{
+    int frame_bytes = vera_pcm_frame_bytes();
+
+    if (vera_pcm_loop)
+        return vera_pcm_loop_length >= (unsigned int)frame_bytes;
+    return vera_pcm_fifo_count >= (unsigned int)frame_bytes;
+}
+
+static int vera_pcm_read_byte(UBYTE *byte)
+{
+    if (vera_pcm_loop) {
+        if (vera_pcm_loop_length == 0u)
+            return FALSE;
+        *byte = vera_pcm_fifo[(vera_pcm_loop_base + vera_pcm_loop_pos) & VERA_AUDIO_FIFO_MASK];
+        vera_pcm_loop_pos++;
+        if (vera_pcm_loop_pos >= vera_pcm_loop_length)
+            vera_pcm_loop_pos = 0;
+        return TRUE;
+    }
+
+    if (vera_pcm_fifo_count == 0u)
+        return FALSE;
+
+    *byte = vera_pcm_fifo[vera_pcm_fifo_read];
+    vera_pcm_fifo_read = (vera_pcm_fifo_read + 1u) & VERA_AUDIO_FIFO_MASK;
+    vera_pcm_fifo_count--;
+    vera_audio_update_aflow();
+    return TRUE;
+}
+
+static void vera_pcm_reset_fifo(void)
+{
+    vera_pcm_fifo_read = 0;
+    vera_pcm_fifo_write = 0;
+    vera_pcm_fifo_count = 0;
+    vera_pcm_loop = FALSE;
+    vera_pcm_loop_base = 0;
+    vera_pcm_loop_length = 0;
+    vera_pcm_loop_pos = 0;
+    vera_pcm_phase = 0.0;
+    vera_pcm_current_left = 0;
+    vera_pcm_current_right = 0;
+    vera_pcm_current_valid = FALSE;
+    memset(vera_pcm_fifo, 0, sizeof(vera_pcm_fifo));
+    vera_audio_update_aflow();
+}
+
+static UBYTE vera_audio_ctrl_read(void)
+{
+    UBYTE ctrl = vera_audio_ctrl & 0x3Fu;
+
+    if (vera_pcm_fifo_count == 0u)
+        ctrl |= 0x40u;
+    if (vera_pcm_fifo_count >= VERA_AUDIO_FIFO_SIZE)
+        ctrl |= 0x80u;
+    return ctrl;
+}
+
+static void vera_audio_ctrl_write(UBYTE byte)
+{
+    int old_format = vera_audio_ctrl & 0x30u;
+
+    if ((byte & 0xC0u) == 0xC0u && vera_pcm_fifo_count > 0u) {
+        vera_pcm_loop = TRUE;
+        vera_pcm_loop_base = vera_pcm_fifo_read;
+        vera_pcm_loop_length = vera_pcm_fifo_count;
+        vera_pcm_loop_pos = 0;
+    }
+    else {
+        vera_pcm_loop = FALSE;
+        if (byte & 0x80u)
+            vera_pcm_reset_fifo();
+    }
+
+    vera_audio_ctrl = byte & 0x3Fu;
+    if ((old_format ^ vera_audio_ctrl) & 0x30u)
+        vera_pcm_current_valid = FALSE;
+}
+
+static void vera_audio_data_write(UBYTE byte)
+{
+    if (vera_pcm_fifo_count >= VERA_AUDIO_FIFO_SIZE)
+        return;
+
+    vera_pcm_fifo[vera_pcm_fifo_write] = byte;
+    vera_pcm_fifo_write = (vera_pcm_fifo_write + 1u) & VERA_AUDIO_FIFO_MASK;
+    vera_pcm_fifo_count++;
+    vera_audio_update_aflow();
+}
+
+static int vera_pcm_load_current_sample(void)
+{
+    UBYTE raw[4];
+
+    if (!vera_pcm_can_read_frame())
+        return FALSE;
+
+    if (vera_audio_ctrl & 0x20u) {
+        if (vera_audio_ctrl & 0x10u) {
+            if (!vera_pcm_read_byte(&raw[0]) || !vera_pcm_read_byte(&raw[1]) ||
+                !vera_pcm_read_byte(&raw[2]) || !vera_pcm_read_byte(&raw[3]))
+                return FALSE;
+            vera_pcm_current_left = (int)(SWORD)((UWORD)raw[0] | ((UWORD)raw[1] << 8));
+            vera_pcm_current_right = (int)(SWORD)((UWORD)raw[2] | ((UWORD)raw[3] << 8));
+        }
+        else {
+            SWORD mono;
+            if (!vera_pcm_read_byte(&raw[0]) || !vera_pcm_read_byte(&raw[1]))
+                return FALSE;
+            mono = (SWORD)((UWORD)raw[0] | ((UWORD)raw[1] << 8));
+            vera_pcm_current_left = (int)mono;
+            vera_pcm_current_right = (int)mono;
+        }
+    }
+    else {
+        if (vera_audio_ctrl & 0x10u) {
+            if (!vera_pcm_read_byte(&raw[0]) || !vera_pcm_read_byte(&raw[1]))
+                return FALSE;
+            vera_pcm_current_left = ((int)(signed char)raw[0]) << 8;
+            vera_pcm_current_right = ((int)(signed char)raw[1]) << 8;
+        }
+        else {
+            int mono;
+            if (!vera_pcm_read_byte(&raw[0]))
+                return FALSE;
+            mono = ((int)(signed char)raw[0]) << 8;
+            vera_pcm_current_left = mono;
+            vera_pcm_current_right = mono;
+        }
+    }
+
+    vera_pcm_current_valid = TRUE;
+    return TRUE;
+}
+
+static void vera_pcm_render_sample(int *left, int *right)
+{
+    double step;
+    double volume;
+    UBYTE rate = vera_audio_rate > 128u ? 128u : vera_audio_rate;
+
+    *left = 0;
+    *right = 0;
+
+    if (vera_host_playback_freq == 0u || rate == 0u || (vera_audio_ctrl & 0x0Fu) == 0u)
+        return;
+
+    if (!vera_pcm_current_valid && !vera_pcm_load_current_sample())
+        return;
+
+    volume = (double)(vera_audio_ctrl & 0x0Fu) / 15.0;
+    *left = (int)((double)vera_pcm_current_left * volume * VERA_PCM_MIX_SCALE);
+    *right = (int)((double)vera_pcm_current_right * volume * VERA_PCM_MIX_SCALE);
+
+    step = (VERA_DAC_RATE * (double)rate) / (128.0 * (double)vera_host_playback_freq);
+    vera_pcm_phase += step;
+    while (vera_pcm_phase >= 1.0) {
+        vera_pcm_phase -= 1.0;
+        if (!vera_pcm_load_current_sample()) {
+            vera_pcm_current_valid = FALSE;
+            vera_pcm_current_left = 0;
+            vera_pcm_current_right = 0;
+            break;
+        }
+    }
+}
+
+static void vera_psg_clock_noise(int voice, int steps)
+{
+    while (steps-- > 0) {
+        UWORD lfsr = vera_psg_noise_lfsr[voice];
+        UWORD feedback = (UWORD)(((lfsr >> 0) ^ (lfsr >> 1)) & 1u);
+        lfsr = (UWORD)((lfsr >> 1) | (feedback << 15));
+        if (lfsr == 0)
+            lfsr = 1;
+        vera_psg_noise_lfsr[voice] = lfsr;
+    }
+}
+
+static double vera_psg_wave_sample(int voice, UBYTE waveform, UBYTE pulse_width)
+{
+    double phase = vera_psg_phase[voice];
+
+    switch (waveform & 0x03u) {
+    case 0:
+        {
+            double duty = (double)(pulse_width + 1u) / 128.0;
+            return phase < duty ? 1.0 : -1.0;
+        }
+    case 1:
+        return phase * 2.0 - 1.0;
+    case 2:
+        return 1.0 - 4.0 * fabs(phase - 0.5);
+    default:
+        return (vera_psg_noise_lfsr[voice] & 1u) ? 1.0 : -1.0;
+    }
+}
+
 /* Soft reset: registers to defaults, VRAM contents preserved */
 static void vera_chip_reset(void)
 {
@@ -203,10 +482,11 @@ static void vera_chip_reset(void)
 
     vera_audio_ctrl = 0;
     vera_audio_rate = 0;
+    vera_audio_reset_state();
     vera_spi_data   = 0xFF;
     vera_spi_ctrl   = 0;
 
-    PBI_IRQ &= ~verax16_pbi_mask;
+    vera_update_irq();
 
     Log_print("VeraX16: VERA chip soft-reset");
 }
@@ -263,7 +543,7 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
         /* Layer 1 fixed: offsets 0x14-0x1A */
         if (offset >= 0x14 && offset <= 0x1A)
             return vera_l1[offset - 0x14];
-        if (offset == 0x1B) return vera_audio_ctrl;
+        if (offset == 0x1B) return vera_audio_ctrl_read();
         if (offset == 0x1C) return vera_audio_rate;
         if (offset == 0x1D) return 0x00;    /* AUDIO_DATA write-only */
         if (offset == 0x1E) return vera_spi_data;
@@ -308,11 +588,11 @@ static void vera_write_reg(int offset, UBYTE byte)
         break;
     case 0x06:
         vera_ien = byte;
+        vera_update_irq();
         break;
     case 0x07:  /* ISR — writing 1 clears corresponding status bit */
         vera_isr &= ~byte;
-        if (!(vera_isr & vera_ien))
-            PBI_IRQ &= ~verax16_pbi_mask;
+        vera_update_irq();
         break;
     case 0x08:
         vera_irqline = byte;
@@ -330,9 +610,12 @@ static void vera_write_reg(int offset, UBYTE byte)
         else if (offset >= 0x14 && offset <= 0x1A) {
             vera_l1[offset - 0x14] = byte;
         }
-        else if (offset == 0x1B) { vera_audio_ctrl = byte; }
-        else if (offset == 0x1C) { vera_audio_rate = byte; }
-        else if (offset == 0x1D) { /* AUDIO_DATA: PCM FIFO — stub */ }
+        else if (offset == 0x1B) { vera_audio_ctrl_write(byte); }
+        else if (offset == 0x1C) {
+            vera_audio_rate = byte > 128u ? 128u : byte;
+            vera_audio_update_aflow();
+        }
+        else if (offset == 0x1D) { vera_audio_data_write(byte); }
         else if (offset == 0x1E) { vera_spi_data = byte; }
         else if (offset == 0x1F) { vera_spi_ctrl = byte; }
         break;
@@ -551,7 +834,7 @@ void PBI_VERAX16_VSync(void)
         return;
     if (vera_ien & 0x01u) {     /* VSYNC interrupt enabled */
         vera_isr |= 0x01u;
-        PBI_IRQ  |= verax16_pbi_mask;
+        vera_update_irq();
         D(printf("VeraX16: VSYNC IRQ\n"));
     }
 }
@@ -585,6 +868,138 @@ void PBI_VERAX16_GetRegSnap(VERA_RegSnap *s)
 const UBYTE *PBI_VERAX16_GetVRAMPtr(void)
 {
     return vera_vram;
+}
+
+void PBI_VERAX16_SoundInit(unsigned int playback_freq, unsigned int channels, int sample_size)
+{
+    vera_host_playback_freq = playback_freq;
+    vera_host_channels = channels;
+    vera_host_sample_size = sample_size;
+}
+
+void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sample_size)
+{
+    typedef struct {
+        UWORD freq;
+        UBYTE vol_route;
+        UBYTE wave_pulse;
+    } VERA_PSGVoice;
+
+    VERA_PSGVoice voices[VERA_PSG_VOICE_COUNT];
+    int frames;
+    int frame;
+    int voice;
+    double psg_step_scale;
+    UBYTE *buffer8;
+    SWORD *buffer16;
+
+    if (!PBI_VERAX16_enabled || buffer == NULL || sndn <= 0 || channels == 0u ||
+        vera_host_playback_freq == 0u || (sample_size != 1 && sample_size != 2))
+        return;
+
+    if (vera_host_channels != 0u)
+        channels = vera_host_channels;
+    if (vera_host_sample_size == 1 || vera_host_sample_size == 2)
+        sample_size = vera_host_sample_size;
+
+    frames = sndn / (int)channels;
+    if (frames <= 0)
+        return;
+
+    for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++) {
+        ULONG base = VERA_PSG_REG_BASE + (ULONG)voice * 4u;
+        voices[voice].freq = (UWORD)((UWORD)vera_vram[base] | ((UWORD)vera_vram[base + 1u] << 8));
+        voices[voice].vol_route = vera_vram[base + 2u];
+        voices[voice].wave_pulse = vera_vram[base + 3u];
+    }
+
+    psg_step_scale = VERA_DAC_RATE / (131072.0 * (double)vera_host_playback_freq);
+    buffer8 = (UBYTE *)buffer;
+    buffer16 = (SWORD *)buffer;
+
+    for (frame = 0; frame < frames; frame++) {
+        int pcm_left = 0;
+        int pcm_right = 0;
+        int mix_left;
+        int mix_right;
+
+        vera_pcm_render_sample(&pcm_left, &pcm_right);
+        mix_left = pcm_left;
+        mix_right = pcm_right;
+
+        for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++) {
+            UBYTE vol = voices[voice].vol_route & 0x3Fu;
+            UBYTE waveform = (UBYTE)(voices[voice].wave_pulse >> 6);
+            UBYTE pulse_width = voices[voice].wave_pulse & 0x3Fu;
+            double increment;
+            int steps;
+            double sample;
+            int amp;
+
+            if (vol == 0u || voices[voice].freq == 0u)
+                continue;
+            if ((voices[voice].vol_route & 0xC0u) == 0u)
+                continue;
+
+            increment = (double)voices[voice].freq * psg_step_scale;
+            vera_psg_phase[voice] += increment;
+            steps = (int)vera_psg_phase[voice];
+            if (steps > 0) {
+                vera_psg_phase[voice] -= (double)steps;
+                if (waveform == 3u)
+                    vera_psg_clock_noise(voice, steps);
+            }
+
+            sample = vera_psg_wave_sample(voice, waveform, pulse_width);
+            amp = (int)(sample * ((double)vol / 63.0) * VERA_PSG_MIX_SCALE);
+
+            if (voices[voice].vol_route & 0x40u)
+                mix_left += amp;
+            if (voices[voice].vol_route & 0x80u)
+                mix_right += amp;
+        }
+
+        if (sample_size == 2) {
+            int index = frame * (int)channels;
+            if (channels == 1u) {
+                int mono = (mix_left + mix_right) / 2;
+                int mixed = (int)buffer16[index] + mono;
+                if (mixed > 32767) mixed = 32767;
+                else if (mixed < -32768) mixed = -32768;
+                buffer16[index] = (SWORD)mixed;
+            }
+            else {
+                int mixed_left = (int)buffer16[index] + mix_left;
+                int mixed_right = (int)buffer16[index + 1] + mix_right;
+                if (mixed_left > 32767) mixed_left = 32767;
+                else if (mixed_left < -32768) mixed_left = -32768;
+                if (mixed_right > 32767) mixed_right = 32767;
+                else if (mixed_right < -32768) mixed_right = -32768;
+                buffer16[index] = (SWORD)mixed_left;
+                buffer16[index + 1] = (SWORD)mixed_right;
+            }
+        }
+        else {
+            int index = frame * (int)channels;
+            if (channels == 1u) {
+                int mono = (mix_left + mix_right) / 2;
+                int mixed = (((int)buffer8[index] - 128) << 8) + mono;
+                if (mixed > 32767) mixed = 32767;
+                else if (mixed < -32768) mixed = -32768;
+                buffer8[index] = (UBYTE)((mixed >> 8) + 128);
+            }
+            else {
+                int mixed_left = (((int)buffer8[index] - 128) << 8) + mix_left;
+                int mixed_right = (((int)buffer8[index + 1] - 128) << 8) + mix_right;
+                if (mixed_left > 32767) mixed_left = 32767;
+                else if (mixed_left < -32768) mixed_left = -32768;
+                if (mixed_right > 32767) mixed_right = 32767;
+                else if (mixed_right < -32768) mixed_right = -32768;
+                buffer8[index] = (UBYTE)((mixed_left >> 8) + 128);
+                buffer8[index + 1] = (UBYTE)((mixed_right >> 8) + 128);
+            }
+        }
+    }
 }
 
 /*

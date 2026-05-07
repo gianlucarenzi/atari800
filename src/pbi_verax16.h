@@ -69,6 +69,9 @@ typedef struct {
 void            PBI_VERAX16_GetRegSnap(VERA_RegSnap *s);
 const UBYTE    *PBI_VERAX16_GetVRAMPtr(void);
 
+void PBI_VERAX16_SoundInit(unsigned int playback_freq, unsigned int channels, int sample_size);
+void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sample_size);
+
 extern int PBI_VERAX16_enabled;
 
 #endif /* PBI_VERAX16_H_ */
