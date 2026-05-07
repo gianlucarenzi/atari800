@@ -1406,6 +1406,7 @@ void Atari800_Frame(void)
 		basic_frame();
 #else
 		ANTIC_Frame(TRUE);
+		PBI_VSync();
 		INPUT_DrawMousePointer();
 		Screen_DrawAtariSpeed(Util_time());
 		Screen_DrawDiskLED();
