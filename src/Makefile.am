@@ -255,6 +255,9 @@ endif
 if WANT_PBI_BB
 atari800_SOURCES += pbi_bb.c pbi_bb.h
 endif
+if WANT_PBI_VERAX16
+atari800_SOURCES += pbi_verax16.c pbi_verax16.h vera_video.c vera_video.h
+endif
 if WANT_PBI_MIO_OR_BB
 atari800_SOURCES += pbi_scsi.c pbi_scsi.h
 endif
