@@ -44,6 +44,9 @@
 #ifdef PBI_PROTO80
 #include "pbi_proto80.h"
 #endif
+#ifdef PBI_VERAX16
+#include "pbi_verax16.h"
+#endif
 #ifdef AF80
 #include "af80.h"
 #endif
@@ -85,11 +88,17 @@ int PBI_Initialise(int *argc, char *argv[])
 #ifdef PBI_PROTO80
 		&& PBI_PROTO80_Initialise(argc, argv)
 #endif
+#ifdef PBI_VERAX16
+		&& PBI_VERAX16_Initialise(argc, argv)
+#endif
 	;
 }
 
 void PBI_Exit(void)
 {
+#ifdef PBI_VERAX16
+	PBI_VERAX16_Exit();
+#endif
 #ifdef PBI_PROTO80
 	PBI_PROTO80_Exit();
 #endif
@@ -124,6 +133,10 @@ int PBI_ReadConfig(char *string, char *ptr)
 	else if (PBI_PROTO80_ReadConfig(string, ptr)) {
 	}
 #endif
+#ifdef PBI_VERAX16
+	else if (PBI_VERAX16_ReadConfig(string, ptr)) {
+	}
+#endif
 	else return FALSE; /* no match */
 	return TRUE; /* matched something */
 }
@@ -142,6 +155,9 @@ void PBI_WriteConfig(FILE *fp)
 #ifdef PBI_PROTO80
 	PBI_PROTO80_WriteConfig(fp);
 #endif
+#ifdef PBI_VERAX16
+	PBI_VERAX16_WriteConfig(fp);
+#endif
 }
 
 void PBI_Reset(void)
@@ -150,6 +166,9 @@ void PBI_Reset(void)
 	PBI_D1PutByte(0xd1ff, 0);
 #ifdef PBI_XLD
 	if (PBI_XLD_enabled) PBI_XLD_Reset();
+#endif
+#ifdef PBI_VERAX16
+	if (PBI_VERAX16_enabled) PBI_VERAX16_Reset();
 #endif
 	PBI_IRQ = 0;
 }
@@ -171,6 +190,9 @@ UBYTE PBI_D1GetByte(UWORD addr, int no_side_effects)
 #ifdef PBI_PROTO80
 	if (result == PBI_NOT_HANDLED && PBI_PROTO80_enabled) result = PBI_PROTO80_D1GetByte(addr, no_side_effects);
 #endif
+#ifdef PBI_VERAX16
+	if (result == PBI_NOT_HANDLED && PBI_VERAX16_enabled) result = PBI_VERAX16_D1GetByte(addr, no_side_effects);
+#endif
 	if(result != PBI_NOT_HANDLED) return (UBYTE)result;
 	/* Each bit of D1FF is set by one of the 8 PBI devices to signal IRQ */
 	/* The XLD devices have been combined into a single handler */
@@ -179,6 +201,9 @@ UBYTE PBI_D1GetByte(UWORD addr, int no_side_effects)
 		result = 0;
 #ifdef PBI_XLD
 		if (PBI_XLD_enabled && !no_side_effects) result |= PBI_XLD_D1ffGetByte();
+#endif
+#ifdef PBI_VERAX16
+		if (PBI_VERAX16_enabled) result |= PBI_VERAX16_D1ffGetByte();
 #endif
 		/* add more devices here... */
 		return result;
@@ -212,6 +237,9 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 #ifdef PBI_PROTO_80
 		if (PBI_PROTO80_enabled) PBI_PROTO80_D1PutByte(addr, byte);
 #endif
+#ifdef PBI_VERAX16
+		if (PBI_VERAX16_enabled) PBI_VERAX16_D1PutByte(addr, byte);
+#endif
 		/* add more devices here... */
 	}
 	else if (addr == 0xd1ff) {
@@ -235,6 +263,13 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 #ifdef PBI_PROTO80
 			if (PBI_PROTO80_enabled && PBI_PROTO80_D1ffPutByte(byte) != PBI_NOT_HANDLED) {
 				/* handled */
+				fp_active = FALSE;
+				return;
+			}
+#endif
+#ifdef PBI_VERAX16
+			if (PBI_VERAX16_enabled && PBI_VERAX16_D1ffPutByte(byte) != PBI_NOT_HANDLED) {
+				/* handled - MPD+EXSEL active, ROM at $D800 */
 				fp_active = FALSE;
 				return;
 			}
@@ -316,6 +351,14 @@ void PBI_D7PutByte(UWORD addr, UBYTE byte)
 {
 	D(printf("PBI_D7PutByte:%4x <- %2x\n",addr,byte));
 	if (PBI_D6D7ram) MEMORY_mem[addr]=byte;
+}
+
+void PBI_VSync(void)
+{
+#ifdef PBI_VERAX16
+    if (PBI_VERAX16_enabled)
+        PBI_VERAX16_VSync();
+#endif
 }
 
 #ifndef BASIC

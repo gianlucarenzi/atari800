@@ -19,6 +19,7 @@ extern int PBI_IRQ;
 extern int PBI_D6D7ram;
 void PBI_StateSave(void);
 void PBI_StateRead(void);
+void PBI_VSync(void);
 #define PBI_NOT_HANDLED -1
 /* #define PBI_DEBUG */
 #endif /* PBI_H_ */
