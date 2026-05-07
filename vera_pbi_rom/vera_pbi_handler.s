@@ -123,7 +123,8 @@ CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars × 16 bytes)
 SCREEN_MAPBASE  = $D8           ; L1_MAPBASE  = SCREEN_ADDR >> 9   ($01B000>>9=$D8)
 SCREEN_TILEBASE = $FA           ; L1_TILEBASE = CHARSET_ADDR >> 9  ($01F000>>9=$F8 | height16=$02 => $FA)
 
-SCREEN_COLS     = 80
+SCREEN_COLS     = 80            ; visible display columns
+MAP_COLS        = 128           ; VERA map width (must match L1_CONFIG bits[5:4]=10)
 SCREEN_ROWS     = 25
 TEXT_COLOR      = $61           ; Colour attribute: white text on blue background
 
@@ -137,9 +138,10 @@ DC_VSTOP_VAL    = $DC           ; 220 (= 20 + 200 visible rows / 2 = 120? adjust
 ; Row 9,  col 26: "**** COMMANDER X16 VERA ****"  (28 chars, centred in 80)
 ; Row 12, col 30: "PBI VIDEO INTERFACE"           (19 chars)
 ; Row 15, col 37: "READY."                        (6 chars)
-BANNER1_ADDR    = SCREEN_ADDR + (9  * SCREEN_COLS * 2) + (26 * 2)
-BANNER2_ADDR    = SCREEN_ADDR + (12 * SCREEN_COLS * 2) + (30 * 2)
-BANNER3_ADDR    = SCREEN_ADDR + (15 * SCREEN_COLS * 2) + (37 * 2)
+; NOTE: row stride in VRAM = MAP_COLS * 2 = 256 bytes, NOT SCREEN_COLS * 2!
+BANNER1_ADDR    = SCREEN_ADDR + (9  * MAP_COLS * 2) + (26 * 2)
+BANNER2_ADDR    = SCREEN_ADDR + (12 * MAP_COLS * 2) + (30 * 2)
+BANNER3_ADDR    = SCREEN_ADDR + (15 * MAP_COLS * 2) + (37 * 2)
 
 ; ============================================================================
 ; Helper macro: write a zero-terminated string to VERA VRAM at a given
@@ -330,7 +332,7 @@ CLEAR_SCREEN:
     sta VERA_ADDR_H
     ldy #SCREEN_ROWS
 @Row:
-    ldx #SCREEN_COLS
+    ldx #MAP_COLS           ; write full map width (128), not just visible 80
 @Col:
     lda #' '
     sta VERA_DATA0          ; character
