@@ -297,6 +297,19 @@ INIT_VERA_SCREEN:
 
     jsr CLEAR_SCREEN
 
+    ; Force palette entry 1 = white (#FFF): byte0=GGGGBBBB=$FF, byte1=0000RRRR=$0F
+    ; VRAM address: $1FA00 + 1*2 = $1FA02
+    lda #$02
+    sta VERA_ADDR_L
+    lda #$FA
+    sta VERA_ADDR_M
+    lda #(VERA_INC1 | $01)      ; increment=1, bank=1
+    sta VERA_ADDR_H
+    lda #$FF
+    sta VERA_DATA0               ; G=$F, B=$F
+    lda #$0F
+    sta VERA_DATA0               ; R=$F
+
     PRINT_LINE BANNER1_ADDR, BannerLine1
     PRINT_LINE BANNER2_ADDR, BannerLine2
     PRINT_LINE BANNER3_ADDR, BannerLine3
