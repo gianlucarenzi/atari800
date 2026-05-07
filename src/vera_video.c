@@ -42,9 +42,9 @@
 #define VERA_W 640
 #define VERA_H 480
 
-static SDL_Window   *vera_win  = NULL;
-static SDL_Renderer *vera_ren  = NULL;
-static SDL_Texture  *vera_tex  = NULL;
+static SDL_Window   *vera_win        = NULL;
+static SDL_Surface  *vera_win_surf   = NULL;
+static SDL_Surface  *vera_fb_surf    = NULL;
 static Uint32        vera_fb[VERA_W * VERA_H];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
@@ -76,37 +76,34 @@ static int vera_open_window(void)
                                 SDL_WINDOWPOS_UNDEFINED,
                                 SDL_WINDOWPOS_UNDEFINED,
                                 VERA_W, VERA_H,
-                                SDL_WINDOW_HIDDEN);
+                                SDL_WINDOW_SHOWN);
     if (!vera_win) {
         Log_print("VERA_VIDEO: SDL_CreateWindow: %s", SDL_GetError());
         vera_open = -1;
         return 0;
     }
 
-    vera_ren = SDL_CreateRenderer(vera_win, -1, SDL_RENDERER_SOFTWARE);
-    if (!vera_ren) {
-        Log_print("VERA_VIDEO: SDL_CreateRenderer: %s", SDL_GetError());
+    vera_win_surf = SDL_GetWindowSurface(vera_win);
+    if (!vera_win_surf) {
+        Log_print("VERA_VIDEO: SDL_GetWindowSurface: %s", SDL_GetError());
         SDL_DestroyWindow(vera_win);
         vera_win = NULL;
         vera_open = -1;
         return 0;
     }
 
-    vera_tex = SDL_CreateTexture(vera_ren,
-                                 SDL_PIXELFORMAT_ARGB8888,
-                                 SDL_TEXTUREACCESS_STREAMING,
-                                 VERA_W, VERA_H);
-    if (!vera_tex) {
-        Log_print("VERA_VIDEO: SDL_CreateTexture: %s", SDL_GetError());
-        SDL_DestroyRenderer(vera_ren);
+    vera_fb_surf = SDL_CreateRGBSurfaceWithFormatFrom(
+        vera_fb, VERA_W, VERA_H, 32, VERA_W * (int)sizeof(Uint32),
+        SDL_PIXELFORMAT_ARGB8888);
+    if (!vera_fb_surf) {
+        Log_print("VERA_VIDEO: SDL_CreateRGBSurfaceWithFormatFrom: %s", SDL_GetError());
         SDL_DestroyWindow(vera_win);
-        vera_ren = NULL;
         vera_win = NULL;
+        vera_win_surf = NULL;
         vera_open = -1;
         return 0;
     }
 
-    SDL_ShowWindow(vera_win);
     Log_print("VERA_VIDEO: window opened %dx%d", VERA_W, VERA_H);
     vera_open = 1;
     return 1;
@@ -233,10 +230,12 @@ void VERA_VIDEO_Frame(void)
     if (!vera_open_window())
         return;
 
-    SDL_UpdateTexture(vera_tex, NULL, vera_fb, VERA_W * (int)sizeof(Uint32));
-    SDL_RenderClear(vera_ren);
-    SDL_RenderCopy(vera_ren, vera_tex, NULL, NULL);
-    SDL_RenderPresent(vera_ren);
+    if (SDL_BlitSurface(vera_fb_surf, NULL, vera_win_surf, NULL) != 0) {
+        Log_print("VERA_VIDEO: SDL_BlitSurface: %s", SDL_GetError());
+        return;
+    }
+    if (SDL_UpdateWindowSurface(vera_win) != 0)
+        Log_print("VERA_VIDEO: SDL_UpdateWindowSurface: %s", SDL_GetError());
 }
 
 int VERA_VIDEO_Init(void)
@@ -246,9 +245,9 @@ int VERA_VIDEO_Init(void)
 
 void VERA_VIDEO_Exit(void)
 {
-    if (vera_tex) { SDL_DestroyTexture(vera_tex);  vera_tex = NULL; }
-    if (vera_ren) { SDL_DestroyRenderer(vera_ren); vera_ren = NULL; }
-    if (vera_win) { SDL_DestroyWindow(vera_win);   vera_win = NULL; }
+    if (vera_fb_surf) { SDL_FreeSurface(vera_fb_surf); vera_fb_surf = NULL; }
+    vera_win_surf = NULL;
+    if (vera_win) { SDL_DestroyWindow(vera_win); vera_win = NULL; }
     vera_open = 0;
 }
 

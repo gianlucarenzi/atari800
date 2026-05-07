@@ -36,6 +36,9 @@
 #include "pal_blending.h"
 #endif /* PAL_BLENDING */
 #include "pbi_proto80.h"
+#ifdef PBI_VERAX16
+#include "pbi_verax16.h"
+#endif
 #include "platform.h"
 #include "screen.h"
 #include "util.h"
@@ -537,6 +540,12 @@ int SDL_VIDEO_Initialise(int *argc, char *argv[])
 		return FALSE;
 
 	if (!help_only) {
+#if HAVE_OPENGL && SDL2 && defined(PBI_VERAX16)
+		if (PBI_VERAX16_enabled && SDL_VIDEO_opengl) {
+			Log_print("VERA_VIDEO: disabling Atari OpenGL output while VeraX16 is enabled");
+			currently_opengl = SDL_VIDEO_opengl = FALSE;
+		}
+#endif
 #if HAVE_WINDOWS_H && !SDL2
 		/* On Windows the DirectX SDL backend is glitchy in windowed modes, but allows
 		   for vertical synchronisation in fullscreen modes. Unless the user specified
