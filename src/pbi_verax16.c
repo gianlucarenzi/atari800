@@ -481,7 +481,10 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
 
 int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 {
-    return (int)vera_read_reg((int)addr & 0x1F, no_side_effects);
+    int offset = (int)addr - (int)VERA_REG_BASE;
+    if (offset < 0 || offset >= (int)VERA_REG_COUNT)
+        return PBI_NOT_HANDLED;
+    return (int)vera_read_reg(offset, no_side_effects);
 }
 
 /* ------------------------------------------------------------------ */
@@ -490,7 +493,9 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 
 void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 {
-    vera_write_reg((int)addr & 0x1F, byte);
+    int offset = (int)addr - (int)VERA_REG_BASE;
+    if (offset >= 0 && offset < (int)VERA_REG_COUNT)
+        vera_write_reg(offset, byte);
 }
 
 /* ------------------------------------------------------------------ */
