@@ -977,6 +977,12 @@ A8_OPTION(pbi_bb,yes,
      )
 AM_CONDITIONAL([WANT_PBI_BB], test "$WANT_PBI_BB" = "yes")
 
+A8_OPTION(pbi_verax16,no,
+      [Emulate the VeraX16 FPGA PBI video card (default=OFF)],
+      PBI_VERAX16,[Define to emulate the VeraX16 FPGA PBI video card.]
+     )
+AM_CONDITIONAL([WANT_PBI_VERAX16], test "$WANT_PBI_VERAX16" = "yes")
+
 if [[ "$SUPPORTS_NETSIO" = "yes" ]]; then
 A8_OPTION(netsio,yes,
        [Support NetSIO Protocol I/O interface (FujiNet) (default=ON)],
@@ -1501,6 +1507,7 @@ echo "Using ANSI color support in monitor?..: $WANT_MONITOR_ANSI"
 echo "Using event recording?................: $WANT_EVENT_RECORDING"
 echo "Using MIO emulation?..................: $WANT_PBI_MIO"
 echo "Using Black Box emulation?............: $WANT_PBI_BB"
+echo "Using VeraX16 PBI video card?.........: $WANT_PBI_VERAX16"
 echo "Using IDE emulation?..................: $WANT_IDE"
 echo "Using Pokey registers recording?......: $WANT_POKEYREC"
 if [[ "$SUPPORTS_NETSIO" = "yes" ]]; then
