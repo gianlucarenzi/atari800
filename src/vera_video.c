@@ -195,8 +195,6 @@ void VERA_VIDEO_Frame(void)
 {
     if (!PBI_VERAX16_enabled)
         return;
-    if (!vera_open_window())
-        return;
 
     VERA_RegSnap rs;
     PBI_VERAX16_GetRegSnap(&rs);
@@ -231,6 +229,9 @@ void VERA_VIDEO_Frame(void)
                           rs.l1[0], rs.l1[1], rs.l1[2],
                           rs.l1[3], rs.l1[4], rs.l1[5], rs.l1[6],
                           ax0, ay0, ax1, ay1);
+
+    if (!vera_open_window())
+        return;
 
     SDL_UpdateTexture(vera_tex, NULL, vera_fb, VERA_W * (int)sizeof(Uint32));
     SDL_RenderClear(vera_ren);
