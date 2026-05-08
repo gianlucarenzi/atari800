@@ -187,6 +187,8 @@ static UBYTE vera_spi_ctrl = 0;
 #define D(a) if (PBI_debug) a
 #endif
 
+#define Log_D(format, ...) D(Log_print(format, ##__VA_ARGS__))
+
 /* ------------------------------------------------------------------ */
 /* VERA internal helpers                                                */
 /* ------------------------------------------------------------------ */
@@ -509,21 +511,15 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
         return vera_addr_h[addrsel];
     case 0x03:  /* DATA0 — VRAM read through port 0 */
         {
-            ULONG a   = VERA_FULL_ADDR(0);
-            UBYTE val = vera_vram[a];
-            if (!no_side_effects) {
+            if (!no_side_effects)
                 vera_advance(0);
-                D(printf("VeraX16: VRAM[%05lx] -> %02x\n", (unsigned long)a, val));
-            }
-            return val;
+            return vera_vram[VERA_FULL_ADDR(0)];
         }
     case 0x04:  /* DATA1 — VRAM read through port 1 */
         {
-            ULONG a   = VERA_FULL_ADDR(1);
-            UBYTE val = vera_vram[a];
             if (!no_side_effects)
                 vera_advance(1);
-            return val;
+            return vera_vram[VERA_FULL_ADDR(1)];
         }
     case 0x05:  /* CTRL — RESET bit always reads 0 */
         return vera_ctrl & 0x7Fu;
@@ -568,12 +564,8 @@ static void vera_write_reg(int offset, UBYTE byte)
         vera_addr_h[addrsel] = byte;
         break;
     case 0x03:  /* DATA0 — VRAM write through port 0 */
-        {
-            ULONG a = VERA_FULL_ADDR(0);
-            D(printf("VeraX16: VRAM[%05lx] <- %02x\n", (unsigned long)a, byte));
-            vera_vram[a] = byte;
-            vera_advance(0);
-        }
+        vera_vram[VERA_FULL_ADDR(0)] = byte;
+        vera_advance(0);
         break;
     case 0x04:  /* DATA1 — VRAM write through port 1 */
         vera_vram[VERA_FULL_ADDR(1)] = byte;
@@ -835,7 +827,7 @@ void PBI_VERAX16_VSync(void)
     if (vera_ien & 0x01u) {     /* VSYNC interrupt enabled */
         vera_isr |= 0x01u;
         vera_update_irq();
-        D(printf("VeraX16: VSYNC IRQ\n"));
+        Log_D("VeraX16: VSYNC IRQ");
     }
 }
 

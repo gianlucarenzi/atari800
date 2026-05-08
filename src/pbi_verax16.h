@@ -5,7 +5,7 @@
  * interfaced as an Atari Parallel Bus Interface (PBI) device.
  *
  * Hardware memory map (when card is active via EXSEL/MPD):
- *   $D120-$D13F : VERA registers (32 registers, base mirrors X16 $9F20)
+ *   $D100-$D11F : VERA registers (32 registers, base mirrors X16 $9F20)
  *   $D1FF       : PBI device ID latch (shared, bit selected by verax16_pbi_num)
  *   $D800-$DFFF : VERA OS handler ROM (2KB, selected via $D1FF latch)
  *

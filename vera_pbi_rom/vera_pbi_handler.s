@@ -360,41 +360,79 @@ CLEAR_SCREEN:
 ; --------------------------------------------------------------------------
 ; LOAD_FULL_FONT — copy the full 128-char Atari font into VERA VRAM.
 ; Each charset slot is 16 bytes (8-row bitmap written twice).
+;
+; REMAPPING logic to convert ASCII order (VRAM) to Internal Atari order (ROM):
+;   ASCII 0-31   (Control)     <- Internal 64-95
+;   ASCII 32-95  (Space..._)   <- Internal 0-63
+;   ASCII 96-127 (Lower case)  <- Internal 96-127
+;
+; OPTIMIZED: Sets VERA address once and uses auto-increment.
 ; --------------------------------------------------------------------------
 
 LOAD_FULL_FONT:
-    lda #<CHARSET_ADDR
+    ; Set VERA start address for CHARSET slot 0 ($01F000)
+    lda #$00
     sta VERA_ADDR_L
-    lda #>CHARSET_ADDR
+    lda #$F0
     sta VERA_ADDR_M
-    lda #(VERA_INC1 | ^CHARSET_ADDR)
+    lda #(VERA_INC1 | $01)      ; increment=1, bank=1
     sta VERA_ADDR_H
 
-    ; Setup pointer to FontData in zero-page ($43-$44)
-    lda #<FontData
-    sta $43
-    lda #>FontData
-    sta $44
-
-    ldx #0                  ; X = character index (0-127)
+    ldx #0                  ; X = target ASCII character (0-127)
 @NextChar:
+    ; Map target ASCII X to Atari Internal Y
+    txa
+    cmp #32
+    bcc @ToControl          ; 0-31 -> 64-95
+    cmp #96
+    bcc @ToUpper            ; 32-95 -> 0-63
+    ; 96-127 stays 96-127
+    tay
+    jmp @SetSource
+
+@ToControl:
+    clc
+    adc #64                 ; 0-31 -> 64-95
+    tay
+    jmp @SetSource
+
+@ToUpper:
+    sec
+    sbc #32                 ; 32-95 -> 0-63
+    tay
+
+@SetSource:
+    ; Calculate pointer to FontData[InternalY]
+    ; Address = FontData + Y * 8
+    ; Y is 0-127. X (ASCII code) is preserved.
+    
+    lda #0
+    sta $81                 ; temporary high byte of Y*8
+    
+    tya                     ; Y (Internal code)
+    asl                     ; *2
+    rol $81                 ; bit 7 of Y*2 into $81
+    asl                     ; *4
+    rol $81
+    asl                     ; *8
+    rol $81
+    
+    clc
+    adc #<FontData
+    sta $80
+    lda $81
+    adc #>FontData
+    sta $81
+
+    ; Copy 8 rows from FontData[InternalY]
     ldy #0
 @CopyRows:
-    lda ($43),y
+    lda ($80),y
     sta VERA_DATA0          ; write row twice for 16-pixel height
     sta VERA_DATA0
     iny
     cpy #8
     bne @CopyRows
-
-    ; Advance FontData pointer by 8
-    lda $43
-    clc
-    adc #8
-    sta $43
-    lda $44
-    adc #0
-    sta $44
 
     inx
     cpx #128

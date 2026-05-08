@@ -75,6 +75,8 @@ int PBI_debug = FALSE;
 #define D(a) if (PBI_debug) a
 #endif
 
+#define Log_D(format, ...) D(Log_print(format, ##__VA_ARGS__))
+
 int PBI_Initialise(int *argc, char *argv[])
 {
 	int i, j;
@@ -227,7 +229,7 @@ UBYTE PBI_D1GetByte(UWORD addr, int no_side_effects)
 		return result;
 	}
 	/* addr was not handled: */
-	D(printf("PBI_GetByte:%4x:%2x PC:%4x IRQ:%d\n",addr,result,CPU_regPC,CPU_IRQ));
+	Log_D("PBI_GetByte:%4x:%2x PC:%4x IRQ:%d",addr,result,CPU_regPC,CPU_IRQ);
 	return result; /* 0xff */
 }
 
@@ -248,7 +250,7 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 #endif
 	/* Remaining PBI devices cooperate, following spec */
 	if (addr != 0xd1ff) {
-		D(printf("PBI_PutByte:%4x <- %2x\n", addr, byte));
+		Log_D("PBI_PutByte:%4x <- %2x", addr, byte);
 #ifdef PBI_XLD
 		if (PBI_XLD_enabled) PBI_XLD_D1PutByte(addr, byte);
 #endif
@@ -262,11 +264,11 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 	}
 	else if (addr == 0xd1ff) {
 		/* D1FF pbi rom bank select */
-		D(printf("D1FF write:%x\n", byte));
+		Log_D("D1FF write:%x", byte);
 		if (D1FF_LATCH != byte) {
 			/* if it's not valid, ignore it */
 			if (byte != 0 && byte != 1 && byte != 2 && byte != 4 && byte != 8 && byte != 0x10 && byte !=0x20 && byte != 0x40 && byte != 0x80){
-				D(printf("*****INVALID d1ff write:%2x********\n",byte));
+				Log_D("*****INVALID d1ff write:%2x********",byte);
 				return;
 			}
 			/* otherwise, update the latch */
@@ -296,7 +298,7 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 			/* reactivate the floating point rom */
 			if (!fp_active) {
 				memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
-				D(printf("Floating point rom activated\n"));
+				Log_D("Floating point rom activated");
 				fp_active = TRUE;
 			}
 		}
@@ -358,7 +360,7 @@ void PBI_D6PutByte(UWORD addr, UBYTE byte)
 /* XLD/1090 has ram here */
 UBYTE PBI_D7GetByte(UWORD addr, int no_side_effects)
 {
-	D(printf("PBI_D7GetByte:%4x\n",addr));
+	Log_D("PBI_D7GetByte:%4x",addr);
 	if (PBI_D6D7ram) return MEMORY_mem[addr];
 	else return 0xff;
 }
@@ -367,7 +369,7 @@ UBYTE PBI_D7GetByte(UWORD addr, int no_side_effects)
 /* XLD/1090 has ram here */
 void PBI_D7PutByte(UWORD addr, UBYTE byte)
 {
-	D(printf("PBI_D7PutByte:%4x <- %2x\n",addr,byte));
+	Log_D("PBI_D7PutByte:%4x <- %2x",addr,byte);
 	if (PBI_D6D7ram) MEMORY_mem[addr]=byte;
 }
 
