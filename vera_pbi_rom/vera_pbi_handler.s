@@ -254,8 +254,8 @@ INIT_VERA_SCREEN:
     sta VERA_IEN
     sta VERA_ISR
 
-    ; Upload the sparse glyph set used by the banner text
-    jsr LOAD_BANNER_FONT
+    ; Upload the full Atari font (128 characters)
+    jsr LOAD_FULL_FONT
 
     ; Configure Layer 1: 128×64 tilemap, 8×8 tiles
     lda #VERA_MAP_128x64
@@ -358,80 +358,49 @@ CLEAR_SCREEN:
     rts
 
 ; --------------------------------------------------------------------------
-; LOAD_BANNER_FONT — copy the sparse glyph table into VERA charset VRAM.
-; Each GlyphTable entry: 1 byte char-code + 8 bytes bitmap.
-; Each charset slot is 16 bytes (8-row bitmap written twice: once per
-; 8×8 pixel row in the 16-pixel-tall glyph cell — tile height = 16).
+; LOAD_FULL_FONT — copy the full 128-char Atari font into VERA VRAM.
+; Each charset slot is 16 bytes (8-row bitmap written twice).
 ; --------------------------------------------------------------------------
 
-LOAD_BANNER_FONT:
-    ldx #$00
-@Next:
-    lda GlyphTable,x
-    beq @Done               ; end-of-table sentinel
-    jsr SET_GLYPH_ADDR      ; set VERA address for this char's bitmap slot
-    ; write 8 rows × 2 copies each = 16 bytes per glyph slot
-    lda GlyphTable+1,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+2,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+3,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+4,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+5,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+6,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+7,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    lda GlyphTable+8,x
-    sta VERA_DATA0
-    sta VERA_DATA0
-    txa
-    clc
-    adc #9                  ; advance to next 9-byte entry
-    tax
-    bne @Next               ; (X wraps → never zero during normal table)
-@Done:
-    rts
-
-; --------------------------------------------------------------------------
-; SET_GLYPH_ADDR — compute VERA VRAM address for character A's glyph slot.
-;
-; CHARSET_ADDR = $01F000; each slot = 16 bytes.
-; Address = CHARSET_ADDR + A * 16
-;   ADDR_L = (A & $0F) * 16        = lower nibble × 16
-;   ADDR_M = (A >> 4)  + $F0       = upper nibble + high byte of $01F000
-;   ADDR_H = VERA_INC1 | bank($01F000) = $10 | $01 = $11
-; --------------------------------------------------------------------------
-
-SET_GLYPH_ADDR:
-    pha
-    and #$0F                ; lower nibble of char code
-    asl
-    asl
-    asl
-    asl                     ; × 16
+LOAD_FULL_FONT:
+    lda #<CHARSET_ADDR
     sta VERA_ADDR_L
-    pla
-    lsr
-    lsr
-    lsr
-    lsr                     ; upper nibble of char code
-    clc
-    adc #>CHARSET_ADDR      ; + $F0 (bits 15:8 of $01F000)
+    lda #>CHARSET_ADDR
     sta VERA_ADDR_M
-    lda #(VERA_INC1 | ^CHARSET_ADDR)   ; $10 | $01 = $11
+    lda #(VERA_INC1 | ^CHARSET_ADDR)
     sta VERA_ADDR_H
+
+    ; Setup pointer to FontData in zero-page ($43-$44)
+    lda #<FontData
+    sta $43
+    lda #>FontData
+    sta $44
+
+    ldx #0                  ; X = character index (0-127)
+@NextChar:
+    ldy #0
+@CopyRows:
+    lda ($43),y
+    sta VERA_DATA0          ; write row twice for 16-pixel height
+    sta VERA_DATA0
+    iny
+    cpy #8
+    bne @CopyRows
+
+    ; Advance FontData pointer by 8
+    lda $43
+    clc
+    adc #8
+    sta $43
+    lda $44
+    adc #0
+    sta $44
+
+    inx
+    cpx #128
+    bne @NextChar
     rts
+
 
 ; --------------------------------------------------------------------------
 ; CIO GET BYTE — read VERA register at index ICAX1
@@ -502,33 +471,10 @@ BannerLine3:
     .asciiz "READY."
 
 ; --------------------------------------------------------------------------
-; GlyphTable — sparse font for banner characters.
-; Format: <char-code> <8 bytes of 8×1 bitmap rows>
-; Terminated by a single $00 byte.
+; FontData — Full 128-character Atari font
 ; --------------------------------------------------------------------------
 
-GlyphTable:
-    .byte ' ', $00,$00,$00,$00,$00,$00,$00,$00
-    .byte '*', $00,$66,$3C,$FF,$3C,$66,$00,$00
-    .byte '.', $00,$00,$00,$00,$00,$18,$18,$00
-    .byte '1', $18,$38,$18,$18,$18,$18,$7E,$00
-    .byte '6', $3C,$60,$60,$7C,$66,$66,$3C,$00
-    .byte 'A', $18,$3C,$66,$66,$7E,$66,$66,$00
-    .byte 'B', $7C,$66,$66,$7C,$66,$66,$7C,$00
-    .byte 'C', $3C,$66,$60,$60,$60,$66,$3C,$00
-    .byte 'D', $78,$6C,$66,$66,$66,$6C,$78,$00
-    .byte 'E', $7E,$60,$60,$7C,$60,$60,$7E,$00
-    .byte 'F', $7E,$60,$60,$7C,$60,$60,$60,$00
-    .byte 'I', $3C,$18,$18,$18,$18,$18,$3C,$00
-    .byte 'M', $63,$77,$7F,$6B,$63,$63,$63,$00
-    .byte 'N', $66,$76,$7E,$7E,$6E,$66,$66,$00
-    .byte 'O', $3C,$66,$66,$66,$66,$66,$3C,$00
-    .byte 'P', $7C,$66,$66,$7C,$60,$60,$60,$00
-    .byte 'R', $7C,$66,$66,$7C,$6C,$66,$66,$00
-    .byte 'T', $7E,$18,$18,$18,$18,$18,$18,$00
-    .byte 'V', $66,$66,$66,$66,$66,$3C,$18,$00
-    .byte 'X', $66,$66,$3C,$18,$3C,$66,$66,$00
-    .byte 'Y', $66,$66,$66,$3C,$18,$18,$18,$00
-    .byte $00                               ; end-of-table
+FontData:
+    .incbin "atari_font.bin"
 
 ; End of ROM
