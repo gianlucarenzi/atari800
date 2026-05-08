@@ -67,14 +67,28 @@ int PBI_D6D7ram = FALSE;
  * figure it out*/
 int PBI_IRQ = 0;
 
+int PBI_debug = FALSE;
+
 #ifdef PBI_DEBUG
 #define D(a) a
 #else
-#define D(a) do{}while(0)
+#define D(a) if (PBI_debug) a
 #endif
 
 int PBI_Initialise(int *argc, char *argv[])
 {
+	int i, j;
+	for (i = j = 1; i < *argc; i++) {
+		if (strcmp(argv[i], "-pbi-debug") == 0) {
+			PBI_debug = TRUE;
+		} else {
+			if (strcmp(argv[i], "-help") == 0)
+				Log_print("\t-pbi-debug         Enable runtime PBI D1xx access logging");
+			argv[j++] = argv[i];
+		}
+	}
+	*argc = j;
+
 	return TRUE
 #ifdef PBI_XLD
 		&& PBI_XLD_Initialise(argc, argv)

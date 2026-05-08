@@ -184,7 +184,7 @@ static UBYTE vera_spi_ctrl = 0;
 #ifdef PBI_DEBUG
 #define D(a) a
 #else
-#define D(a) do{}while(0)
+#define D(a) if (PBI_debug) a
 #endif
 
 /* ------------------------------------------------------------------ */

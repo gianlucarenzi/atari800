@@ -22,4 +22,5 @@ void PBI_StateRead(void);
 void PBI_VSync(void);
 #define PBI_NOT_HANDLED -1
 /* #define PBI_DEBUG */
+extern int PBI_debug;
 #endif /* PBI_H_ */
