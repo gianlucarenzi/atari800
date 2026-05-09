@@ -99,13 +99,13 @@ VERA_INC1       = $10           ; Auto-increment by 1
 VERA_DCSEL0     = $00           ; Access DC_VIDEO/HSCALE/VSCALE/BORDER bank
 VERA_DCSEL1     = $02           ; Access DC_HSTART/HSTOP/VSTART/VSTOP bank
 
-VERA_VIDEO_VGA  = $01           ; VGA output (640×480)
+VERA_VIDEO_VGA  = $01           ; VGA output (640x480)
 VERA_LAYER1_EN  = $20           ; Enable Layer 1
 
 VERA_MAP_128x64 = $60           ; 128-tile wide, 64-tile tall map
 
-SCREEN_ADDR     = $01B000       ; Tilemap start (128×64 = 8 KB, in bank 1)
-CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars × 16 bytes)
+SCREEN_ADDR     = $01B000       ; Tilemap start (128x64 = 8 KB, in bank 1)
+CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars x 16 bytes)
 
 SCREEN_MAPBASE  = $D8           ; L1_MAPBASE  = SCREEN_ADDR >> 9
 SCREEN_TILEBASE = $FA           ; L1_TILEBASE = CHARSET_ADDR >> 9 | height16

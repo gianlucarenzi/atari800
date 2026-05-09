@@ -141,14 +141,6 @@ static UBYTE vera_dc[2][4];
 /* Scratchpad RAM for PBI handler variables ($D120 - $D19F, 128 bytes) */
 static UBYTE vera_pbi_scratchpad[0x80];
 
-#define VERA_TEXT_SCREEN_ADDR 0x01B000u
-#define VERA_TEXT_MAP_COLS    128u
-#define VERA_TEXT_ROWS        25u
-#define VERA_TEXT_COLS        80u
-#define ATARI_TEXT_COLS       40u
-#define VERA_TEXT_COLOR       0x61u
-#define VERA_TEXT_SPACE       0x20u
-
 /* Layer 0 — fixed at offsets 0x0D-0x13 (7 registers) */
 static UBYTE vera_l0[7];        /* CONFIG, MAPBASE, TILEBASE, HSCROLL_L/H, VSCROLL_L/H */
 
@@ -228,45 +220,6 @@ static void vera_update_irq(void)
         PBI_IRQ |= verax16_pbi_mask;
     else
         PBI_IRQ &= ~verax16_pbi_mask;
-}
-
-static UBYTE vera_screen_to_ascii(UBYTE c)
-{
-    UBYTE bit7 = c & 0x80u;
-    c &= 0x7fu;
-    if (c < 64u)
-        c = (UBYTE)(c + 32u);
-    else if (c < 96u)
-        c = (UBYTE)(c - 64u);
-    return c | bit7;
-}
-
-static void vera_mirror_antic_text(void)
-{
-    UWORD src = (UWORD)MEMORY_mem[0x58] | ((UWORD)MEMORY_mem[0x59] << 8);
-    UBYTE rows = MEMORY_mem[0x02BF];
-    unsigned int row;
-
-    if (rows == 0 || rows >= VERA_TEXT_ROWS)
-        rows = 24;
-
-    for (row = 0; row < VERA_TEXT_ROWS; ++row) {
-        ULONG dst = VERA_TEXT_SCREEN_ADDR + (ULONG)row * VERA_TEXT_MAP_COLS * 2u;
-        unsigned int col;
-
-        for (col = 0; col < ATARI_TEXT_COLS; ++col) {
-            UBYTE ch = VERA_TEXT_SPACE;
-            if (row < rows)
-                ch = (UBYTE)(vera_screen_to_ascii(MEMORY_mem[(src + row * ATARI_TEXT_COLS + col) & 0xffffu]) & 0x7fu);
-            vera_vram[(dst + col * 2u) & 0x1ffffu] = ch;
-            vera_vram[(dst + col * 2u + 1u) & 0x1ffffu] = VERA_TEXT_COLOR;
-        }
-
-        for (col = ATARI_TEXT_COLS; col < VERA_TEXT_COLS; ++col) {
-            vera_vram[(dst + col * 2u) & 0x1ffffu] = VERA_TEXT_SPACE;
-            vera_vram[(dst + col * 2u + 1u) & 0x1ffffu] = VERA_TEXT_COLOR;
-        }
-    }
 }
 
 static void vera_audio_update_aflow(void)
@@ -878,7 +831,6 @@ void PBI_VERAX16_VSync(void)
 {
     if (!PBI_VERAX16_enabled)
         return;
-    vera_mirror_antic_text();
     if (vera_ien & 0x01u) {     /* VSYNC interrupt enabled */
         vera_isr |= 0x01u;
         vera_update_irq();
