@@ -27,9 +27,12 @@ _vbi_handler:
     pha
     tya
     pha
+    lda CRITIC
+    bne @skip_vbi
     jsr save_cc65_zp
     jsr _VBI
     jsr restore_cc65_zp
+@skip_vbi:
     pla
     tay
     pla
