@@ -45,3 +45,6 @@
 /confdefs.h
 /vera_pbi_rom/VERA.SYS
 /vera_pbi_rom/vera_pbi.atr
+/vera_pbi_rom/.atrbuild/mypdos40.ar0
+/vera_pbi_rom/.atrbuild/
+/vera_pbi_rom/AUTORUN.SYS
