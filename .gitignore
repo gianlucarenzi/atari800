@@ -43,3 +43,5 @@
 # VS Code
 /.vscode
 /confdefs.h
+/vera_pbi_rom/VERA.SYS
+/vera_pbi_rom/vera_pbi.atr
