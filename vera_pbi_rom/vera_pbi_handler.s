@@ -27,6 +27,9 @@
 ;   GET BYTE: reads  VERA register at index given in ICAX1 of the IOCB
 ;   PUT BYTE: writes VERA register at index given in ICAX1 of the IOCB
 ;   GET STATUS: returns VERA_CTRL register value
+;   SPECIAL:
+;     XIO 32,"V:" enables the resident VERA metronome/control path
+;     XIO 33,"V:" disables it again
 ;
 ; VERA register base: $D100  (PBI_ADDR)
 ; VERA VRAM: 128 KB ($00000-$1FFFF), accessed via DATA0 with address ports
@@ -48,8 +51,12 @@ PDIMSK  = $0249         ; PBI interrupt mask
 NEWDEV  = $E486         ; Install device handler in HATABS
 GENDEV  = $E48F         ; Generic CIO device handler vector
 
+ICCOM   = $0342         ; IOCB command byte
 ICAX1   = $034A         ; Auxiliary byte 1 (used here as register index)
 CRITIC  = $42           ; Critical section flag (0 = deferred VBI enabled)
+USAREA  = $0480         ; Application scratch area used as VERA control block
+
+CIOStatNotSupported = $92
 
 ; ============================================================================
 ; VERA hardware register base and register names
@@ -115,6 +122,17 @@ MAP_COLS        = 128
 SCREEN_ROWS     = 25
 TEXT_COLOR      = $61           ; White on blue
 
+VERA_CTL_SIG0   = USAREA + 0
+VERA_CTL_SIG1   = USAREA + 1
+VERA_CTL_SIG2   = USAREA + 2
+VERA_CTL_SIG3   = USAREA + 3
+VERA_CTL_FLAGS  = USAREA + 4
+
+VERA_CTL_FLAG_METRONOME = $01
+
+XIO_VERA_ENABLE  = 32
+XIO_VERA_DISABLE = 33
+
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
 DC_VSTART_VAL   = $14
@@ -162,7 +180,7 @@ Done:
     .word GETBYT-1
     .word PUTBYT-1
     .word GETSTA-1
-    .word NONEED-1
+    .word SPECIAL-1
 
     jmp INIT
     .byte $00
@@ -374,6 +392,42 @@ GETSTA:
     ldy #1
     sec
     rts
+
+SPECIAL:
+    lda VERA_CTL_SIG0
+    cmp #'V'
+    bne @NotSupported
+    lda VERA_CTL_SIG1
+    cmp #'C'
+    bne @NotSupported
+    lda VERA_CTL_SIG2
+    cmp #'T'
+    bne @NotSupported
+    lda VERA_CTL_SIG3
+    cmp #'L'
+    bne @NotSupported
+
+    lda ICCOM,x
+    cmp #XIO_VERA_ENABLE
+    beq @Enable
+    cmp #XIO_VERA_DISABLE
+    beq @Disable
+
+@NotSupported:
+    ldy #CIOStatNotSupported
+    rts
+
+@Enable:
+    lda VERA_CTL_FLAGS
+    ora #VERA_CTL_FLAG_METRONOME
+    sta VERA_CTL_FLAGS
+    jmp NONEED
+
+@Disable:
+    lda VERA_CTL_FLAGS
+    and #$FE
+    sta VERA_CTL_FLAGS
+    jmp NONEED
 
 NONEED:
     ldy #1
