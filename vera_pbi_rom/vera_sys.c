@@ -3,11 +3,11 @@
 #define MEMLO_ADDR (*(unsigned*)0x02E7)
 #define AUDF1_ADDR (*(unsigned char*)0xD200)
 #define AUDC1_ADDR (*(unsigned char*)0xD201)
-#define VERA_CTL_SIG0 (*(volatile unsigned char*)0x0480)
-#define VERA_CTL_SIG1 (*(volatile unsigned char*)0x0481)
-#define VERA_CTL_SIG2 (*(volatile unsigned char*)0x0482)
-#define VERA_CTL_SIG3 (*(volatile unsigned char*)0x0483)
-#define VERA_CTL_FLAGS (*(volatile unsigned char*)0x0484)
+#define VERA_CTL_SIG0 (*(volatile unsigned char*)0x7FF0)
+#define VERA_CTL_SIG1 (*(volatile unsigned char*)0x7FF1)
+#define VERA_CTL_SIG2 (*(volatile unsigned char*)0x7FF2)
+#define VERA_CTL_SIG3 (*(volatile unsigned char*)0x7FF3)
+#define VERA_CTL_FLAGS (*(volatile unsigned char*)0x7FF4)
 
 #define FREQ   0x08
 #define VOLUME 0xAF
@@ -80,9 +80,6 @@ int main(void)
     init_control_block();
     InitVbi();
     ANTIC.nmien = NMIEN_VBI;
-
-    for (;;) {
-    }
-
+	//for(;;);
     return 0;
 }

@@ -16,7 +16,9 @@ DIR2ATR  ?= dir2atr
 ASFLAGS  = --cpu 6502 --feature labels_without_colons
 CFLAGS   ?= -Oirs -t atarixl
 SYSSTART ?= 0x8000
-SYSCFLAGS = $(CFLAGS) --start-addr $(SYSSTART)
+SYSCFG   = vera_sys.cfg
+SYSAUTORUNSRC = vera_sys_autorun.s
+SYSCFLAGS = $(CFLAGS)
 
 TARGET   = vera_pbi_handler.rom
 OBJ      = vera_pbi_handler.o
@@ -25,7 +27,7 @@ CFG      = vera_pbi.cfg
 SYS      = VERA.SYS
 SYSSRC   = vera_sys.c
 SYSASMSRC = vera_sys_vbi.s
-AR0      = mypdos40.ar0
+AUTORUN  = AUTORUN.SYS
 ATR      = vera_pbi.atr
 ATRBUILD = .atrbuild
 
@@ -45,23 +47,23 @@ $(TARGET): $(OBJ) $(CFG)
 	$(LD65) -C $(CFG) -o $(TARGET) $(OBJ)
 	@echo "ROM size: $$(wc -c < $(TARGET)) bytes (max 2048)"
 
-$(SYS): $(SYSSRC) $(SYSASMSRC)
-	$(CL65) $(SYSCFLAGS) -o $(SYS) $(SYSSRC) $(SYSASMSRC)
+$(SYS): $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC) $(SYSCFG)
+	$(CL65) $(SYSCFLAGS) -C $(SYSCFG) -o $(SYS) $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC)
 	@echo "SYS size: $$(wc -c < $(SYS)) bytes"
 
-$(AR0): $(SYS)
-	cp $(SYS) $(AR0)
+$(AUTORUN): $(SYS)
+	cp $(SYS) $(AUTORUN)
 
-atr: $(AR0)
+atr: $(AUTORUN)
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
-	cp $(AR0) $(ATRBUILD)/$(AR0)
-	$(DIR2ATR) -a -b MyPicoDos406 $(ATR) $(ATRBUILD)
+	cp $(AUTORUN) $(ATRBUILD)/$(AUTORUN)
+	$(DIR2ATR) -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
 
 clean:
-	rm -rf $(OBJ) $(TARGET) $(SYS) $(AR0) $(ATR) $(ATRBUILD) \
-		vera_sys.o vera_sys_vbi.o
+	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) \
+		vera_sys.o vera_sys_vbi.o vera_sys_autorun.o
 
 install: $(TARGET)
 	@mkdir -p $(ROMDIR)

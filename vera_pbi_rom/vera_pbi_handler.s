@@ -54,7 +54,10 @@ GENDEV  = $E48F         ; Generic CIO device handler vector
 ICCOM   = $0342         ; IOCB command byte
 ICAX1   = $034A         ; Auxiliary byte 1 (used here as register index)
 CRITIC  = $42           ; Critical section flag (0 = deferred VBI enabled)
-USAREA  = $0480         ; Application scratch area used as VERA control block
+
+; Shared XIO/VBI control block. It lives just below the resident module,
+; inside memory already reserved by MEMLO.
+VERA_CTL_BASE = $7FF0
 
 CIOStatNotSupported = $92
 
@@ -122,11 +125,11 @@ MAP_COLS        = 128
 SCREEN_ROWS     = 25
 TEXT_COLOR      = $61           ; White on blue
 
-VERA_CTL_SIG0   = USAREA + 0
-VERA_CTL_SIG1   = USAREA + 1
-VERA_CTL_SIG2   = USAREA + 2
-VERA_CTL_SIG3   = USAREA + 3
-VERA_CTL_FLAGS  = USAREA + 4
+VERA_CTL_SIG0   = VERA_CTL_BASE + 0
+VERA_CTL_SIG1   = VERA_CTL_BASE + 1
+VERA_CTL_SIG2   = VERA_CTL_BASE + 2
+VERA_CTL_SIG3   = VERA_CTL_BASE + 3
+VERA_CTL_FLAGS  = VERA_CTL_BASE + 4
 
 VERA_CTL_FLAG_METRONOME = $01
 
