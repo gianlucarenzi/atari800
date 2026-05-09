@@ -28,8 +28,12 @@
 ;   PUT BYTE: writes VERA register at index given in ICAX1 of the IOCB
 ;   GET STATUS: returns VERA_CTRL register value
 ;   SPECIAL:
-;     XIO 32,"V:" enables the resident VERA metronome/control path
+;     XIO 32,"V:" enables the resident VERA metronome
 ;     XIO 33,"V:" disables it again
+;     XIO 34,"V:" clears the resident VERA text surface
+;     XIO 35,"V:" draws a resident VERA backend demo page
+;     XIO 36,"V:" prints one ATASCII character from ICAX1
+;     XIO 37,"V:" sets the resident cursor to ICAX1/ICAX2
 ;
 ; VERA register base: $D100  (PBI_ADDR)
 ; VERA VRAM: 128 KB ($00000-$1FFFF), accessed via DATA0 with address ports
@@ -53,11 +57,12 @@ GENDEV  = $E48F         ; Generic CIO device handler vector
 
 ICCOM   = $0342         ; IOCB command byte
 ICAX1   = $034A         ; Auxiliary byte 1 (used here as register index)
+ICAX2   = $034B         ; Auxiliary byte 2
 CRITIC  = $42           ; Critical section flag (0 = deferred VBI enabled)
 
-; Shared XIO/VBI control block. It lives just below the resident module,
-; inside memory already reserved by MEMLO.
-VERA_CTL_BASE = $7FF0
+; Shared XIO/VBI control block. It lives at the beginning of the resident
+; LOWBSS area in VERA.SYS, which is fixed at $8000 by vera_sys.cfg.
+VERA_CTL_BASE = $8000
 
 CIOStatNotSupported = $92
 
@@ -125,16 +130,33 @@ MAP_COLS        = 128
 SCREEN_ROWS     = 25
 TEXT_COLOR      = $61           ; White on blue
 
-VERA_CTL_SIG0   = VERA_CTL_BASE + 0
-VERA_CTL_SIG1   = VERA_CTL_BASE + 1
-VERA_CTL_SIG2   = VERA_CTL_BASE + 2
-VERA_CTL_SIG3   = VERA_CTL_BASE + 3
-VERA_CTL_FLAGS  = VERA_CTL_BASE + 4
+VERA_CTL_SIG0       = VERA_CTL_BASE + 0
+VERA_CTL_SIG1       = VERA_CTL_BASE + 1
+VERA_CTL_SIG2       = VERA_CTL_BASE + 2
+VERA_CTL_SIG3       = VERA_CTL_BASE + 3
+VERA_CTL_FLAGS      = VERA_CTL_BASE + 4
+VERA_CTL_REQUEST    = VERA_CTL_BASE + 5
+VERA_CTL_PARAM0     = VERA_CTL_BASE + 6
+VERA_CTL_PARAM1     = VERA_CTL_BASE + 7
+VERA_CTL_CURSOR_X   = VERA_CTL_BASE + 8
+VERA_CTL_CURSOR_Y   = VERA_CTL_BASE + 9
+VERA_CTL_ENTRY_LO   = VERA_CTL_BASE + 10
+VERA_CTL_ENTRY_HI   = VERA_CTL_BASE + 11
 
 VERA_CTL_FLAG_METRONOME = $01
+VERA_CTL_FLAG_API_READY = $80
 
 XIO_VERA_ENABLE  = 32
 XIO_VERA_DISABLE = 33
+XIO_VERA_CLEAR   = 34
+XIO_VERA_DEMO    = 35
+XIO_VERA_PUTC    = 36
+XIO_VERA_CURSOR  = 37
+
+VERA_REQ_NONE    = $00
+VERA_REQ_CLEAR   = $01
+VERA_REQ_DEMO    = $02
+VERA_REQ_PUTC    = $03
 
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
@@ -397,6 +419,8 @@ GETSTA:
     rts
 
 SPECIAL:
+    lda #$00
+    sta CRITIC
     lda VERA_CTL_SIG0
     cmp #'V'
     bne @NotSupported
@@ -415,8 +439,18 @@ SPECIAL:
     beq @Enable
     cmp #XIO_VERA_DISABLE
     beq @Disable
+    cmp #XIO_VERA_CLEAR
+    beq @Clear
+    cmp #XIO_VERA_DEMO
+    beq @Demo
+    cmp #XIO_VERA_PUTC
+    beq @PutChar
+    cmp #XIO_VERA_CURSOR
+    beq @SetCursor
 
 @NotSupported:
+    lda #$00
+    sta CRITIC
     ldy #CIOStatNotSupported
     rts
 
@@ -432,7 +466,47 @@ SPECIAL:
     sta VERA_CTL_FLAGS
     jmp NONEED
 
+@Clear:
+    lda #VERA_REQ_CLEAR
+    sta VERA_CTL_REQUEST
+    jsr CALL_SERVICE
+    jmp NONEED
+
+@Demo:
+    lda #VERA_REQ_DEMO
+    sta VERA_CTL_REQUEST
+    jsr CALL_SERVICE
+    jmp NONEED
+
+@PutChar:
+    lda ICAX1,x
+    sta VERA_CTL_PARAM0
+    lda #VERA_REQ_PUTC
+    sta VERA_CTL_REQUEST
+    jsr CALL_SERVICE
+    jmp NONEED
+
+@SetCursor:
+    lda ICAX1,x
+    sta VERA_CTL_CURSOR_X
+    lda ICAX2,x
+    sta VERA_CTL_CURSOR_Y
+    jmp NONEED
+
+CALL_SERVICE:
+    lda #$01
+    sta CRITIC
+    lda #>(@Return-1)
+    pha
+    lda #<(@Return-1)
+    pha
+    jmp (VERA_CTL_ENTRY_LO)
+@Return:
+    rts
+
 NONEED:
+    lda #$00
+    sta CRITIC
     ldy #1
     sec
     rts
