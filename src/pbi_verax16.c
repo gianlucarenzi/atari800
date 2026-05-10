@@ -192,6 +192,7 @@ static UBYTE vera_audio_rate = 0;
 
 #define VERA_AUDIO_FIFO_SIZE   4096u
 #define VERA_AUDIO_FIFO_MASK   (VERA_AUDIO_FIFO_SIZE - 1u)
+#define VERA_AUDIO_FIFO_CAPACITY (VERA_AUDIO_FIFO_SIZE - 1u)
 #define VERA_AUDIO_AFLOW_MASK  0x08u
 #define VERA_PSG_VOICE_COUNT   16
 #define VERA_PSG_REG_BASE      0x1F9C0u
@@ -379,7 +380,7 @@ static UBYTE vera_audio_ctrl_read(void)
 
     if (vera_pcm_fifo_count == 0u)
         ctrl |= 0x40u;
-    if (vera_pcm_fifo_count >= VERA_AUDIO_FIFO_SIZE)
+    if (vera_pcm_fifo_count >= VERA_AUDIO_FIFO_CAPACITY)
         ctrl |= 0x80u;
     return ctrl;
 }
@@ -407,7 +408,7 @@ static void vera_audio_ctrl_write(UBYTE byte)
 
 static void vera_audio_data_write(UBYTE byte)
 {
-    if (vera_pcm_fifo_count >= VERA_AUDIO_FIFO_SIZE)
+    if (vera_pcm_fifo_count >= VERA_AUDIO_FIFO_CAPACITY)
         return;
 
     vera_pcm_fifo[vera_pcm_fifo_write] = byte;
@@ -470,7 +471,7 @@ static void vera_pcm_render_sample(int *left, int *right)
     *left = 0;
     *right = 0;
 
-    if (vera_host_playback_freq == 0u || rate == 0u || (vera_audio_ctrl & 0x0Fu) == 0u)
+    if (vera_host_playback_freq == 0u || rate == 0u)
         return;
 
     if (!vera_pcm_current_valid && !vera_pcm_load_current_sample())
