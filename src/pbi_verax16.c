@@ -525,8 +525,9 @@ static double vera_psg_wave_sample(int voice, UBYTE waveform, UBYTE pulse_width)
 }
 
 /* Soft reset: registers to defaults, VRAM contents preserved */
-static void vera_chip_reset(void)
+static void vera_chip_reset(const char *caller)
 {
+    Log_print("VeraX16: VERA chip soft-reset called by: %s", caller);
     memset(vera_addr_l, 0, sizeof(vera_addr_l));
     memset(vera_addr_m, 0, sizeof(vera_addr_m));
     memset(vera_addr_h, 0, sizeof(vera_addr_h));
@@ -744,7 +745,7 @@ static void vera_write_reg(int offset, UBYTE byte)
         break;
     case 0x05:  /* CTRL */
         if (byte & 0x80u) {
-            vera_chip_reset();      /* RESET bit: soft-reset, VRAM intact */
+            vera_chip_reset("CTRL_REG_RESET_BIT");      /* RESET bit: soft-reset, VRAM intact */
         } else {
             vera_ctrl = byte & 0x7Fu;   /* keep ADDRSEL + DCSEL (6 bits) */
         }
@@ -921,7 +922,7 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
         memcpy(vera_vram + 0x1FA00u, pal16, sizeof(pal16));
     }
 
-    vera_chip_reset();
+    vera_chip_reset("INITIAL_SETUP");
 
     /* Optionally load OS handler ROM */
     if (verax16_rom_filename[0] != '\0') {
@@ -969,7 +970,7 @@ void PBI_VERAX16_Reset(void)
 {
     if (PBI_VERAX16_enabled) {
         verax16_cs = FALSE;
-        vera_chip_reset();
+        vera_chip_reset("PBI_RESET");
     }
 }
 
