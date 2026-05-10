@@ -60,8 +60,7 @@ void  PBI_VERAX16_PutVRAM(ULONG addr, UBYTE byte);
 
 /* Register snapshot for the VERA video renderer */
 typedef struct {
-    UBYTE dc0[4];  /* DCSEL=0: DC_VIDEO, DC_HSCALE, DC_VSCALE, DC_BORDER  */
-    UBYTE dc1[4];  /* DCSEL=1: DC_HSTART, DC_HSTOP, DC_VSTART, DC_VSTOP   */
+    UBYTE dc[8][4]; /* DC banks: 0=Video/Scale, 1=Start/Stop, 2=FX Ctrl, 3=FX Incr, 4=FX Pos, 5=FX Pos, 6=FX Cache */
     UBYTE l0[7];   /* Layer 0: CONFIG, MAPBASE, TILEBASE, HSCR_L/H, VSCR_L/H */
     UBYTE l1[7];   /* Layer 1: same                                         */
 } VERA_RegSnap;

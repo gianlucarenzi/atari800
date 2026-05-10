@@ -121,8 +121,8 @@ static void render_tile_layer(const UBYTE *vram, int layer, const VERA_RegSnap *
     UBYTE l_tilebase = l[2];
     int hscroll = ((int)(l[4] & 0x0F) << 8) | (int)l[3];
     int vscroll = ((int)(l[6] & 0x0F) << 8) | (int)l[5];
-    int hscale = rs->dc0[1];
-    int vscale = rs->dc0[2];
+    int hscale = rs->dc[0][1];
+    int vscale = rs->dc[0][2];
 
     if (hscale == 0 || vscale == 0) return;
 
@@ -200,8 +200,8 @@ static void render_bitmap_layer(const UBYTE *vram, int layer, const VERA_RegSnap
     UBYTE l_mapbase = l[1];
     UBYTE l_tilebase = l[2];
     
-    int hscale = rs->dc0[1];
-    int vscale = rs->dc0[2];
+    int hscale = rs->dc[0][1];
+    int vscale = rs->dc[0][2];
     if (hscale == 0 || vscale == 0) return;
 
     int color_depth = l_config & 0x03;
@@ -233,6 +233,32 @@ static void render_bitmap_layer(const UBYTE *vram, int layer, const VERA_RegSnap
 }
 
 /* ------------------------------------------------------------------
+ * Render sprite layer.
+ * ------------------------------------------------------------------ */
+static void render_sprites(const UBYTE *vram)
+{
+    /* Sprite attributes are at $1FC00-$1FFFF (128 sprites × 8 bytes) */
+    for (int i = 0; i < 128; i++) {
+        ULONG addr = 0x1FC00u + (ULONG)i * 8u;
+        UBYTE attr0 = vram[addr];
+        UBYTE attr1 = vram[addr + 1];
+        UBYTE x_l = vram[addr + 2];
+        UBYTE x_h = vram[addr + 3];
+        UBYTE y_l = vram[addr + 4];
+        UBYTE y_h = vram[addr + 5];
+        UBYTE attr6 = vram[addr + 6];
+        UBYTE attr7 = vram[addr + 7];
+
+        int z_depth = (attr6 >> 2) & 3;
+        if (z_depth == 0) continue; /* Disabled */
+
+        int x = x_l | ((x_h & 3) << 8);
+        int y = y_l | ((y_h & 3) << 8);
+        if (x >= 640 || y >= 480) continue;
+    }
+}
+
+/* ------------------------------------------------------------------
  * Public: compose and display one VERA frame.
  * ------------------------------------------------------------------ */
 void VERA_VIDEO_Frame(void)
@@ -244,27 +270,31 @@ void VERA_VIDEO_Frame(void)
     const UBYTE *vram = PBI_VERAX16_GetVRAMPtr();
 
     /* Active pixel rectangle */
-    int ax0 = (int)rs.dc1[0] * 4;
-    int ax1 = (int)rs.dc1[1] * 4;
-    int ay0 = (int)rs.dc1[2] * 2;
-    int ay1 = (int)rs.dc1[3] * 2;
+    int ax0 = (int)rs.dc[1][0] * 4;
+    int ax1 = (int)rs.dc[1][1] * 4;
+    int ay0 = (int)rs.dc[1][2] * 2;
+    int ay1 = (int)rs.dc[1][3] * 2;
     if (ax0 < 0) ax0 = 0;
     if (ax1 > VERA_W) ax1 = VERA_W;
     if (ay0 < 0) ay0 = 0;
     if (ay1 > VERA_H) ay1 = VERA_H;
 
     /* Fill border */
-    Uint32 border = get_pal_color(vram, rs.dc0[3]);
+    Uint32 border = get_pal_color(vram, rs.dc[0][3]);
     for (int i = 0; i < VERA_W * VERA_H; i++) vera_fb[i] = border;
 
     /* Layers */
     for (int layer = 0; layer < 2; layer++) {
-        UBYTE enabled = (layer == 0) ? (rs.dc0[0] & 0x10) : (rs.dc0[0] & 0x20);
+        UBYTE enabled = (layer == 0) ? (rs.dc[0][0] & 0x10) : (rs.dc[0][0] & 0x20);
         if (enabled && ax1 > ax0 && ay1 > ay0) {
             UBYTE l_config = (layer == 0) ? rs.l0[0] : rs.l1[0];
             if (l_config & 0x04) render_bitmap_layer(vram, layer, &rs, ax0, ay0, ax1, ay1);
             else render_tile_layer(vram, layer, &rs, ax0, ay0, ax1, ay1);
         }
+    }
+
+    if (rs.dc[0][0] & 0x40) {
+        render_sprites(vram);
     }
 
     if (!vera_open_window()) return;

@@ -79,6 +79,7 @@
 #include "memory.h"
 #include <math.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -108,6 +109,12 @@ static int verax16_cs    = FALSE;  /* chip select: TRUE after $D1FF written with
 #define VERA_REG_BASE    0xD100u
 #define VERA_REG_COUNT   32u
 
+/* FX coprocessor modes */
+#define FX_MODE_NORMAL     0
+#define FX_MODE_LINE_DRAW  1
+#define FX_MODE_POLY_FILL  2
+#define FX_MODE_AFFINE     3
+
 /* VERA ADDR_H auto-increment step lookup (index = ADDR_H bits[7:4]) */
 static const int vera_step_lut[16] = {
     0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 40, 80, 160, 320, 640
@@ -127,16 +134,48 @@ static UBYTE vera_addr_l[2];    /* VRAM address bits  7:0  */
 static UBYTE vera_addr_m[2];    /* VRAM address bits 15:8  */
 static UBYTE vera_addr_h[2];    /* bit[0]=A16; bits[7:4]=INCR index */
 
-/* CTRL: bit[0]=ADDRSEL, bit[1]=DCSEL, bit[7]=RESET (self-clearing) */
+/* CTRL: bit[0]=ADDRSEL, bits[6:1]=DCSEL, bit[7]=RESET (self-clearing) */
 static UBYTE vera_ctrl    = 0;
 static UBYTE vera_ien     = 0;   /* interrupt enable  */
 static UBYTE vera_isr     = 0;   /* interrupt status  */
 static UBYTE vera_irqline = 0;   /* raster IRQ line (bits 7:0) */
 
-/* DCSEL-muxed registers at offsets 0x09-0x0C (4 regs × 2 banks):
+/* DCSEL-muxed registers at offsets 0x09-0x0C (4 regs × 64 banks):
  *   vera_dc[0]: DC_VIDEO, DC_HSCALE, DC_VSCALE, DC_BORDER  (DCSEL=0)
- *   vera_dc[1]: DC_HSTART, DC_HSTOP, DC_VSTART, DC_VSTOP   (DCSEL=1) */
-static UBYTE vera_dc[2][4];
+ *   vera_dc[1]: DC_HSTART, DC_HSTOP, DC_VSTART, DC_VSTOP   (DCSEL=1)
+ *   vera_dc[2]: FX_CTRL, FX_TILEBASE, FX_MAPBASE, FX_ACCUM (DCSEL=2)
+ *   ... and so on.                                                 */
+static UBYTE vera_dc[64][4];
+
+/* FX coprocessor state */
+static int32_t fx_pixel_pos_x = 0; /* 11.9 fixed point (20 bits) */
+static int32_t fx_pixel_pos_y = 0; /* 11.9 fixed point (20 bits) */
+static int16_t fx_pixel_incr_x = 0; /* 6.9 fixed point (15 bits) */
+static int16_t fx_pixel_incr_y = 0; /* 6.9 fixed point (15 bits) */
+static int fx_pixel_incr_x_times_32 = FALSE;
+static int fx_pixel_incr_y_times_32 = FALSE;
+static UBYTE fx_addr1_mode = 0;
+static int fx_4bit_mode = FALSE;
+static int fx_16bit_hop = FALSE;
+static int fx_transparency_enabled = FALSE;
+static int fx_cache_write_enabled = FALSE;
+static int fx_cache_fill_enabled = FALSE;
+static int fx_one_byte_cache_cycling = FALSE;
+static UBYTE fx_tiledata_base_address = 0;
+static UBYTE fx_map_base_address = 0;
+static UBYTE fx_map_size = 0;
+static int fx_apply_clip = FALSE;
+static int fx_2bit_polygon_pixels = FALSE;
+static uint32_t ib_cache32 = 0;
+static UBYTE fx_cache_byte_index = 0;
+static UBYTE fx_cache_nibble_index = 0;
+static int fx_cache_increment_mode = 0;
+static int fx_mult_enabled = FALSE;
+static int fx_add_or_sub = 0;
+static int fx_accumulate = FALSE;
+
+static int fx_2bit_poke_mode = FALSE;
+static UBYTE fx_16bit_hop_start_index = 0;
 
 /* Scratchpad RAM for PBI handler variables ($D120 - $D19F, 128 bytes) */
 static UBYTE vera_pbi_scratchpad[0x80];
@@ -205,12 +244,34 @@ static UBYTE vera_spi_ctrl = 0;
 static void vera_advance(int p)
 {
     ULONG addr = VERA_FULL_ADDR(p);
-    ULONG step = (ULONG)vera_step_lut[vera_addr_h[p] >> 4];
-    if (step != 0u) {
-        addr = (addr + step) & 0x1FFFFu;
-        vera_addr_l[p] = (UBYTE)(addr & 0xFFu);
-        vera_addr_m[p] = (UBYTE)((addr >> 8) & 0xFFu);
-        vera_addr_h[p] = (vera_addr_h[p] & 0xF0u) | (UBYTE)((addr >> 16) & 0x01u);
+    int step_idx = (vera_addr_h[p] >> 4) & 0x0F;
+    int decr = (vera_addr_h[p] >> 3) & 1;
+    
+    if (fx_4bit_mode) {
+        /* 4-bit mode: nibble increment logic */
+        int nibble = (vera_addr_h[p] >> 2) & 1;
+        if (nibble) {
+            /* Flip nibble */
+            vera_addr_h[p] ^= 0x04;
+        } else {
+            /* Advance address */
+            ULONG step = (ULONG)vera_step_lut[step_idx];
+            if (decr) addr = (addr - step) & 0x1FFFFu;
+            else addr = (addr + step) & 0x1FFFFu;
+            vera_addr_l[p] = (UBYTE)(addr & 0xFFu);
+            vera_addr_m[p] = (UBYTE)((addr >> 8) & 0xFFu);
+            vera_addr_h[p] = (vera_addr_h[p] & 0xF0u) | (UBYTE)((addr >> 16) & 0x01u);
+        }
+    } else {
+        /* Standard 8-bit mode */
+        ULONG step = (ULONG)vera_step_lut[step_idx];
+        if (step != 0u) {
+            if (decr) addr = (addr - step) & 0x1FFFFu;
+            else addr = (addr + step) & 0x1FFFFu;
+            vera_addr_l[p] = (UBYTE)(addr & 0xFFu);
+            vera_addr_m[p] = (UBYTE)((addr >> 8) & 0xFFu);
+            vera_addr_h[p] = (vera_addr_h[p] & 0xF0u) | (UBYTE)((addr >> 16) & 0x01u);
+        }
     }
 }
 
@@ -474,13 +535,40 @@ static void vera_chip_reset(void)
     vera_isr      = 0;
     vera_irqline  = 0;
 
-    /* DC defaults (DCSEL=0 bank) */
+    /* DC defaults */
     memset(vera_dc, 0, sizeof(vera_dc));
     vera_dc[0][1] = 128;    /* DC_HSCALE = 128 (1:1) */
     vera_dc[0][2] = 128;    /* DC_VSCALE = 128 (1:1) */
     /* DC secondary defaults (DCSEL=1 bank) */
     vera_dc[1][1] = 160;    /* DC_HSTOP  = 160 (640 / 4) */
     vera_dc[1][3] = 240;    /* DC_VSTOP  = 240 (480 / 2) */
+
+    /* FX state reset */
+    fx_pixel_pos_x = 0;
+    fx_pixel_pos_y = 0;
+    fx_pixel_incr_x = 0;
+    fx_pixel_incr_y = 0;
+    fx_pixel_incr_x_times_32 = FALSE;
+    fx_pixel_incr_y_times_32 = FALSE;
+    fx_addr1_mode = 0;
+    fx_4bit_mode = FALSE;
+    fx_16bit_hop = FALSE;
+    fx_transparency_enabled = FALSE;
+    fx_cache_write_enabled = FALSE;
+    fx_cache_fill_enabled = FALSE;
+    fx_one_byte_cache_cycling = FALSE;
+    fx_tiledata_base_address = 0;
+    fx_map_base_address = 0;
+    fx_map_size = 0;
+    fx_apply_clip = FALSE;
+    fx_2bit_polygon_pixels = FALSE;
+    ib_cache32 = 0;
+    fx_cache_byte_index = 0;
+    fx_cache_nibble_index = 0;
+    fx_cache_increment_mode = 0;
+    fx_mult_enabled = FALSE;
+    fx_add_or_sub = 0;
+    fx_accumulate = FALSE;
 
     memset(vera_l0, 0, sizeof(vera_l0));
     memset(vera_l1, 0, sizeof(vera_l1));
@@ -503,7 +591,7 @@ static void vera_chip_reset(void)
 static UBYTE vera_read_reg(int offset, int no_side_effects)
 {
     int addrsel = vera_ctrl & 0x01;
-    int dcsel   = (vera_ctrl >> 1) & 0x01;     /* bit 1 only */
+    int dcsel   = (vera_ctrl >> 1) & 0x3F;
 
     switch (offset) {
     case 0x00:
@@ -531,11 +619,65 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
     case 0x07:
         return vera_isr;
     case 0x08:
-        return vera_irqline;
+        return vera_irqline; /* SCANLINE_L dummy */
     default:
         /* DCSEL-muxed: offsets 0x09-0x0C */
-        if (offset >= 0x09 && offset <= 0x0C)
+        if (offset >= 0x09 && offset <= 0x0C) {
+            switch (dcsel) {
+            case 0x00:
+                if (offset == 0x09) {
+                    /* Current Field (bit 7), etc. */
+                    return vera_dc[0][0];
+                }
+                break;
+            case 0x02:
+                if (offset == 0x09)
+                    return (fx_transparency_enabled << 7) |
+                           (fx_cache_write_enabled << 6) |
+                           (fx_cache_fill_enabled << 5) |
+                           (fx_one_byte_cache_cycling << 4) |
+                           (fx_16bit_hop << 3) |
+                           (fx_4bit_mode << 2) |
+                           (fx_addr1_mode & 0x03);
+                break;
+            case 0x05:
+                if (offset == 0x0B) {
+                    /* fx_fill_length_low */
+                    uint16_t flen = (uint16_t)((fx_pixel_pos_y >> 9) - (fx_pixel_pos_x >> 9)) & 0x3FF;
+                    int overflow = (flen >> 8) == 3;
+                    int poly_fill_2bit = (fx_addr1_mode == FX_MODE_POLY_FILL) && fx_4bit_mode && fx_2bit_polygon_pixels;
+                    UBYTE res = 0;
+                    if (poly_fill_2bit && (fx_pixel_pos_x & 0x100)) res |= 0x01;
+                    if (!overflow && (flen & 0x01)) res |= 0x02;
+                    if (!overflow && (flen & 0x02)) res |= 0x04;
+                    if (!overflow && (flen & 0x04)) res |= 0x08;
+                    if (!overflow) {
+                        if (!fx_4bit_mode && (flen & 0x08)) res |= 0x10;
+                        else if (fx_4bit_mode && (fx_pixel_pos_x & 0x800)) res |= 0x10;
+                    }
+                    if (!overflow && (fx_pixel_pos_x & 0x200)) res |= 0x20;
+                    if (!overflow && (fx_pixel_pos_x & 0x400)) res |= 0x40;
+                    if ((!fx_4bit_mode && flen > 15) || 
+                        (!poly_fill_2bit && fx_4bit_mode && flen > 7) ||
+                        (poly_fill_2bit && (fx_pixel_pos_y & 0x100))) res |= 0x80;
+                    return res;
+                }
+                if (offset == 0x0C) {
+                    /* fx_fill_length_high */
+                    uint16_t flen = (uint16_t)((fx_pixel_pos_y >> 9) - (fx_pixel_pos_x >> 9)) & 0x3FF;
+                    return (UBYTE)((flen >> 3) << 1);
+                }
+                break;
+            case 0x06:
+                /* Accumulator triggers on read */
+                if (!no_side_effects) {
+                    if (offset == 0x09) { /* reset accum */ }
+                    if (offset == 0x0A) { /* accumulate */ }
+                }
+                break;
+            }
             return vera_dc[dcsel][offset - 0x09];
+        }
         /* Layer 0 fixed: offsets 0x0D-0x13 */
         if (offset >= 0x0D && offset <= 0x13)
             return vera_l0[offset - 0x0D];
@@ -554,7 +696,7 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
 static void vera_write_reg(int offset, UBYTE byte)
 {
     int addrsel = vera_ctrl & 0x01;
-    int dcsel   = (vera_ctrl >> 1) & 0x01;
+    int dcsel   = (vera_ctrl >> 1) & 0x3F;
 
     switch (offset) {
     case 0x00:
@@ -567,18 +709,44 @@ static void vera_write_reg(int offset, UBYTE byte)
         vera_addr_h[addrsel] = byte;
         break;
     case 0x03:  /* DATA0 — VRAM write through port 0 */
-        vera_vram[VERA_FULL_ADDR(0)] = byte;
+        if (fx_4bit_mode) {
+            UBYTE val = vera_vram[VERA_FULL_ADDR(0)];
+            int nibble = (vera_addr_h[0] >> 2) & 1;
+            if (nibble) val = (val & 0x0F) | (byte << 4);
+            else        val = (val & 0xF0) | (byte & 0x0F);
+            vera_vram[VERA_FULL_ADDR(0)] = val;
+        } else {
+            vera_vram[VERA_FULL_ADDR(0)] = byte;
+        }
         vera_advance(0);
         break;
     case 0x04:  /* DATA1 — VRAM write through port 1 */
-        vera_vram[VERA_FULL_ADDR(1)] = byte;
-        vera_advance(1);
+        if (fx_addr1_mode == FX_MODE_LINE_DRAW) {
+            /* Line Draw: update fixed-point pos, overflow advances ADDR1 */
+            int32_t dx = (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 4 : 11);
+            fx_pixel_pos_x += dx;
+            if (fx_pixel_pos_x & 0x100000) { /* overflow */
+                vera_advance(1);
+                fx_pixel_pos_x &= ~0x100000;
+            }
+            vera_vram[VERA_FULL_ADDR(1)] = byte;
+        } else if (fx_addr1_mode == FX_MODE_POLY_FILL) {
+            /* Poly Fill: simple write */
+            vera_vram[VERA_FULL_ADDR(1)] = byte;
+        } else if (fx_addr1_mode == FX_MODE_AFFINE) {
+            /* Affine: advance pos, lookup */
+            vera_vram[VERA_FULL_ADDR(1)] = byte;
+            /* Implementation of affine tilemap lookup would go here */
+        } else {
+            vera_vram[VERA_FULL_ADDR(1)] = byte;
+            vera_advance(1);
+        }
         break;
     case 0x05:  /* CTRL */
         if (byte & 0x80u) {
             vera_chip_reset();      /* RESET bit: soft-reset, VRAM intact */
         } else {
-            vera_ctrl = byte & 0x03u;   /* keep ADDRSEL + DCSEL */
+            vera_ctrl = byte & 0x7Fu;   /* keep ADDRSEL + DCSEL (6 bits) */
         }
         break;
     case 0x06:
@@ -596,6 +764,66 @@ static void vera_write_reg(int offset, UBYTE byte)
         /* DCSEL-muxed: offsets 0x09-0x0C */
         if (offset >= 0x09 && offset <= 0x0C) {
             vera_dc[dcsel][offset - 0x09] = byte;
+            switch (dcsel) {
+            case 0x02:
+                if (offset == 0x09) {
+                    fx_transparency_enabled = (byte >> 7) & 1;
+                    fx_cache_write_enabled = (byte >> 6) & 1;
+                    fx_cache_fill_enabled = (byte >> 5) & 1;
+                    fx_one_byte_cache_cycling = (byte >> 4) & 1;
+                    fx_16bit_hop = (byte >> 3) & 1;
+                    fx_4bit_mode = (byte >> 2) & 1;
+                    fx_addr1_mode = byte & 3;
+                } else if (offset == 0x0A) {
+                    fx_tiledata_base_address = byte >> 2;
+                    fx_apply_clip = (byte >> 1) & 1;
+                    fx_2bit_polygon_pixels = byte & 1;
+                } else if (offset == 0x0B) {
+                    fx_map_base_address = byte >> 2;
+                    fx_map_size = byte & 3;
+                } else if (offset == 0x0C) {
+                    if (byte & 0x80) { /* reset accum */ }
+                    if (byte & 0x40) { /* accumulate */ }
+                    fx_add_or_sub = (byte >> 5) & 1;
+                    fx_mult_enabled = (byte >> 4) & 1;
+                    fx_cache_byte_index = (byte >> 2) & 3;
+                    fx_cache_nibble_index = (byte >> 1) & 1;
+                    fx_cache_increment_mode = byte & 1;
+                }
+                break;
+            case 0x03:
+                if (offset == 0x09) fx_pixel_incr_x = (fx_pixel_incr_x & 0x7F00) | byte;
+                else if (offset == 0x0A) {
+                    fx_pixel_incr_x = (fx_pixel_incr_x & 0x00FF) | ((byte & 0x7F) << 8);
+                    fx_pixel_incr_x_times_32 = (byte >> 7) & 1;
+                    if (fx_addr1_mode == FX_MODE_LINE_DRAW || fx_addr1_mode == FX_MODE_POLY_FILL)
+                        fx_pixel_pos_x = (fx_pixel_pos_x & ~0x1FF) | 256;
+                    if (fx_addr1_mode == FX_MODE_LINE_DRAW) fx_pixel_pos_x &= ~(1 << 9);
+                } else if (offset == 0x0B) fx_pixel_incr_y = (fx_pixel_incr_y & 0x7F00) | byte;
+                else if (offset == 0x0C) {
+                    fx_pixel_incr_y = (fx_pixel_incr_y & 0x00FF) | ((byte & 0x7F) << 8);
+                    fx_pixel_incr_y_times_32 = (byte >> 7) & 1;
+                    if (fx_addr1_mode == FX_MODE_LINE_DRAW || fx_addr1_mode == FX_MODE_POLY_FILL)
+                        fx_pixel_pos_y = (fx_pixel_pos_y & ~0x1FF) | 256;
+                }
+                break;
+            case 0x04:
+                if (offset == 0x09) fx_pixel_pos_x = (fx_pixel_pos_x & 0x0E01FF) | (byte << 9);
+                else if (offset == 0x0A) fx_pixel_pos_x = (fx_pixel_pos_x & 0x01FE00) | ((byte & 7) << 17) | (byte >> 7);
+                else if (offset == 0x0B) fx_pixel_pos_y = (fx_pixel_pos_y & 0x0E01FF) | (byte << 9);
+                else if (offset == 0x0C) fx_pixel_pos_y = (fx_pixel_pos_y & 0x01FE00) | ((byte & 7) << 17) | (byte >> 7);
+                break;
+            case 0x05:
+                if (offset == 0x09) fx_pixel_pos_x = (fx_pixel_pos_x & ~0x1FE) | (byte << 1);
+                else if (offset == 0x0A) fx_pixel_pos_y = (fx_pixel_pos_y & ~0x1FE) | (byte << 1);
+                break;
+            case 0x06:
+                if (offset == 0x09) ib_cache32 = (ib_cache32 & 0xFFFFFF00) | byte;
+                else if (offset == 0x0A) ib_cache32 = (ib_cache32 & 0xFFFF00FF) | (byte << 8);
+                else if (offset == 0x0B) ib_cache32 = (ib_cache32 & 0xFF00FFFF) | (byte << 16);
+                else if (offset == 0x0C) ib_cache32 = (ib_cache32 & 0x00FFFFFF) | (byte << 24);
+                break;
+            }
         }
         /* Layer 0 fixed: offsets 0x0D-0x13 */
         else if (offset >= 0x0D && offset <= 0x13) {
@@ -858,8 +1086,7 @@ void PBI_VERAX16_PutVRAM(ULONG addr, UBYTE byte)
 
 void PBI_VERAX16_GetRegSnap(VERA_RegSnap *s)
 {
-    memcpy(s->dc0, vera_dc[0], 4);
-    memcpy(s->dc1, vera_dc[1], 4);
+    memcpy(s->dc, vera_dc, sizeof(s->dc));
     memcpy(s->l0,  vera_l0,    7);
     memcpy(s->l1,  vera_l1,    7);
 }
