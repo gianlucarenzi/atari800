@@ -364,15 +364,9 @@ static void vera_put_hook_char(unsigned char ch)
         ch &= 0x7Fu;
     }
 
-    if (ch >= 0x20u) {
+    if (old_column < VERA_SCREEN_COLS && old_row < VERA_SCREEN_ROWS && ch >= 0x20u) {
         vera_hide_cursor();
         vera_write_cell(old_column, old_row, ch, VERA_TEXT_COLOR);
-    }
-
-    if (ch == 0x08u || ch == 0x7Eu) {
-        if (old_column < VERA_SCREEN_COLS && old_row < VERA_SCREEN_ROWS) {
-            vera_write_cell(old_column, old_row, VERA_CHAR_BLANK, VERA_TEXT_COLOR);
-        }
     }
 
     vera_sync_atari_cursor();
