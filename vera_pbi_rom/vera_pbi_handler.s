@@ -182,8 +182,8 @@ LOGO4_ADDR      = SCREEN_ADDR + (3 * MAP_COLS * 2) + (0 * 2)
 LOGO5_ADDR      = SCREEN_ADDR + (4 * MAP_COLS * 2) + (0 * 2)
 LOGO6_ADDR      = SCREEN_ADDR + (5 * MAP_COLS * 2) + (0 * 2)
 LOGO7_ADDR      = SCREEN_ADDR + (6 * MAP_COLS * 2) + (0 * 2)
-VER_LINE_ADDR   = SCREEN_ADDR + (0 * MAP_COLS * 2) + (8 * 2)
-HOST_LINE_ADDR  = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
+VER_LINE_ADDR   = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
+HOST_LINE_ADDR  = SCREEN_ADDR + (3 * MAP_COLS * 2) + (8 * 2)
 
 LOGO_9C         = 1
 LOGO_DF         = 2
@@ -744,7 +744,7 @@ LogoColors:
     .byte $64, $6E, $6D, $65, $67, $68, $62
 
 VersionPrefix:
-    .asciiz "VERA "
+    .asciiz "VERA MODULE FW:"
 Host600XL:
     .asciiz "ATARI 600XL"
 Host800XL:
