@@ -1,0 +1,9 @@
+rom.bin
+src/rom_labels.h
+src/rom_lst.h
+src/basload_labels.h
+src/x16edit_D_labels.h
+src/x16edit_E_labels.h
+.vscode/
+.idea/
+/build

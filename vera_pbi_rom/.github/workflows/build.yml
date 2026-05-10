@@ -1,0 +1,551 @@
+name: Build Binaries
+on: [push, pull_request]
+
+jobs:
+  README:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential make fonts-dejavu
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install md-to-pdf (npm)
+        run: |
+          npm i md-to-pdf
+      - name: Create output directory
+        run: |
+          mkdir artifacts
+      - name: Create README
+        run: |
+          export PATH=$(pwd)/node_modules/.bin:$PATH
+          cat header_footer.md README.md RELEASES.md | md-to-pdf --config-file .gh/config.js --stylesheet .gh/markdown.css > "artifacts/README.pdf"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readme-pdf
+          path: artifacts/*
+  build-win-x86_64:
+    needs: [README]
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: make git mingw-w64-x86_64-toolchain mingw-w64-x86_64-libelf mingw-w64-x86_64-SDL2 mingw-w64-x86_64-fluidsynth mingw-w64-x86_64-cmake
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        run: |
+          git reset --hard
+          git diff
+          mkdir build
+          cd build
+          cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+          cmake --build .
+      - name: Package Emulator
+        run: |
+          mkdir emu_binaries
+          cp $(which SDL2.dll) emu_binaries/.
+          cp $(which zlib1.dll) emu_binaries/.
+          cp $(which libwinpthread-1.dll) emu_binaries/.
+          cp $(which libfluidsynth-3.dll) emu_binaries/.
+          cp $(which libgcc_s_seh-1.dll) emu_binaries/.
+          cp $(which libglib-2.0-0.dll) emu_binaries/.
+          cp $(which libgmodule-2.0-0.dll) emu_binaries/.
+          cp $(which libportaudio.dll) emu_binaries/.
+          cp $(which libintl-8.dll) emu_binaries/.
+          cp $(which libstdc++-6.dll) emu_binaries/.
+          cp $(which libgomp-1.dll) emu_binaries/.
+          cp $(which libreadline8.dll) emu_binaries/.
+          cp $(which libsndfile-1.dll) emu_binaries/.
+          cp $(which libpcre2-8-0.dll) emu_binaries/.
+          cp $(which libiconv-2.dll) emu_binaries/.
+          cp $(which libtermcap-0.dll) emu_binaries/.
+          cp $(which libFLAC.dll) emu_binaries/.
+          cp $(which libmp3lame-0.dll) emu_binaries/.
+          cp $(which libmpg123-0.dll) emu_binaries/.
+          cp $(which libogg-0.dll) emu_binaries/.
+          cp $(which libopus-0.dll) emu_binaries/.
+          cp $(which libvorbis-0.dll) emu_binaries/.
+          cp $(which libvorbisenc-2.dll) emu_binaries/.
+          cp sdcard.img.zip emu_binaries/.
+          cp build/x16emu.exe emu_binaries/.
+          cp build/makecart.exe emu_binaries/.
+          file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_win64
+          path: emu_binaries/*
+  build-win-i686:
+    needs: [README]
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: make git mingw-w64-i686-toolchain mingw-w64-i686-libelf mingw-w64-i686-SDL2 mingw-w64-i686-fluidsynth mingw-w64-i686-cmake
+          path-type: inherit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        run: |
+          git reset --hard
+          git diff
+          mkdir build
+          cd build
+          cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+          cmake --build .
+      - name: Package Emulator
+        run: |
+          mkdir emu_binaries
+          cp $(which SDL2.dll) emu_binaries/.
+          cp $(which zlib1.dll) emu_binaries/.
+          cp $(which libwinpthread-1.dll) emu_binaries/.
+          cp $(which libfluidsynth-3.dll) emu_binaries/.
+          cp $(which libgcc_s_seh-1.dll) emu_binaries/.
+          cp $(which libglib-2.0-0.dll) emu_binaries/.
+          cp $(which libgmodule-2.0-0.dll) emu_binaries/.
+          cp $(which libportaudio.dll) emu_binaries/.
+          cp $(which libintl-8.dll) emu_binaries/.
+          cp $(which libstdc++-6.dll) emu_binaries/.
+          cp $(which libgomp-1.dll) emu_binaries/.
+          cp $(which libreadline8.dll) emu_binaries/.
+          cp $(which libsndfile-1.dll) emu_binaries/.
+          cp $(which libpcre2-8-0.dll) emu_binaries/.
+          cp $(which libiconv-2.dll) emu_binaries/.
+          cp $(which libtermcap-0.dll) emu_binaries/.
+          cp $(which libFLAC.dll) emu_binaries/.
+          cp $(which libmp3lame-0.dll) emu_binaries/.
+          cp $(which libmpg123-0.dll) emu_binaries/.
+          cp $(which libogg-0.dll) emu_binaries/.
+          cp $(which libopus-0.dll) emu_binaries/.
+          cp $(which libvorbis-0.dll) emu_binaries/.
+          cp $(which libvorbisenc-2.dll) emu_binaries/.
+          cp sdcard.img.zip emu_binaries/.
+          cp build/x16emu.exe emu_binaries/.
+          cp build/makecart.exe emu_binaries/.
+          file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_win32
+          path: emu_binaries/*
+  build-linux-x86_64:
+    needs: [README]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install Dependencies
+        run: |
+          sudo cp /etc/apt/sources.list /etc/apt/sources.list~
+          sudo sed -Ei 's/^# deb-src /deb-src /' /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install -y build-essential make libsdl2-dev libfluidsynth-dev cmake
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        run: |
+          git reset --hard
+          git diff
+          mkdir build
+          cd build
+          cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+          cmake --build .
+      - name: Package Emulator
+        run: |
+          mkdir emu_binaries
+          cp sdcard.img.zip emu_binaries/.
+          cp build/x16emu emu_binaries/.
+          cp build/makecart emu_binaries/.
+          file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_linux-x86_64
+          path: emu_binaries/*
+  build-linux-aarch64:
+    needs: [README]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update 
+          sudo apt-get install -y build-essential make qemu-user-static
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: raspios_lite_arm64:2022-04-04
+          image_additional_mb: 8192
+          cpu: cortex-a53
+          copy_artifact_path: emu_binaries
+          commands: |
+            apt-get update
+            apt-get install -y build-essential make libsdl2-dev file git libfluidsynth-dev cmake
+            mkdir build
+            cd build
+            git reset --hard
+            cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+            cmake --build .
+            cd ..
+            mkdir emu_binaries
+            cp sdcard.img.zip emu_binaries/.
+            cp build/x16emu emu_binaries/.
+            cp build/makecart emu_binaries/.
+            file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          sudo chown -R runner emu_binaries
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_linux-aarch64
+          path: emu_binaries/*
+  build-linux-armhf:
+    needs: [README]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update 
+          sudo apt-get install -y build-essential make qemu-user-static
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: raspios_lite:2022-04-04
+          image_additional_mb: 8192
+          cpu: cortex-a7
+          copy_artifact_path: emu_binaries
+          commands: |
+            apt-get update
+            apt-get install -y build-essential make libsdl2-dev file git libfluidsynth-dev cmake
+            mkdir build
+            cd build
+            git reset --hard
+            cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+            cmake --build .
+            cd ..
+            mkdir emu_binaries
+            cp sdcard.img.zip emu_binaries/.
+            cp build/x16emu emu_binaries/.
+            cp build/makecart emu_binaries/.
+            file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          sudo chown -R runner emu_binaries
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_linux-armhf
+          path: emu_binaries/*
+  build-macos-x86_64:
+    needs: [README]
+    # this is currently macos-15, Sequoia
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: |
+          brew install make sdl2 fluid-synth # cmake is likely here or pulled in
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+          cmake --build .
+      - name: Package Emulator
+        run: |
+          mkdir emu_binaries
+          cp sdcard.img.zip emu_binaries/.
+          cp build/x16emu emu_binaries/.
+          cp build/makecart emu_binaries/.
+          file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_macos_intel
+          path: emu_binaries/*
+  build-macos-arm64:
+    needs: [README]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: | 
+          brew install make sdl2 fluid-synth
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DENABLE_FLUIDSYNTH=ON -DENABLE_TRACE=ON
+          cmake --build .
+      - name: Package Emulator
+        run: |
+          mkdir emu_binaries
+          cp sdcard.img.zip emu_binaries/.
+          cp build/x16emu emu_binaries/.
+          cp build/makecart emu_binaries/.
+          file emu_binaries/*
+      - name: Copy ROM
+        run: |
+          cp latest_rom/rom.bin emu_binaries/.
+          cp latest_rom/*.sym emu_binaries/.
+      - uses: actions/download-artifact@v4
+        with:
+          name: readme-pdf
+          path: emu_binaries
+      - name: Fetch x16-docs PDFs
+        run: gh run download -R X16Community/x16-docs -n x16-docs-pdf --dir emu_binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_macos_m1
+          path: emu_binaries/*
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential make libsdl2-dev cmake
+      - uses: mymindstorm/setup-emsdk@v14
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Fetch latest ROM
+        if: startsWith(github.ref, 'refs/tags/r') != true
+        run: |
+          gh run download -R X16Community/x16-rom -n "ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch latest release ROM
+        if: startsWith(github.ref, 'refs/tags/r')
+        run: |
+          gh run download -R X16Community/x16-rom -n "Release ROM Image" --dir latest_rom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy ROM symbols
+        run: |
+          cp latest_rom/*.h src/.
+      - name: Build Emulator
+        run: |
+          mkdir build
+          cp latest_rom/rom.bin build
+          cd build
+          emcmake cmake .. -DENABLE_FLUIDSYNTH=OFF -DENABLE_TRACE=OFF
+          emmake make
+      - name: Package Emulator
+        run: |
+          mkdir emu_binaries
+          cp build/x16emu.data build/x16emu.html build/x16emu.js build/x16emu.wasm emu_binaries/
+          mkdir emu_binaries/webassembly
+          cp webassembly/styles.css webassembly/main.js webassembly/jszip.min.js emu_binaries/webassembly/
+          file emu_binaries/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x16emu_wasm
+          path: emu_binaries/*
+
