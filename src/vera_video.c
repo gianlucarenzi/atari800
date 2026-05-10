@@ -1,31 +1,11 @@
 /*
  * vera_video.c - SDL2 display output for the VeraX16 FPGA PBI video card
  *
- * Renders the VERA chip's video output into a dedicated 640x480 SDL2 window.
- * Supports text mode (1bpp tile layers) using VERA VRAM and palette data.
- * The window is created lazily on the first call to VERA_VIDEO_Frame().
- *
- * VERA display geometry (VGA 640x480):
- *   Active area: HSTART*4 .. HSTOP*4 (x), VSTART*2 .. VSTOP*2 (y)
- *   Text mode: 8px wide × 16px tall tiles, 80 cols × 25 rows
- *   Tilemap: VRAM[L1_MAPBASE*512], 2 bytes/cell (char, color)
- *   Charset: VRAM[(L1_TILEBASE&0xFC)*512], 16 bytes/glyph
- *   Palette: VRAM[$1FA00], 2 bytes/entry, format: byte0=GGGGBBBB, byte1=0000RRRR
- *
- * NOTE: SDL2's KMSDRM backend does not support multiple windows; on such
- * systems VERA_VIDEO_Frame() is silently skipped.  X11 and Wayland are
- * fully supported.
+ * Renders the VERA chip's video output into a dedicated SDL2 window.
+ * Supports tile and bitmap layers with dynamic scaling and color depths.
  *
  * Copyright (C) 2024-2026 Gianluca Renzi <gianlucarenzi@eurek.it>
  * Copyright (C) 2002-2026 Atari800 development team (see DOC/CREDITS)
- *
- * This file is part of the Atari800 emulator project which emulates
- * the Atari 400, 800, 800XL, 130XE, and 5200 8-bit computers.
- *
- * Atari800 is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include "config.h"
@@ -38,149 +18,216 @@
 #ifdef SDL2
 
 #include <SDL.h>
+#include "sdl/video.h"
 
 #define VERA_W 640
 #define VERA_H 480
 
 static SDL_Window   *vera_win        = NULL;
-static SDL_Surface  *vera_win_surf   = NULL;
-static SDL_Surface  *vera_fb_surf    = NULL;
+static SDL_Renderer *vera_renderer   = NULL;
+static SDL_Texture  *vera_tex        = NULL;
 static Uint32        vera_fb[VERA_W * VERA_H];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
 
 /* ------------------------------------------------------------------
  * Lazy window creation.
- * Returns 1 if the window is ready, 0 otherwise.
- * Sets vera_open = -1 to permanently disable on unsupported backends.
  * ------------------------------------------------------------------ */
 static int vera_open_window(void)
 {
-    if (vera_open == 1)
-        return 1;
-    if (vera_open == -1)
-        return 0;
+    if (vera_open == 1) return 1;
+    if (vera_open == -1) return 0;
 
-    /* KMSDRM is a single-display backend; creating a second SDL window
-     * or renderer on it crashes SDL2 with SIGSEGV.  Detect and skip. */
-    {
-        const char *drv = SDL_GetCurrentVideoDriver();
-        if (drv && strncmp(drv, "KMSDRM", 6) == 0) {
-            Log_print("VERA_VIDEO: %s driver - VERA display window disabled", drv);
-            vera_open = -1;
-            return 0;
-        }
+    const char *drv = SDL_GetCurrentVideoDriver();
+    if (drv && strncmp(drv, "KMSDRM", 6) == 0) {
+        Log_print("VERA_VIDEO: %s driver - VERA display window disabled", drv);
+        vera_open = -1;
+        return 0;
+    }
+
+    int wx = SDL_WINDOWPOS_UNDEFINED;
+    int wy = SDL_WINDOWPOS_UNDEFINED;
+
+    /* Try to position the VERA window to the right of the main window */
+    if (SDL_VIDEO_wnd != NULL) {
+        int main_x, main_y, main_w, main_h;
+        SDL_GetWindowPosition(SDL_VIDEO_wnd, &main_x, &main_y);
+        SDL_GetWindowSize(SDL_VIDEO_wnd, &main_w, &main_h);
+        wx = main_x + main_w + 10;
+        wy = main_y;
     }
 
     vera_win = SDL_CreateWindow("VeraX16 Video",
-                                SDL_WINDOWPOS_UNDEFINED,
-                                SDL_WINDOWPOS_UNDEFINED,
+                                wx, wy,
                                 VERA_W, VERA_H,
-                                SDL_WINDOW_SHOWN);
+                                SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!vera_win) {
         Log_print("VERA_VIDEO: SDL_CreateWindow: %s", SDL_GetError());
         vera_open = -1;
         return 0;
     }
 
-    vera_win_surf = SDL_GetWindowSurface(vera_win);
-    if (!vera_win_surf) {
-        Log_print("VERA_VIDEO: SDL_GetWindowSurface: %s", SDL_GetError());
+    vera_renderer = SDL_CreateRenderer(vera_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!vera_renderer) {
+        Log_print("VERA_VIDEO: SDL_CreateRenderer: %s", SDL_GetError());
         SDL_DestroyWindow(vera_win);
         vera_win = NULL;
         vera_open = -1;
         return 0;
     }
 
-    vera_fb_surf = SDL_CreateRGBSurfaceWithFormatFrom(
-        vera_fb, VERA_W, VERA_H, 32, VERA_W * (int)sizeof(Uint32),
-        SDL_PIXELFORMAT_ARGB8888);
-    if (!vera_fb_surf) {
-        Log_print("VERA_VIDEO: SDL_CreateRGBSurfaceWithFormatFrom: %s", SDL_GetError());
+    SDL_RenderSetLogicalSize(vera_renderer, VERA_W, VERA_H);
+
+    vera_tex = SDL_CreateTexture(vera_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, VERA_W, VERA_H);
+    if (!vera_tex) {
+        Log_print("VERA_VIDEO: SDL_CreateTexture: %s", SDL_GetError());
+        SDL_DestroyRenderer(vera_renderer);
         SDL_DestroyWindow(vera_win);
         vera_win = NULL;
-        vera_win_surf = NULL;
+        vera_renderer = NULL;
         vera_open = -1;
         return 0;
     }
 
-    Log_print("VERA_VIDEO: window opened %dx%d", VERA_W, VERA_H);
+    Log_print("VERA_VIDEO: window opened %dx%d (logical)", VERA_W, VERA_H);
     vera_open = 1;
     return 1;
 }
 
 /* ------------------------------------------------------------------
- * Convert a 4-bit VERA palette entry to 32-bit ARGB8888.
- * Palette format: byte0 = GGGGBBBB, byte1 = 0000RRRR
+ * Palette conversion.
  * ------------------------------------------------------------------ */
-static inline Uint32 pal_to_argb(const UBYTE *vram, int pal_idx)
+static inline Uint32 get_pal_color(const UBYTE *vram, int idx)
 {
-    ULONG pa = 0x1FA00u + (ULONG)(pal_idx & 0xFF) * 2u;
-    UBYTE p0 = vram[pa];          /* GGGGBBBB */
-    UBYTE p1 = vram[pa + 1u];     /* 0000RRRR */
-    int r4 = p1 & 0x0F;
-    int g4 = (p0 >> 4) & 0x0F;
-    int b4 = p0 & 0x0F;
+    ULONG addr = 0x1FA00u + (ULONG)(idx & 0xFF) * 2u;
+    UBYTE g4b4 = vram[addr];
+    UBYTE r4 = vram[addr + 1] & 0x0F;
+    UBYTE g4 = (g4b4 >> 4) & 0x0F;
+    UBYTE b4 = g4b4 & 0x0F;
     return 0xFF000000u |
-           (Uint32)((r4 << 4) | r4) << 16 |
-           (Uint32)((g4 << 4) | g4) << 8  |
-           (Uint32)((b4 << 4) | b4);
+           ((Uint32)(r4 | (r4 << 4)) << 16) |
+           ((Uint32)(g4 | (g4 << 4)) << 8) |
+           (Uint32)(b4 | (b4 << 4));
 }
 
 /* ------------------------------------------------------------------
- * Render one tile/text layer (1bpp mode only for this revision).
+ * Render a tile layer.
  * ------------------------------------------------------------------ */
-static void render_text_layer(const UBYTE *vram,
-                               UBYTE l_config,   UBYTE l_mapbase,
-                               UBYTE l_tilebase,
-                               UBYTE l_hscr_l,   UBYTE l_hscr_h,
-                               UBYTE l_vscr_l,   UBYTE l_vscr_h,
-                               int ax0, int ay0, int ax1, int ay1)
+static void render_tile_layer(const UBYTE *vram, int layer, const VERA_RegSnap *rs, int ax0, int ay0, int ax1, int ay1)
 {
-    static const int map_sizes[] = { 32, 64, 128, 256 };
+    const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
+    UBYTE l_config = l[0];
+    UBYTE l_mapbase = l[1];
+    UBYTE l_tilebase = l[2];
+    int hscroll = ((int)(l[4] & 0x0F) << 8) | (int)l[3];
+    int vscroll = ((int)(l[6] & 0x0F) << 8) | (int)l[5];
+    int hscale = rs->dc0[1];
+    int vscale = rs->dc0[2];
+
+    if (hscale == 0 || vscale == 0) return;
 
     int color_depth = l_config & 0x03;
-    int bitmap_mode = (l_config >> 2) & 0x01;
-    int map_w = map_sizes[(l_config >> 4) & 0x03];
-    int map_h = map_sizes[(l_config >> 6) & 0x03];
-
-    if (bitmap_mode || color_depth != 0)
-        return;   /* TODO: bitmap and higher-bpp tile modes */
-
-    ULONG tile_base  = (ULONG)(l_tilebase & 0xFCu) * 512u;
-    ULONG map_base   = (ULONG)l_mapbase * 512u;
-    int   tile_w     = (l_tilebase & 0x01u) ? 16 : 8;
-    int   tile_h     = (l_tilebase & 0x02u) ? 16 : 8;
-    int   hscroll    = ((int)(l_hscr_h & 0x01) << 8) | (int)l_hscr_l;
-    int   vscroll    = ((int)(l_vscr_h & 0x01) << 8) | (int)l_vscr_l;
-    int   tile_bytes = (tile_w / 8) * tile_h;
+    int map_w = 32 << ((l_config >> 4) & 0x03);
+    int map_h = 32 << ((l_config >> 6) & 0x03);
+    int tile_w = (l_tilebase & 1) ? 16 : 8;
+    int tile_h = (l_tilebase & 2) ? 16 : 8;
+    ULONG tile_base = (ULONG)(l_tilebase & 0xFCu) * 512u;
+    ULONG map_base = (ULONG)l_mapbase * 512u;
 
     for (int py = ay0; py < ay1; py++) {
-        int sy       = ((py - ay0) + vscroll) & 0x3FF;
-        int tile_row = (sy / tile_h) % map_h;
-        int tile_fy  = sy % tile_h;
-        Uint32 *row  = vera_fb + py * VERA_W;
+        int ly_raw = ((py - ay0) * vscale) >> 7;
+        int ly = (ly_raw + vscroll) & 0xFFF;
+        int tile_row = (ly / tile_h) % map_h;
+        int tile_fy = ly % tile_h;
+        Uint32 *row = vera_fb + py * VERA_W;
 
         for (int px = ax0; px < ax1; px++) {
-            int sx       = ((px - ax0) + hscroll) & 0x3FF;
-            int tile_col = (sx / tile_w) % map_w;
-            int tile_fx  = sx % tile_w;
+            int lx_raw = ((px - ax0) * hscale) >> 7;
+            int lx = (lx_raw + hscroll) & 0xFFF;
+            int tile_col = (lx / tile_w) % map_w;
+            int tile_fx = lx % tile_w;
 
-            /* 2-byte tilemap entry: char code + colour attribute */
-            ULONG map_addr  = map_base +
-                              (ULONG)(tile_row * map_w + tile_col) * 2u;
-            UBYTE ch        = vram[ map_addr       & 0x1FFFFu];
-            UBYTE attr      = vram[(map_addr + 1u) & 0x1FFFFu];
+            ULONG map_addr = map_base + (ULONG)(tile_row * map_w + tile_col) * 2u;
+            UBYTE ch_l = vram[map_addr & 0x1FFFFu];
+            UBYTE attr = vram[(map_addr + 1) & 0x1FFFFu];
+            
+            int vflip = 0;
+            int hflip = 0;
+            int tile_idx = ch_l;
+            int color_idx = 0;
 
-            /* 1bpp glyph row: 1 byte = 8 horizontal pixels */
-            ULONG glyph_addr = tile_base +
-                               (ULONG)ch * (ULONG)tile_bytes + (ULONG)tile_fy;
-            UBYTE glyph_row  = vram[glyph_addr & 0x1FFFFu];
-            int   pixel_bit  = (glyph_row >> (7 - tile_fx)) & 1;
+            if (color_depth == 0) { // 1 bpp
+                // 1bpp: Bits 7:4 BG Color, Bits 3:0 FG Color. No flipping.
+                int tfy = tile_fy;
+                int tfx = tile_fx;
+                ULONG glyph_addr = tile_base + (ULONG)tile_idx * (tile_h * (tile_w / 8)) + (tfy * (tile_w / 8)) + (tfx / 8);
+                int pixel_bit = (vram[glyph_addr & 0x1FFFFu] >> (7 - (tfx % 8))) & 1;
+                color_idx = pixel_bit ? (attr & 0x0F) : (attr >> 4);
+            } else {
+                // 2/4/8bpp: Bits 7:4 Palette offset, Bit 3 V-Flip, Bit 2 H-Flip, Bits 1:0 Tile Index 9:8.
+                vflip = (attr >> 3) & 1;
+                hflip = (attr >> 2) & 1;
+                tile_idx |= (int)(attr & 0x03) << 8;
+                
+                int tfy = vflip ? (tile_h - 1 - tile_fy) : tile_fy;
+                int tfx = hflip ? (tile_w - 1 - tile_fx) : tile_fx;
+                
+                int bpp = 1 << color_depth;
+                int pixels_per_byte = 8 / bpp;
+                ULONG glyph_addr = tile_base + (ULONG)tile_idx * (tile_h * tile_w * bpp / 8) + (tfy * tile_w * bpp / 8) + (tfx * bpp / 8);
+                UBYTE b = vram[glyph_addr & 0x1FFFFu];
+                int shift = (pixels_per_byte - 1 - (tfx % pixels_per_byte)) * bpp;
+                color_idx = (b >> shift) & ((1 << bpp) - 1);
+                
+                if (color_idx != 0 && color_depth != 3) { // not 8bpp
+                    color_idx += (attr >> 4) << 4;
+                }
+            }
 
-            /* attr bits[3:0]=FG index, bits[7:4]=BG index */
-            int pal_idx = pixel_bit ? (attr & 0x0Fu) : ((attr >> 4) & 0x0Fu);
-            row[px] = pal_to_argb(vram, pal_idx);
+            if (color_idx == 0) continue;
+            row[px] = get_pal_color(vram, color_idx);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------
+ * Render a bitmap layer.
+ * ------------------------------------------------------------------ */
+static void render_bitmap_layer(const UBYTE *vram, int layer, const VERA_RegSnap *rs, int ax0, int ay0, int ax1, int ay1)
+{
+    const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
+    UBYTE l_config = l[0];
+    UBYTE l_mapbase = l[1];
+    UBYTE l_tilebase = l[2];
+    
+    int hscale = rs->dc0[1];
+    int vscale = rs->dc0[2];
+    if (hscale == 0 || vscale == 0) return;
+
+    int color_depth = l_config & 0x03;
+    int bpp = 1 << color_depth;
+    int bitmap_w = (l_tilebase & 1) ? 640 : 320;
+    ULONG bitmap_base = (ULONG)l_mapbase * 512u;
+    int palette_offset = (l_tilebase & 0x0F) << 4;
+
+    for (int py = ay0; py < ay1; py++) {
+        int ly = ((py - ay0) * vscale) >> 7;
+        Uint32 *row = vera_fb + py * VERA_W;
+        for (int px = ax0; px < ax1; px++) {
+            int lx = ((px - ax0) * hscale) >> 7;
+            if (lx >= bitmap_w) continue;
+            
+            ULONG pixel_offset_bits = ((ULONG)ly * bitmap_w + lx) * bpp;
+            ULONG byte_offset = pixel_offset_bits / 8;
+            int bit_offset = 7 - (pixel_offset_bits % 8) - (bpp - 1);
+            if (bit_offset < 0) bit_offset = 0;
+            
+            UBYTE b = vram[(bitmap_base + byte_offset) & 0x1FFFFu];
+            int color_idx = (b >> bit_offset) & ((1 << bpp) - 1);
+            if (color_idx == 0) continue;
+            
+            if (color_depth != 3) color_idx += palette_offset;
+            row[px] = get_pal_color(vram, color_idx);
         }
     }
 }
@@ -190,75 +237,56 @@ static void render_text_layer(const UBYTE *vram,
  * ------------------------------------------------------------------ */
 void VERA_VIDEO_Frame(void)
 {
-    if (!PBI_VERAX16_enabled)
-        return;
+    if (!PBI_VERAX16_enabled) return;
 
     VERA_RegSnap rs;
     PBI_VERAX16_GetRegSnap(&rs);
     const UBYTE *vram = PBI_VERAX16_GetVRAMPtr();
 
-    /* Active pixel rectangle from Display Composer window registers */
-    int ax0 = (int)rs.dc1[0] * 4;   /* HSTART × 4 */
-    int ax1 = (int)rs.dc1[1] * 4;   /* HSTOP  × 4 */
-    int ay0 = (int)rs.dc1[2] * 2;   /* VSTART × 2 */
-    int ay1 = (int)rs.dc1[3] * 2;   /* VSTOP  × 2 */
-    if (ax0 < 0)      ax0 = 0;
+    /* Active pixel rectangle */
+    int ax0 = (int)rs.dc1[0] * 4;
+    int ax1 = (int)rs.dc1[1] * 4;
+    int ay0 = (int)rs.dc1[2] * 2;
+    int ay1 = (int)rs.dc1[3] * 2;
+    if (ax0 < 0) ax0 = 0;
     if (ax1 > VERA_W) ax1 = VERA_W;
-    if (ay0 < 0)      ay0 = 0;
+    if (ay0 < 0) ay0 = 0;
     if (ay1 > VERA_H) ay1 = VERA_H;
 
-    /* Fill framebuffer with border colour */
-    Uint32 border = pal_to_argb(vram, rs.dc0[3]);
-    int i;
-    for (i = 0; i < VERA_W * VERA_H; i++)
-        vera_fb[i] = border;
+    /* Fill border */
+    Uint32 border = get_pal_color(vram, rs.dc0[3]);
+    for (int i = 0; i < VERA_W * VERA_H; i++) vera_fb[i] = border;
 
-    /* Layer 0 (bit 4 of DC_VIDEO) */
-    if ((rs.dc0[0] & 0x10u) && ax1 > ax0 && ay1 > ay0)
-        render_text_layer(vram,
-                          rs.l0[0], rs.l0[1], rs.l0[2],
-                          rs.l0[3], rs.l0[4], rs.l0[5], rs.l0[6],
-                          ax0, ay0, ax1, ay1);
-
-    /* Layer 1 (bit 5 of DC_VIDEO) */
-    if ((rs.dc0[0] & 0x20u) && ax1 > ax0 && ay1 > ay0)
-        render_text_layer(vram,
-                          rs.l1[0], rs.l1[1], rs.l1[2],
-                          rs.l1[3], rs.l1[4], rs.l1[5], rs.l1[6],
-                          ax0, ay0, ax1, ay1);
-
-    if (!vera_open_window())
-        return;
-
-    if (SDL_BlitSurface(vera_fb_surf, NULL, vera_win_surf, NULL) != 0) {
-        Log_print("VERA_VIDEO: SDL_BlitSurface: %s", SDL_GetError());
-        return;
+    /* Layers */
+    for (int layer = 0; layer < 2; layer++) {
+        UBYTE enabled = (layer == 0) ? (rs.dc0[0] & 0x10) : (rs.dc0[0] & 0x20);
+        if (enabled && ax1 > ax0 && ay1 > ay0) {
+            UBYTE l_config = (layer == 0) ? rs.l0[0] : rs.l1[0];
+            if (l_config & 0x04) render_bitmap_layer(vram, layer, &rs, ax0, ay0, ax1, ay1);
+            else render_tile_layer(vram, layer, &rs, ax0, ay0, ax1, ay1);
+        }
     }
-    if (SDL_UpdateWindowSurface(vera_win) != 0)
-        Log_print("VERA_VIDEO: SDL_UpdateWindowSurface: %s", SDL_GetError());
+
+    if (!vera_open_window()) return;
+
+    SDL_UpdateTexture(vera_tex, NULL, vera_fb, VERA_W * sizeof(Uint32));
+    SDL_RenderClear(vera_renderer);
+    SDL_RenderCopy(vera_renderer, vera_tex, NULL, NULL);
+    SDL_RenderPresent(vera_renderer);
 }
 
-int VERA_VIDEO_Init(void)
-{
-    return 1;   /* window created lazily on first VERA_VIDEO_Frame() */
-}
+int VERA_VIDEO_Init(void) { return 1; }
 
 void VERA_VIDEO_Exit(void)
 {
-    if (vera_fb_surf) { SDL_FreeSurface(vera_fb_surf); vera_fb_surf = NULL; }
-    vera_win_surf = NULL;
+    if (vera_tex) { SDL_DestroyTexture(vera_tex); vera_tex = NULL; }
+    if (vera_renderer) { SDL_DestroyRenderer(vera_renderer); vera_renderer = NULL; }
     if (vera_win) { SDL_DestroyWindow(vera_win); vera_win = NULL; }
     vera_open = 0;
 }
 
 #else /* !SDL2 */
-
-int  VERA_VIDEO_Init(void)  { return 1; }
+int  VERA_VIDEO_Init(void) { return 1; }
 void VERA_VIDEO_Frame(void) {}
-void VERA_VIDEO_Exit(void)  {}
-
-#endif /* SDL2 */
-
-/*
-vim:ts=4:sw=4:
-*/
+void VERA_VIDEO_Exit(void) {}
+#endif
