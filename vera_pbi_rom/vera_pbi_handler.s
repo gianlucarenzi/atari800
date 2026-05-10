@@ -152,11 +152,14 @@ XIO_VERA_CLEAR   = 34
 XIO_VERA_DEMO    = 35
 XIO_VERA_PUTC    = 36
 XIO_VERA_CURSOR  = 37
+XIO_VERA_HOOKS   = 38
 
 VERA_REQ_NONE    = $00
 VERA_REQ_CLEAR   = $01
 VERA_REQ_DEMO    = $02
 VERA_REQ_PUTC    = $03
+VERA_REQ_HOOKS   = $04
+VERA_REQ_CURSOR  = $05
 
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
@@ -447,6 +450,8 @@ SPECIAL:
     beq @PutChar
     cmp #XIO_VERA_CURSOR
     beq @SetCursor
+    cmp #XIO_VERA_HOOKS
+    beq @Hooks
 
 @NotSupported:
     lda #$00
@@ -491,6 +496,15 @@ SPECIAL:
     sta VERA_CTL_CURSOR_X
     lda ICAX2,x
     sta VERA_CTL_CURSOR_Y
+    lda #VERA_REQ_CURSOR
+    sta VERA_CTL_REQUEST
+    jsr CALL_SERVICE
+    jmp NONEED
+
+@Hooks:
+    lda #VERA_REQ_HOOKS
+    sta VERA_CTL_REQUEST
+    jsr CALL_SERVICE
     jmp NONEED
 
 CALL_SERVICE:

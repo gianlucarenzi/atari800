@@ -26,7 +26,7 @@ SRC      = vera_pbi_handler.s
 CFG      = vera_pbi.cfg
 SYS      = VERA.SYS
 SYSSRC   = vera_sys.c
-SYSASMSRC = vera_sys_vbi.s
+SYSASMSRC = vera_sys_vbi.s vera_sys_es_hook.s
 AUTORUN  = AUTORUN.SYS
 ATR      = vera_pbi.atr
 ATRBUILD = .atrbuild
@@ -63,7 +63,7 @@ atr: $(AUTORUN)
 
 clean:
 	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) \
-		vera_sys.o vera_sys_vbi.o vera_sys_autorun.o
+		vera_sys.o vera_sys_vbi.o vera_sys_es_hook.o vera_sys_autorun.o
 
 install: $(TARGET)
 	@mkdir -p $(ROMDIR)
