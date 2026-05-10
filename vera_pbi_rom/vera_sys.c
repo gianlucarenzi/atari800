@@ -29,6 +29,7 @@
 #define VERA_SCREEN_ROWS 25
 #define VERA_CHAR_BLANK  0x20
 #define VERA_TEXT_COLOR  0x61
+#define VERA_TEXT_COLOR_INV 0x16
 #define VERA_SCREEN_BASE_M 0xB0
 #define VERA_SCREEN_BANK   0x11
 #define VERA_CURSOR_RATE   20u
@@ -78,6 +79,8 @@ static void vera_redraw_cursor(void);
 static void vera_touch_cursor(void);
 static void vera_sync_atari_cursor(void);
 static void vera_put_hook_char(unsigned char ch);
+static unsigned char vera_char_color(unsigned char ch);
+static unsigned char vera_normalize_char(unsigned char ch);
 
 typedef struct VeraCtl {
     unsigned char sig0;
@@ -177,6 +180,16 @@ static void vera_set_cell(unsigned char column, unsigned char row, unsigned char
     vera_write_cell(column, row, ch, VERA_TEXT_COLOR);
 }
 
+static unsigned char vera_char_color(unsigned char ch)
+{
+    return (ch & 0x80u) ? VERA_TEXT_COLOR_INV : VERA_TEXT_COLOR;
+}
+
+static unsigned char vera_normalize_char(unsigned char ch)
+{
+    return (unsigned char)(ch & 0x7Fu);
+}
+
 static void vera_clear_line(unsigned char row)
 {
     unsigned char column;
@@ -231,6 +244,7 @@ static void vera_newline(void)
 static void vera_put_char(unsigned char ch)
 {
     volatile VeraCtl* ctl = vera_ctl();
+    unsigned char color;
 
     vera_hide_cursor();
 
@@ -238,10 +252,6 @@ static void vera_put_char(unsigned char ch)
         vera_newline();
         vera_touch_cursor();
         return;
-    }
-
-    if (ch & 0x80u) {
-        ch &= 0x7Fu;
     }
 
     if (ch == 0x08 || ch == 0x7E) {
@@ -253,12 +263,15 @@ static void vera_put_char(unsigned char ch)
         return;
     }
 
+    color = vera_char_color(ch);
+    ch = vera_normalize_char(ch);
+
     if (ch < 0x20) {
         vera_touch_cursor();
         return;
     }
 
-    vera_set_cell(ctl->cursor_x, ctl->cursor_y, ch);
+    vera_write_cell(ctl->cursor_x, ctl->cursor_y, ch, color);
     ++ctl->cursor_x;
     if (ctl->cursor_x >= VERA_SCREEN_COLS) {
         vera_newline();
@@ -348,6 +361,7 @@ static void vera_put_hook_char(unsigned char ch)
 {
     unsigned char old_column = vera_hook_col_before;
     unsigned char old_row = vera_hook_row_before;
+    unsigned char color = vera_char_color(ch);
 
     if (ch == 0x7Du) {
         vera_clear_text();
@@ -360,13 +374,11 @@ static void vera_put_hook_char(unsigned char ch)
         return;
     }
 
-    if (ch & 0x80u) {
-        ch &= 0x7Fu;
-    }
+    ch = vera_normalize_char(ch);
 
     if (old_column < VERA_SCREEN_COLS && old_row < VERA_SCREEN_ROWS && ch >= 0x20u) {
         vera_hide_cursor();
-        vera_write_cell(old_column, old_row, ch, VERA_TEXT_COLOR);
+        vera_write_cell(old_column, old_row, ch, color);
     }
 
     vera_sync_atari_cursor();

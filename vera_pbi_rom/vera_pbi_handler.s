@@ -59,6 +59,8 @@ ICCOM   = $0342         ; IOCB command byte
 ICAX1   = $034A         ; Auxiliary byte 1 (used here as register index)
 ICAX2   = $034B         ; Auxiliary byte 2
 CRITIC  = $42           ; Critical section flag (0 = deferred VBI enabled)
+RAMTOP  = $6A
+PORTB   = $D301
 
 ; Shared XIO/VBI control block. It lives at the beginning of the resident
 ; LOWBSS area in VERA.SYS, which is fixed at $8000 by vera_sys.cfg.
@@ -120,15 +122,22 @@ VERA_LAYER1_EN  = $20           ; Enable Layer 1
 VERA_MAP_128x64 = $60           ; 128-tile wide, 64-tile tall map
 
 SCREEN_ADDR     = $01B000       ; Tilemap start (128x64 = 8 KB, in bank 1)
-CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars x 16 bytes)
+CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars x 8 bytes)
 
 SCREEN_MAPBASE  = $D8           ; L1_MAPBASE  = SCREEN_ADDR >> 9
-SCREEN_TILEBASE = $FA           ; L1_TILEBASE = CHARSET_ADDR >> 9 | height16
+SCREEN_TILEBASE = $F8           ; L1_TILEBASE = CHARSET_ADDR >> 9, 8x8 tiles
 
 SCREEN_COLS     = 80
 MAP_COLS        = 128
+MAP_ROWS        = 64
 SCREEN_ROWS     = 25
 TEXT_COLOR      = $61           ; White on blue
+
+TMP_PTR_LO      = $80
+TMP_PTR_HI      = $81
+TMP0            = $82
+TMP1            = $83
+TMP2            = $84
 
 VERA_CTL_SIG0       = VERA_CTL_BASE + 0
 VERA_CTL_SIG1       = VERA_CTL_BASE + 1
@@ -163,12 +172,38 @@ VERA_REQ_CURSOR  = $05
 
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
-DC_VSTART_VAL   = $14
-DC_VSTOP_VAL    = $DC
+DC_VSTART_VAL   = $00
+DC_VSTOP_VAL    = $F0
 
-BANNER1_ADDR    = SCREEN_ADDR + (9  * MAP_COLS * 2) + (26 * 2)
-BANNER2_ADDR    = SCREEN_ADDR + (12 * MAP_COLS * 2) + (30 * 2)
-BANNER3_ADDR    = SCREEN_ADDR + (15 * MAP_COLS * 2) + (37 * 2)
+LOGO1_ADDR      = SCREEN_ADDR + (0 * MAP_COLS * 2) + (0 * 2)
+LOGO2_ADDR      = SCREEN_ADDR + (1 * MAP_COLS * 2) + (0 * 2)
+LOGO3_ADDR      = SCREEN_ADDR + (2 * MAP_COLS * 2) + (0 * 2)
+LOGO4_ADDR      = SCREEN_ADDR + (3 * MAP_COLS * 2) + (0 * 2)
+LOGO5_ADDR      = SCREEN_ADDR + (4 * MAP_COLS * 2) + (0 * 2)
+LOGO6_ADDR      = SCREEN_ADDR + (5 * MAP_COLS * 2) + (0 * 2)
+LOGO7_ADDR      = SCREEN_ADDR + (6 * MAP_COLS * 2) + (0 * 2)
+VER_LINE_ADDR   = SCREEN_ADDR + (0 * MAP_COLS * 2) + (8 * 2)
+HOST_LINE_ADDR  = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
+
+LOGO_9C         = 1
+LOGO_DF         = 2
+LOGO_A9         = 3
+LOGO_9A         = 4
+LOGO_A5         = 5
+LOGO_A7         = 6
+LOGO_9F         = 7
+LOGO_B5         = 8
+LOGO_B6         = 9
+LOGO_B7         = 10
+LOGO_BB         = 11
+LOGO_AC         = 12
+LOGO_9E         = 13
+LOGO_AF         = 14
+LOGO_BE         = 15
+LOGO_BC         = 16
+LOGO_81         = 17
+LOGO_AA         = 18
+LOGO_B4         = 19
 
 .macro PRINT_LINE addr, label
     .local CopyChar, Done
@@ -276,7 +311,7 @@ INIT_VERA_SCREEN:
     sta VERA_DC_HSCALE
     lda #$80
     sta VERA_DC_VSCALE
-    lda #$00
+    lda #$06
     sta VERA_DC_BORDER
 
     jsr CLEAR_SCREEN
@@ -292,9 +327,9 @@ INIT_VERA_SCREEN:
     lda #$0F
     sta VERA_DATA0
 
-    PRINT_LINE BANNER1_ADDR, BannerLine1
-    PRINT_LINE BANNER2_ADDR, BannerLine2
-    PRINT_LINE BANNER3_ADDR, BannerLine3
+    jsr DRAW_LOGO
+    jsr PRINT_VERSION_LINE
+    jsr PRINT_HOST_LINE
     rts
 
 WAIT_VERA:
@@ -317,7 +352,7 @@ CLEAR_SCREEN:
     sta VERA_ADDR_M
     lda #(VERA_INC1 | ^SCREEN_ADDR)
     sta VERA_ADDR_H
-    ldy #SCREEN_ROWS
+    ldy #MAP_ROWS
 @Row:
     ldx #MAP_COLS
 @Col:
@@ -339,58 +374,211 @@ LOAD_FULL_FONT:
     lda #(VERA_INC1 | $01)
     sta VERA_ADDR_H
 
-    ldx #0
-@NextChar:
-    txa
-    cmp #32
-    bcc @ToControl
-    cmp #96
-    bcc @ToUpper
-    tay
-    jmp @SetSource
-
-@ToControl:
-    clc
-    adc #64
-    tay
-    jmp @SetSource
-
-@ToUpper:
-    sec
-    sbc #32
-    tay
-
-@SetSource:
-    lda #0
-    sta $81
-
-    tya
-    asl
-    rol $81
-    asl
-    rol $81
-    asl
-    rol $81
-
-    clc
-    adc #<FontData
-    sta $80
-    lda $81
-    adc #>FontData
-    sta $81
-
+    lda #<FontData
+    sta TMP_PTR_LO
+    lda #>FontData
+    sta TMP_PTR_HI
+    ldx #4
     ldy #0
-@CopyRows:
-    lda ($80),y
-    sta VERA_DATA0
+@CopyPage:
+    lda (TMP_PTR_LO),y
     sta VERA_DATA0
     iny
-    cpy #8
-    bne @CopyRows
+    bne @CopyPage
+    inc TMP_PTR_HI
+    dex
+    bne @CopyPage
+    rts
 
+WRITE_CHAR:
+    sta VERA_DATA0
+    lda TMP0
+    sta VERA_DATA0
+    rts
+
+PRINT_PTR:
+    ldy #0
+@Loop:
+    lda (TMP_PTR_LO),y
+    beq @Done
+    jsr WRITE_CHAR
+    iny
+    bne @Loop
+@Done:
+    rts
+
+DRAW_LOGO:
+    ldx #0
+@Next:
+    lda LogoColors,x
+    sta TMP0
+    lda LogoAddrLo,x
+    sta VERA_ADDR_L
+    lda LogoAddrHi,x
+    sta VERA_ADDR_M
+    lda #(VERA_INC1 | ^LOGO1_ADDR)
+    sta VERA_ADDR_H
+    lda LogoPtrLo,x
+    sta TMP_PTR_LO
+    lda LogoPtrHi,x
+    sta TMP_PTR_HI
+    jsr PRINT_PTR
     inx
-    cpx #128
-    bne @NextChar
+    cpx #7
+    bne @Next
+    lda #TEXT_COLOR
+    sta TMP0
+    rts
+
+PRINT_DECIMAL:
+    ldy #0
+@Hundreds:
+    cmp #100
+    bcc @Tens
+    sec
+    sbc #100
+    iny
+    bne @Hundreds
+@Tens:
+    ldx #0
+@TenLoop:
+    cmp #10
+    bcc @Emit
+    sec
+    sbc #10
+    inx
+    bne @TenLoop
+@Emit:
+    sta TMP2
+    tya
+    beq @MaybeTens
+    clc
+    adc #'0'
+    jsr WRITE_CHAR
+@MaybeTens:
+    cpx #0
+    beq @Ones
+    txa
+    clc
+    adc #'0'
+    jsr WRITE_CHAR
+@Ones:
+    lda TMP2
+    clc
+    adc #'0'
+    jmp WRITE_CHAR
+
+PRINT_VERSION_LINE:
+    lda #TEXT_COLOR
+    sta TMP0
+    lda #<VER_LINE_ADDR
+    sta VERA_ADDR_L
+    lda #>VER_LINE_ADDR
+    sta VERA_ADDR_M
+    lda #(VERA_INC1 | ^VER_LINE_ADDR)
+    sta VERA_ADDR_H
+    lda #<VersionPrefix
+    sta TMP_PTR_LO
+    lda #>VersionPrefix
+    sta TMP_PTR_HI
+    jsr PRINT_PTR
+
+    lda #$7E
+    sta VERA_CTRL_REG
+    lda VERA_DC_HSCALE
+    jsr PRINT_DECIMAL
+    lda #'.'
+    jsr WRITE_CHAR
+    lda VERA_DC_VSCALE
+    jsr PRINT_DECIMAL
+    lda #'.'
+    jsr WRITE_CHAR
+    lda VERA_DC_BORDER
+    jsr PRINT_DECIMAL
+    lda #$00
+    sta VERA_CTRL_REG
+    rts
+
+PRINT_HOST_LINE:
+    lda #TEXT_COLOR
+    sta TMP0
+    lda #<HOST_LINE_ADDR
+    sta VERA_ADDR_L
+    lda #>HOST_LINE_ADDR
+    sta VERA_ADDR_M
+    lda #(VERA_INC1 | ^HOST_LINE_ADDR)
+    sta VERA_ADDR_H
+    lda RAMTOP
+    cmp #$80
+    bcs HostMaybeXE
+    lda #<Host600XL
+    sta TMP_PTR_LO
+    lda #>Host600XL
+    sta TMP_PTR_HI
+    lda #TEXT_COLOR
+    sta TMP0
+    jmp PRINT_PTR
+HostMaybeXE:
+    jsr HAS_XE_BANK
+    bcc HostNoXE
+    lda #<Host130XE
+    sta TMP_PTR_LO
+    lda #>Host130XE
+    sta TMP_PTR_HI
+    lda #TEXT_COLOR
+    sta TMP0
+    jmp PRINT_PTR
+HostNoXE:
+    lda #<Host800XL
+    sta TMP_PTR_LO
+    lda #>Host800XL
+    sta TMP_PTR_HI
+    lda #TEXT_COLOR
+    sta TMP0
+    jmp PRINT_PTR
+
+HAS_XE_BANK:
+    php
+    sei
+    lda PORTB
+    sta TMP0
+    lda $4000
+    sta TMP1
+    lda #$5A
+    sta $4000
+    lda TMP0
+    and #$C3
+    ora #$20
+    sta PORTB
+    lda $4000
+    sta TMP2
+    lda #$A5
+    sta $4000
+    lda TMP0
+    sta PORTB
+    lda $4000
+    cmp #$5A
+    bne @No
+    lda TMP1
+    sta $4000
+    lda TMP0
+    and #$C3
+    ora #$20
+    sta PORTB
+    lda TMP2
+    sta $4000
+    lda TMP0
+    sta PORTB
+    plp
+    sec
+    rts
+@No:
+    lda TMP1
+    sta $4000
+    lda TMP0
+    sta PORTB
+    plp
+    clc
     rts
 
 GETBYT:
@@ -525,16 +713,46 @@ NONEED:
     sec
     rts
 
-BannerLine1:
-    .asciiz "**** COMMANDER X16 VERA ****"
+LogoLine1:
+    .byte $02, ' ', ' ', ' ', ' ', ' ', $03, 0
+LogoLine2:
+    .byte $05, $02, ' ', ' ', ' ', $03, $06, 0
+LogoLine3:
+    .byte $08, $09, $02, ' ', $03, $09, $0A, 0
+LogoLine4:
+    .byte ' ', $0C, $0D, ' ', $0E, $0C, 0
+LogoLine5:
+    .byte ' ', $0F, $10, ' ', $11, $0F, 0
+LogoLine6:
+    .byte $13, $09, $14, ' ', $15, $09, $16, 0
+LogoLine7:
+    .byte $17, $14, ' ', ' ', ' ', $15, $18, 0
 
-BannerLine2:
-    .asciiz "PBI VIDEO INTERFACE"
+LogoAddrLo:
+    .byte <LOGO1_ADDR, <LOGO2_ADDR, <LOGO3_ADDR, <LOGO4_ADDR
+    .byte <LOGO5_ADDR, <LOGO6_ADDR, <LOGO7_ADDR
+LogoAddrHi:
+    .byte >LOGO1_ADDR, >LOGO2_ADDR, >LOGO3_ADDR, >LOGO4_ADDR
+    .byte >LOGO5_ADDR, >LOGO6_ADDR, >LOGO7_ADDR
+LogoPtrLo:
+    .byte <LogoLine1, <LogoLine2, <LogoLine3, <LogoLine4
+    .byte <LogoLine5, <LogoLine6, <LogoLine7
+LogoPtrHi:
+    .byte >LogoLine1, >LogoLine2, >LogoLine3, >LogoLine4
+    .byte >LogoLine5, >LogoLine6, >LogoLine7
+LogoColors:
+    .byte $64, $6E, $6D, $65, $67, $68, $62
 
-BannerLine3:
-    .asciiz "READY."
+VersionPrefix:
+    .asciiz "VERA "
+Host600XL:
+    .asciiz "ATARI 600XL"
+Host800XL:
+    .asciiz "ATARI 800XL"
+Host130XE:
+    .asciiz "ATARI 130XE"
 
 FontData:
-    .incbin "atari_font.bin"
+    .incbin "x16_font.bin"
 
 ; End of ROM
