@@ -22,6 +22,15 @@ int  VERA_VIDEO_Init(void);
 /* Called once per emulated frame to render the VERA display. */
 void VERA_VIDEO_Frame(void);
 
+/* Reset the cached VERA output buffers. */
+void VERA_VIDEO_Reset(void);
+
+/* Render one VERA scanline into the cached output buffer. */
+void VERA_VIDEO_Scanline(UWORD scanline);
+
+/* Re-render the tail of a VERA scanline after a mid-line register/VRAM change. */
+void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart);
+
 /* Release all SDL resources. */
 void VERA_VIDEO_Exit(void);
 

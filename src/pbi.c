@@ -381,6 +381,14 @@ void PBI_VSync(void)
 #endif
 }
 
+void PBI_Scanline(void)
+{
+#ifdef PBI_VERAX16
+	if (PBI_VERAX16_enabled)
+		PBI_VERAX16_Scanline();
+#endif
+}
+
 #ifndef BASIC
 
 void PBI_StateSave(void)

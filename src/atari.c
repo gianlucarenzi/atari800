@@ -1298,6 +1298,7 @@ static void basic_frame(void)
 	ANTIC_ypos = 0;
 	do {
 		POKEY_Scanline();		/* check and generate IRQ */
+		PBI_Scanline();
 		BASIC_LINE;
 	} while (ANTIC_ypos < 8);
 
@@ -1305,12 +1306,14 @@ static void basic_frame(void)
 	/* scanlines 8 - 247 */
 	do {
 		POKEY_Scanline();		/* check and generate IRQ */
+		PBI_Scanline();
 		basic_antic_scanline();
 		BASIC_LINE;
 	} while (ANTIC_ypos < 248);
 
 	/* scanline 248 */
 	POKEY_Scanline();			/* check and generate IRQ */
+	PBI_Scanline();
 	CPU_GO(ANTIC_NMIST_C);
 	ANTIC_NMIST = 0x5f;				/* Set VBLANK */
 	if (ANTIC_NMIEN & 0x40) {
@@ -1322,6 +1325,7 @@ static void basic_frame(void)
 	/* scanlines 249 - 261(311) */
 	do {
 		POKEY_Scanline();		/* check and generate IRQ */
+		PBI_Scanline();
 		BASIC_LINE;
 	} while (ANTIC_ypos < Atari800_tv_mode);
 }

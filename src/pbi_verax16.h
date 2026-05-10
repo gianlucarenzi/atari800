@@ -53,6 +53,7 @@ int  PBI_VERAX16_D1ffGetByte(void);  /* IRQ status bit for $D1FF read */
 
 /* Called once per display frame to generate VSYNC IRQ if enabled */
 void PBI_VERAX16_VSync(void);
+void PBI_VERAX16_Scanline(void);
 
 /* Direct VRAM access for debugging/state inspection */
 UBYTE PBI_VERAX16_GetVRAM(ULONG addr);
