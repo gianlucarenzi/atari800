@@ -7,16 +7,8 @@
 
 __AUTOSTART__ = $0100
 
-    .segment "AUTOINIT"
-    .word INITAD
-    .word INITAD + 1
-    .word start
-
     .segment "AUTOSTRT"
     .word RUNAD
     .word RUNAD + 1
-    .word _run_stub
+    .word start
 
-    .segment "CODE"
-_run_stub:
-    jmp $A000

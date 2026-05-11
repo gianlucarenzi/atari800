@@ -2023,6 +2023,7 @@ void PBI_VERAX16_Reset(void)
 {
     if (PBI_VERAX16_enabled) {
         verax16_cs = FALSE;
+        memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
         vera_chip_reset("PBI_RESET");
     }
 }
@@ -2102,8 +2103,9 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
         return 0;
     }
 
-    /* Any other D1FF value deselects this device */
+    /* Any other D1FF value deselects this device: restore OS math pack */
     verax16_cs = FALSE;
+    memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
     return PBI_NOT_HANDLED;
 }
 

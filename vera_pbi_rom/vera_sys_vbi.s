@@ -59,7 +59,7 @@ _CallVeraApiService:
 save_cc65_zp:
     ldx #zpspace - 1
 @save_zp:
-    lda sp,x
+    lda c_sp,x
     sta vbi_zp_save,x
     dex
     bpl @save_zp
@@ -69,7 +69,7 @@ restore_cc65_zp:
     ldx #zpspace - 1
 @restore_zp:
     lda vbi_zp_save,x
-    sta sp,x
+    sta c_sp,x
     dex
     bpl @restore_zp
     rts

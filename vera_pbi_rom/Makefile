@@ -54,10 +54,17 @@ $(SYS): $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC) $(SYSCFG)
 $(AUTORUN): $(SYS)
 	cp $(SYS) $(AUTORUN)
 
-atr: $(AUTORUN)
+DOS20DIR  = .dos20
+DOS20EXTRACT = extract_dos20.py
+
+$(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
+	python3 $(DOS20EXTRACT)
+
+atr: $(AUTORUN) $(DOS20DIR)/DOS.SYS
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
 	cp $(AUTORUN) $(ATRBUILD)/$(AUTORUN)
+	cp $(DOS20DIR)/DOS.SYS $(DOS20DIR)/DUP.SYS $(ATRBUILD)/
 	$(DIR2ATR) -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
 

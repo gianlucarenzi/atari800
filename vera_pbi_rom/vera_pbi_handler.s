@@ -55,6 +55,23 @@ PDIMSK  = $0249         ; PBI interrupt mask
 NEWDEV  = $E486         ; Install device handler in HATABS
 GENDEV  = $E48F         ; Generic CIO device handler vector
 
+; RAM gate: CIO dispatch table + stubs copied to page 6 by INIT.
+; Layout (75 bytes total):
+;   +0   dispatch table  12 bytes (6 × addr-1 word)
+;   +12  stub_noneed      8 bytes  OPEN/CLOSE: inline result, no ROM map
+;   +20  epilogue         7 bytes  shared: unmap ROM / CLI / RTS
+;   +27  stub_get        12 bytes  SEI/map/JSR GETBYT /JMP epilogue
+;   +39  stub_put        12 bytes  SEI/map/JSR PUTBYT /JMP epilogue
+;   +51  stub_status     12 bytes  SEI/map/JSR GETSTA /JMP epilogue
+;   +63  stub_special    12 bytes  SEI/map/JSR SPECIAL/JMP epilogue
+GATE_RAM          = $0600
+GATE_STUB_NONEED  = GATE_RAM + 12
+GATE_EPILOGUE     = GATE_RAM + 20
+GATE_STUB_GET     = GATE_RAM + 27
+GATE_STUB_PUT     = GATE_RAM + 39
+GATE_STUB_STATUS  = GATE_RAM + 51
+GATE_STUB_SPECIAL = GATE_RAM + 63
+
 ICCOM   = $0342         ; IOCB command byte
 ICAX1   = $034A         ; Auxiliary byte 1 (used here as register index)
 ICAX2   = $034B         ; Auxiliary byte 2
@@ -260,9 +277,19 @@ INIT:
     ora PNDEVREQ
     sta PDVMSK
 
+    ; Copy CIO gate (dispatch table + stubs) to page-6 RAM
+    ldy #(GATE_CODE_LEN - 1)
+@copy:
+    lda gate_code,y
+    sta GATE_RAM,y
+    dey
+    bpl @copy
+
+    ; Register the RAM gate in HATABS (not GENDEV: that reads $D80D each
+    ; call, which would hit the math pack when the ROM is not mapped)
     ldx #DEVNAM
-    lda #>GENDEV
-    ldy #<GENDEV
+    lda #>GATE_RAM
+    ldy #<GATE_RAM
     jsr NEWDEV
 
     jsr INIT_VERA_SCREEN
@@ -277,7 +304,7 @@ INIT_VERA_SCREEN:
     sta VERA_IEN
     sta VERA_ISR
 
-    jsr LOAD_FULL_FONT
+    jsr LOAD_BOOT_FONT
 
     lda #VERA_MAP_128x64
     sta VERA_L1_CONFIG
@@ -366,28 +393,41 @@ CLEAR_SCREEN:
     bne @Row
     rts
 
-LOAD_FULL_FONT:
-    lda #$00
-    sta VERA_ADDR_L
-    lda #$F0
-    sta VERA_ADDR_M
+LOAD_BOOT_FONT:
+    ; Load only the 46 chars needed by the boot banner into VERA VRAM.
+    ; Each entry in boot_font_data: ADDR_L, ADDR_M, d0..d7 (10 bytes).
+    ; ADDR_H ($D102) is set once — increment selector persists across
+    ; ADDR_L/M writes, so DATA0 auto-advances correctly per character.
+    lda #<boot_font_data
+    sta TMP_PTR_LO
+    lda #>boot_font_data
+    sta TMP_PTR_HI
     lda #(VERA_INC1 | $01)
     sta VERA_ADDR_H
-
-    lda #<FontData
-    sta TMP_PTR_LO
-    lda #>FontData
-    sta TMP_PTR_HI
-    ldx #4
+    ldx #BOOT_FONT_COUNT
+@entry:
     ldy #0
-@CopyPage:
+    lda (TMP_PTR_LO),y
+    sta VERA_ADDR_L
+    iny
+    lda (TMP_PTR_LO),y
+    sta VERA_ADDR_M
+    ldy #2
+@tile:
     lda (TMP_PTR_LO),y
     sta VERA_DATA0
     iny
-    bne @CopyPage
+    cpy #10
+    bne @tile
+    lda TMP_PTR_LO
+    clc
+    adc #10
+    sta TMP_PTR_LO
+    bcc @next
     inc TMP_PTR_HI
+@next:
     dex
-    bne @CopyPage
+    bne @entry
     rts
 
 WRITE_CHAR:
@@ -752,7 +792,103 @@ Host800XL:
 Host130XE:
     .asciiz "ATARI 130XE"
 
-FontData:
-    .incbin "x16_font.bin"
+; -------------------------------------------------------------------------
+; gate_code — 75 bytes copied to GATE_RAM ($0600) by INIT
+;
+; CIO uses the HATABS address as the base of a 12-byte dispatch table and
+; picks the handler vector by command offset (OPEN=0, CLOSE=2, GET=4,
+; PUT=6, STATUS=8, SPECIAL=10).
+;
+; OPEN/CLOSE share stub_noneed: NONEED needs no hardware access so we
+; inline it (no ROM mapping). GET/PUT/STATUS/SPECIAL each have a 12-byte
+; stub that maps the VERA ROM (D1FF=$80), JSRs into the ROM handler, then
+; JMPs to the shared epilogue which deselects (D1FF=$00) and returns.
+; LDA/STA in the epilogue leave Y and C (status/error from the handler)
+; untouched, so CIO gets the correct return values.
+; -------------------------------------------------------------------------
+gate_code:
+    ; Dispatch table (12 bytes): addr-1 for each CIO function.
+    ; OPEN and CLOSE share stub_noneed (no ROM mapping needed).
+    .word GATE_STUB_NONEED  - 1     ; OPEN
+    .word GATE_STUB_NONEED  - 1     ; CLOSE
+    .word GATE_STUB_GET     - 1     ; GET
+    .word GATE_STUB_PUT     - 1     ; PUT
+    .word GATE_STUB_STATUS  - 1     ; STATUS
+    .word GATE_STUB_SPECIAL - 1     ; SPECIAL
+    ; stub_noneed (8 bytes): OPEN/CLOSE need no ROM — inline NONEED result
+    .byte $A9, $00              ; LDA #$00
+    .byte $85, CRITIC           ; STA CRITIC
+    .byte $A0, $01              ; LDY #1
+    .byte $38                   ; SEC
+    .byte $60                   ; RTS
+    ; epilogue (7 bytes): shared tail — Y and C from handler are preserved
+    .byte $A9, $00              ; LDA #$00
+    .byte $8D, $FF, $D1         ; STA $D1FF  (deselect VERA, math pack back)
+    .byte $58                   ; CLI
+    .byte $60                   ; RTS
+    ; stub_get (12 bytes): SEI / map ROM / JSR GETBYT / JMP epilogue
+    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <GETBYT,  >GETBYT,  $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
+    ; stub_put (12 bytes)
+    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <PUTBYT,  >PUTBYT,  $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
+    ; stub_status (12 bytes)
+    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <GETSTA,  >GETSTA,  $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
+    ; stub_special (12 bytes)
+    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <SPECIAL, >SPECIAL, $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
+GATE_CODE_LEN = * - gate_code
+
+; Boot font: 46 chars x 10 bytes = 460 bytes.
+; Only the characters actually used by the boot banner (logo tiles +
+; text chars). vera_sys will overwrite these with the full 1KB font.
+; Format per entry: ADDR_L, ADDR_M, d0..d7
+; ADDR_H constant = $11 (VERA bank 1, inc 1), set once by LOAD_BOOT_FONT.
+BOOT_FONT_COUNT = 46
+
+boot_font_data:
+    .byte $10,$F0, $00,$80,$C0,$E0,$F0,$F8,$FC,$FE  ; tile $02
+    .byte $18,$F0, $00,$01,$03,$07,$0F,$1F,$3F,$7F  ; tile $03
+    .byte $28,$F0, $7F,$7F,$7F,$7F,$7F,$7F,$7F,$7F  ; tile $05
+    .byte $30,$F0, $FE,$FE,$FE,$FE,$FE,$FE,$FE,$FE  ; tile $06
+    .byte $40,$F0, $1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F  ; tile $08
+    .byte $48,$F0, $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF  ; tile $09
+    .byte $50,$F0, $F8,$F8,$F8,$F8,$F8,$F8,$F8,$F8  ; tile $0A
+    .byte $60,$F0, $FF,$FF,$00,$00,$00,$00,$00,$00  ; tile $0C
+    .byte $68,$F0, $FF,$FF,$FF,$FF,$0F,$0F,$0F,$0F  ; tile $0D
+    .byte $70,$F0, $FF,$FF,$FF,$FF,$F0,$F0,$F0,$F0  ; tile $0E
+    .byte $78,$F0, $00,$00,$00,$00,$00,$00,$FF,$FF  ; tile $0F
+    .byte $80,$F0, $0F,$0F,$0F,$0F,$FF,$FF,$FF,$FF  ; tile $10
+    .byte $88,$F0, $F0,$F0,$F0,$F0,$FF,$FF,$FF,$FF  ; tile $11
+    .byte $98,$F0, $03,$03,$03,$03,$03,$03,$03,$03  ; tile $13
+    .byte $A0,$F0, $FF,$FE,$FC,$F8,$F0,$E0,$C0,$80  ; tile $14
+    .byte $A8,$F0, $FF,$7F,$3F,$1F,$0F,$07,$03,$01  ; tile $15
+    .byte $B0,$F0, $C0,$C0,$C0,$C0,$C0,$C0,$C0,$C0  ; tile $16
+    .byte $B8,$F0, $07,$07,$07,$07,$07,$07,$07,$07  ; tile $17
+    .byte $C0,$F0, $E0,$E0,$E0,$E0,$E0,$E0,$E0,$E0  ; tile $18
+    .byte $00,$F1, $00,$00,$00,$00,$00,$00,$00,$00  ; ' '
+    .byte $70,$F1, $00,$00,$00,$00,$00,$18,$18,$00  ; '.'
+    .byte $80,$F1, $3C,$66,$6E,$76,$66,$66,$3C,$00  ; '0'
+    .byte $88,$F1, $18,$18,$38,$18,$18,$18,$7E,$00  ; '1'
+    .byte $90,$F1, $3C,$66,$06,$0C,$30,$60,$7E,$00  ; '2'
+    .byte $98,$F1, $3C,$66,$06,$1C,$06,$66,$3C,$00  ; '3'
+    .byte $A0,$F1, $06,$0E,$1E,$66,$7F,$06,$06,$00  ; '4'
+    .byte $A8,$F1, $7E,$60,$7C,$06,$06,$66,$3C,$00  ; '5'
+    .byte $B0,$F1, $3C,$66,$60,$7C,$66,$66,$3C,$00  ; '6'
+    .byte $B8,$F1, $7E,$66,$0C,$18,$18,$18,$18,$00  ; '7'
+    .byte $C0,$F1, $3C,$66,$66,$3C,$66,$66,$3C,$00  ; '8'
+    .byte $C8,$F1, $3C,$66,$66,$3E,$06,$66,$3C,$00  ; '9'
+    .byte $D0,$F1, $00,$00,$18,$00,$00,$18,$00,$00  ; ':'
+    .byte $08,$F2, $18,$3C,$66,$7E,$66,$66,$66,$00  ; 'A'
+    .byte $20,$F2, $78,$6C,$66,$66,$66,$6C,$78,$00  ; 'D'
+    .byte $28,$F2, $7E,$60,$60,$78,$60,$60,$7E,$00  ; 'E'
+    .byte $30,$F2, $7E,$60,$60,$78,$60,$60,$60,$00  ; 'F'
+    .byte $48,$F2, $3C,$18,$18,$18,$18,$18,$3C,$00  ; 'I'
+    .byte $60,$F2, $60,$60,$60,$60,$60,$60,$7E,$00  ; 'L'
+    .byte $68,$F2, $63,$77,$7F,$6B,$63,$63,$63,$00  ; 'M'
+    .byte $78,$F2, $3C,$66,$66,$66,$66,$66,$3C,$00  ; 'O'
+    .byte $90,$F2, $7C,$66,$66,$7C,$78,$6C,$66,$00  ; 'R'
+    .byte $A0,$F2, $7E,$18,$18,$18,$18,$18,$18,$00  ; 'T'
+    .byte $A8,$F2, $66,$66,$66,$66,$66,$66,$3C,$00  ; 'U'
+    .byte $B0,$F2, $66,$66,$66,$66,$66,$3C,$18,$00  ; 'V'
+    .byte $B8,$F2, $63,$63,$63,$6B,$7F,$77,$63,$00  ; 'W'
+    .byte $C0,$F2, $66,$66,$3C,$18,$3C,$66,$66,$00  ; 'X'
 
 ; End of ROM
