@@ -52,6 +52,9 @@ PDVMSK  = $0247         ; PBI device mask     (enabled-device bitmask)
 PNDEVREQ = $0248        ; PBI device request  (this device's bit, set by OS)
 PDIMSK  = $0249         ; PBI interrupt mask
 
+HATABS      = $031A     ; Handler address table (11 entries × 3 bytes)
+HATABS_SIZE = 33        ; 11 × 3
+
 NEWDEV  = $E486         ; Install device handler in HATABS
 GENDEV  = $E48F         ; Generic CIO device handler vector
 
@@ -285,12 +288,26 @@ INIT:
     dey
     bpl @copy
 
-    ; Register the RAM gate in HATABS (not GENDEV: that reads $D80D each
-    ; call, which would hit the math pack when the ROM is not mapped)
+    ; Register the RAM gate in HATABS only if 'V' is not already there.
+    ; NEWDEV has no duplicate-check: each warm/cold restart would add another
+    ; entry until HATABS overflows (11 slots) and corrupts adjacent OS state.
+    ldy #0
+@scan:
+    lda HATABS,y
+    beq @do_newdev          ; end-of-table sentinel — slot is free
+    cmp #DEVNAM
+    beq @skip_newdev        ; 'V' already installed
+    iny
+    iny
+    iny
+    cpy #HATABS_SIZE
+    bcc @scan
+@do_newdev:
     ldx #DEVNAM
     lda #>GATE_RAM
     ldy #<GATE_RAM
     jsr NEWDEV
+@skip_newdev:
 
     jsr INIT_VERA_SCREEN
     rts

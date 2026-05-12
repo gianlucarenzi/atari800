@@ -53,6 +53,12 @@
 #define EMUOS_EDITRV_ADDR 0xE400u
 #define EMUOS_SCRENV_ADDR 0xE410u
 
+#define VERA_INC1     0x10u
+#define CHARSET_VRAM  0x01F000UL
+
+#define VERA_CTRL     (*(volatile unsigned char*)0xD105)
+#define VERA_DC_VIDEO (*(volatile unsigned char*)0xD109)
+
 extern void InitVbi(void);
 extern void CallVeraApiService(void);
 extern char vera_vbi_end;
@@ -61,7 +67,17 @@ extern unsigned char vera_screnv[];
 extern unsigned vera_orig_editor_put;
 extern unsigned vera_orig_screen_put;
 extern void VeraPutByte(void);
+extern const unsigned char vera_x16_font[1024];
 
+/* Warm-restart mechanism: DOSINI hook + cc65 sp save */
+extern void vera_save_c_sp(void);   /* asm: saves cc65 sp to ZP $9C (warm-start safe) */
+extern void vera_dosini_hook(void); /* asm: DOSINI handler, restores sp, calls vera_reinit */
+extern unsigned vera_saved_dosini;  /* asm LOWBSS: old DOSINI value to chain to */
+
+#define DOSINI_ADDR (*(unsigned *)0x000C)
+
+void vera_reinit(void);  /* called from vera_dosini_hook (asm) on every warm start */
+static void vera_load_font(void);
 static void install_hook_for_device(unsigned char device_name,
 									volatile unsigned char* wrapper_table,
 									unsigned* original_put_vector,
@@ -97,7 +113,6 @@ volatile VeraCtl vera_ctl_block;
 
 unsigned char frames_until_click = RATE;
 unsigned char click_active;
-unsigned char resident_end_marker;
 unsigned char vera_cursor_saved_char = VERA_CHAR_BLANK;
 unsigned char vera_cursor_saved_color = VERA_TEXT_COLOR;
 unsigned char vera_cursor_draw_x;
@@ -106,6 +121,9 @@ unsigned char vera_cursor_drawn;
 unsigned char vera_cursor_frames = VERA_CURSOR_RATE;
 unsigned char vera_cursor_enabled;
 unsigned char vera_cursor_phase;
+/* MUST be the last BSS variable: reserve_resident() sets MEMLO = &this + 1,
+ * so everything above (CODE, RODATA, DATA, all BSS) is protected as resident. */
+unsigned char resident_end_marker;
 
 static volatile VeraCtl* vera_ctl(void)
 {
@@ -579,14 +597,89 @@ void VBI(void)
 	vera_redraw_cursor();
 }
 
+static void vera_load_font(void)
+{
+	unsigned int i;
+	unsigned char saved_video;
+
+	/* Disable Layer 0 and Layer 1 while overwriting the charset, so that
+	 * the 1024 mid-line re-renders triggered by each DATA0 write show only
+	 * the border color rather than garbage from the partially-loaded tiles. */
+	VERA_CTRL = 0x00;
+	saved_video = VERA_DC_VIDEO;
+	VERA_DC_VIDEO = saved_video & ~0x30u;
+
+	VERA_ADDR_L = (unsigned char)( CHARSET_VRAM        & 0xFFu);
+	VERA_ADDR_M = (unsigned char)((CHARSET_VRAM >>  8) & 0xFFu);
+	VERA_ADDR_H = (unsigned char)(VERA_INC1 | ((CHARSET_VRAM >> 16) & 0x01u));
+
+	for (i = 0; i < 1024u; ++i) {
+		VERA_DATA0 = vera_x16_font[i];
+	}
+
+	VERA_DC_VIDEO = saved_video;
+}
+
+/* Called by vera_dosini_hook (asm) on every warm/cold restart.
+ * At this point:
+ *   - cc65 sp has been restored from vera_saved_sp (ZP $9C) by the asm stub
+ *   - PBI ROM INIT_VERA_SCREEN has already run (clear screen + logo redrawn)
+ *   - HATABS has been reset to OS defaults by the warm start; V: was re-added
+ *     by PBI ROM INIT; E:/S: hooks are gone and must be reinstalled here
+ *   - VVBLKD was reset to XITVBV by the OS; VBI must be reinstalled here
+ */
+void vera_reinit(void)
+{
+    volatile VeraCtl* ctl = vera_ctl();
+
+    ctl->flags |= VERA_CTL_FLAG_API_READY;
+    ctl->entry_lo = (unsigned char)((unsigned)CallVeraApiService & 0xFFu);
+    ctl->entry_hi = (unsigned char)(((unsigned)CallVeraApiService >> 8) & 0xFFu);
+
+    ctl->cursor_x = 0;
+    ctl->cursor_y = 8;
+    vera_write_text("DEVICE HANDLER READY");
+    ctl->cursor_x = 0;
+    ctl->cursor_y = 10;
+
+    install_vera_es();
+    vera_cursor_enabled = 1;
+    vera_touch_cursor();
+    InitVbi();
+    ANTIC.nmien = NMIEN_VBI;
+}
+
 int main(void)
 {
 	reserve_resident();
 	init_control_block();
+	vera_load_font();
+	{
+		volatile VeraCtl *ctl = vera_ctl();
+		ctl->cursor_x = 0;
+		ctl->cursor_y = 8;
+		vera_write_text("DEVICE HANDLER READY");
+		ctl->cursor_x = 0;
+		ctl->cursor_y = 10;
+	}
 	install_vera_es();
 	vera_cursor_enabled = 1;
 	vera_touch_cursor();
 	InitVbi();
 	ANTIC.nmien = NMIEN_VBI;
+
+	/* Install DOSINI hook for warm-restart survival.
+	 * Chain rule: save whatever DOSINI points to now (e.g. DOS 2.0 init),
+	 * then point DOSINI at our hook.  On each warm start the hook fires,
+	 * reinstalls the VBI and E:/S: hooks, then jumps to the saved value
+	 * so DOS can also reinitialise itself normally.
+	 *
+	 * vera_save_c_sp() must be the LAST call before return: it captures
+	 * the cc65 sp at the deepest point in the call stack that we can
+	 * guarantee is fully unwound (i.e. main() about to return).  The
+	 * DOSINI hook restores sp to this value so the C runtime is usable. */
+	vera_saved_dosini = DOSINI_ADDR;
+	DOSINI_ADDR = (unsigned)vera_dosini_hook;
+	vera_save_c_sp();
 	return 0;
 }

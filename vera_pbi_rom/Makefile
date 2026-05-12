@@ -26,7 +26,7 @@ SRC      = vera_pbi_handler.s
 CFG      = vera_pbi.cfg
 SYS      = VERA.SYS
 SYSSRC   = vera_sys.c
-SYSASMSRC = vera_sys_vbi.s vera_sys_es_hook.s
+SYSASMSRC = vera_sys_vbi.s vera_sys_es_hook.s vera_sys_font.s vera_sys_dosini.s
 AUTORUN  = AUTORUN.SYS
 ATR      = vera_pbi.atr
 ATRBUILD = .atrbuild
@@ -60,7 +60,7 @@ DOS20EXTRACT = extract_dos20.py
 $(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
 	python3 $(DOS20EXTRACT)
 
-atr: $(AUTORUN) $(DOS20DIR)/DOS.SYS
+atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
 	cp $(AUTORUN) $(ATRBUILD)/$(AUTORUN)
@@ -70,7 +70,7 @@ atr: $(AUTORUN) $(DOS20DIR)/DOS.SYS
 
 clean:
 	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) \
-		vera_sys.o vera_sys_vbi.o vera_sys_es_hook.o vera_sys_autorun.o
+		vera_sys.o vera_sys_vbi.o vera_sys_es_hook.o vera_sys_font.o vera_sys_dosini.o vera_sys_autorun.o
 
 install: $(TARGET)
 	@mkdir -p $(ROMDIR)
