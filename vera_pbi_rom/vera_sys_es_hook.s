@@ -29,10 +29,6 @@ _vera_orig_editor_put:
 _vera_orig_screen_put:
     .res 2
 
-; Handler table reserved for future K: replacement
-_vera_kbdrv:
-    .res 16
-
 ; Old DOSINI value chained by vera_dosini_hook.
 ; Survives warm start (LOWBSS is in $8000+ RAM, untouched by OS warm start).
 _vera_saved_dosini:

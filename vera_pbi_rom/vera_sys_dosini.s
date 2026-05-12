@@ -38,7 +38,7 @@ _vera_save_c_sp:
 
 ; _vera_dosini_hook  — installed into DOSINI ($000C) by main().
 ; The OS calls DOSINI (via JSR) on every cold/warm start, after PBI INIT has
-; already run INIT_VERA_SCREEN and added V: to HATABS.
+; already run INIT_VERA_SCREEN.
 ;
 ; Sequence:
 ;   1. Restore c_sp from vera_saved_sp ($AC).  On warm start c_sp/$82 holds

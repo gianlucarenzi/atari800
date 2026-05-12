@@ -23,18 +23,6 @@
 ;   $D819-$D81B  JMP to INIT handler (called at cold/warm start)
 ;   $D81C        Reserved ($00)
 ;
-; CIO interface:
-;   GET BYTE: reads  VERA register at index given in ICAX1 of the IOCB
-;   PUT BYTE: writes VERA register at index given in ICAX1 of the IOCB
-;   GET STATUS: returns VERA_CTRL register value
-;   SPECIAL:
-;     XIO 32,"V:" enables the resident VERA metronome
-;     XIO 33,"V:" disables it again
-;     XIO 34,"V:" clears the resident VERA text surface
-;     XIO 35,"V:" draws a resident VERA backend demo page
-;     XIO 36,"V:" prints one ATASCII character from ICAX1
-;     XIO 37,"V:" sets the resident cursor to ICAX1/ICAX2
-;
 ; VERA register base: $D100  (PBI_ADDR)
 ; VERA VRAM: 128 KB ($00000-$1FFFF), accessed via DATA0 with address ports
 ;
@@ -52,41 +40,10 @@ PDVMSK  = $0247         ; PBI device mask     (enabled-device bitmask)
 PNDEVREQ = $0248        ; PBI device request  (this device's bit, set by OS)
 PDIMSK  = $0249         ; PBI interrupt mask
 
-HATABS      = $031A     ; Handler address table (11 entries × 3 bytes)
-HATABS_SIZE = 33        ; 11 × 3
-
-NEWDEV  = $E486         ; Install device handler in HATABS
-GENDEV  = $E48F         ; Generic CIO device handler vector
-
-; RAM gate: CIO dispatch table + stubs copied to page 6 by INIT.
-; Layout (75 bytes total):
-;   +0   dispatch table  12 bytes (6 × addr-1 word)
-;   +12  stub_noneed      8 bytes  OPEN/CLOSE: inline result, no ROM map
-;   +20  epilogue         7 bytes  shared: unmap ROM / CLI / RTS
-;   +27  stub_get        12 bytes  SEI/map/JSR GETBYT /JMP epilogue
-;   +39  stub_put        12 bytes  SEI/map/JSR PUTBYT /JMP epilogue
-;   +51  stub_status     12 bytes  SEI/map/JSR GETSTA /JMP epilogue
-;   +63  stub_special    12 bytes  SEI/map/JSR SPECIAL/JMP epilogue
-GATE_RAM          = $0600
-GATE_STUB_NONEED  = GATE_RAM + 12
-GATE_EPILOGUE     = GATE_RAM + 20
-GATE_STUB_GET     = GATE_RAM + 27
-GATE_STUB_PUT     = GATE_RAM + 39
-GATE_STUB_STATUS  = GATE_RAM + 51
-GATE_STUB_SPECIAL = GATE_RAM + 63
-
-ICCOM   = $0342         ; IOCB command byte
-ICAX1   = $034A         ; Auxiliary byte 1 (used here as register index)
-ICAX2   = $034B         ; Auxiliary byte 2
 CRITIC  = $42           ; Critical section flag (0 = deferred VBI enabled)
 RAMTOP  = $6A
 PORTB   = $D301
 
-; Shared XIO/VBI control block. It lives at the beginning of the resident
-; LOWBSS area in VERA.SYS, which is fixed at $8000 by vera_sys.cfg.
-VERA_CTL_BASE = $8000
-
-CIOStatNotSupported = $92
 
 ; ============================================================================
 ; VERA hardware register base and register names
@@ -128,7 +85,6 @@ VERA_REG_ARRAY  = PBI_ADDR + $00
 ; ============================================================================
 
 DEVICE_ID_MASK  = $80           ; This card occupies PBI bit 7
-DEVNAM          = 'V'           ; CIO device name registered in HATABS
 
 VERA_INC0       = $00           ; No auto-increment
 VERA_INC1       = $10           ; Auto-increment by 1
@@ -159,36 +115,6 @@ TMP0            = $82
 TMP1            = $83
 TMP2            = $84
 
-VERA_CTL_SIG0       = VERA_CTL_BASE + 0
-VERA_CTL_SIG1       = VERA_CTL_BASE + 1
-VERA_CTL_SIG2       = VERA_CTL_BASE + 2
-VERA_CTL_SIG3       = VERA_CTL_BASE + 3
-VERA_CTL_FLAGS      = VERA_CTL_BASE + 4
-VERA_CTL_REQUEST    = VERA_CTL_BASE + 5
-VERA_CTL_PARAM0     = VERA_CTL_BASE + 6
-VERA_CTL_PARAM1     = VERA_CTL_BASE + 7
-VERA_CTL_CURSOR_X   = VERA_CTL_BASE + 8
-VERA_CTL_CURSOR_Y   = VERA_CTL_BASE + 9
-VERA_CTL_ENTRY_LO   = VERA_CTL_BASE + 10
-VERA_CTL_ENTRY_HI   = VERA_CTL_BASE + 11
-
-VERA_CTL_FLAG_METRONOME = $01
-VERA_CTL_FLAG_API_READY = $80
-
-XIO_VERA_ENABLE  = 32
-XIO_VERA_DISABLE = 33
-XIO_VERA_CLEAR   = 34
-XIO_VERA_DEMO    = 35
-XIO_VERA_PUTC    = 36
-XIO_VERA_CURSOR  = 37
-XIO_VERA_HOOKS   = 38
-
-VERA_REQ_NONE    = $00
-VERA_REQ_CLEAR   = $01
-VERA_REQ_DEMO    = $02
-VERA_REQ_PUTC    = $03
-VERA_REQ_HOOKS   = $04
-VERA_REQ_CURSOR  = $05
 
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
@@ -245,6 +171,8 @@ CopyChar:
 Done:
 .endmacro
 
+    .export PBI_INIT, PBI_INIT_VERA_SCREEN, PBI_CLEAR_SCREEN
+
     .segment "CODE"
 
     .word $0000
@@ -256,14 +184,14 @@ Done:
     jmp IRQVECTOR
 
     .byte $91
-    .byte DEVNAM
+    .byte 'V'
 
     .word NONEED-1
     .word NONEED-1
-    .word GETBYT-1
-    .word PUTBYT-1
-    .word GETSTA-1
-    .word SPECIAL-1
+    .word NONEED-1
+    .word NONEED-1
+    .word NONEED-1
+    .word NONEED-1
 
     jmp INIT
     .byte $00
@@ -275,43 +203,16 @@ IOVECTOR:
 IRQVECTOR:
     rts
 
+PBI_INIT:
 INIT:
     lda PDVMSK
     ora PNDEVREQ
     sta PDVMSK
 
-    ; Copy CIO gate (dispatch table + stubs) to page-6 RAM
-    ldy #(GATE_CODE_LEN - 1)
-@copy:
-    lda gate_code,y
-    sta GATE_RAM,y
-    dey
-    bpl @copy
-
-    ; Register the RAM gate in HATABS only if 'V' is not already there.
-    ; NEWDEV has no duplicate-check: each warm/cold restart would add another
-    ; entry until HATABS overflows (11 slots) and corrupts adjacent OS state.
-    ldy #0
-@scan:
-    lda HATABS,y
-    beq @do_newdev          ; end-of-table sentinel — slot is free
-    cmp #DEVNAM
-    beq @skip_newdev        ; 'V' already installed
-    iny
-    iny
-    iny
-    cpy #HATABS_SIZE
-    bcc @scan
-@do_newdev:
-    ldx #DEVNAM
-    lda #>GATE_RAM
-    ldy #<GATE_RAM
-    jsr NEWDEV
-@skip_newdev:
-
     jsr INIT_VERA_SCREEN
     rts
 
+PBI_INIT_VERA_SCREEN:
 INIT_VERA_SCREEN:
     jsr WAIT_VERA
 
@@ -389,6 +290,7 @@ WAIT_VERA:
 @Done:
     rts
 
+PBI_CLEAR_SCREEN:
 CLEAR_SCREEN:
     lda #<SCREEN_ADDR
     sta VERA_ADDR_L
@@ -638,131 +540,6 @@ HAS_XE_BANK:
     clc
     rts
 
-GETBYT:
-    lda #$00
-    sta CRITIC
-    ldy ICAX1,x
-    lda VERA_REG_ARRAY,y
-    ldy #1
-    sec
-    rts
-
-PUTBYT:
-    pha
-    lda #$00
-    sta CRITIC
-    ldy ICAX1,x
-    pla
-    sta VERA_REG_ARRAY,y
-    ldy #1
-    sec
-    rts
-
-GETSTA:
-    lda #$00
-    sta CRITIC
-    lda VERA_CTRL_REG
-    ldy #1
-    sec
-    rts
-
-SPECIAL:
-    lda #$00
-    sta CRITIC
-    lda VERA_CTL_SIG0
-    cmp #'V'
-    bne @NotSupported
-    lda VERA_CTL_SIG1
-    cmp #'C'
-    bne @NotSupported
-    lda VERA_CTL_SIG2
-    cmp #'T'
-    bne @NotSupported
-    lda VERA_CTL_SIG3
-    cmp #'L'
-    bne @NotSupported
-
-    lda ICCOM,x
-    cmp #XIO_VERA_ENABLE
-    beq @Enable
-    cmp #XIO_VERA_DISABLE
-    beq @Disable
-    cmp #XIO_VERA_CLEAR
-    beq @Clear
-    cmp #XIO_VERA_DEMO
-    beq @Demo
-    cmp #XIO_VERA_PUTC
-    beq @PutChar
-    cmp #XIO_VERA_CURSOR
-    beq @SetCursor
-    cmp #XIO_VERA_HOOKS
-    beq @Hooks
-
-@NotSupported:
-    lda #$00
-    sta CRITIC
-    ldy #CIOStatNotSupported
-    rts
-
-@Enable:
-    lda VERA_CTL_FLAGS
-    ora #VERA_CTL_FLAG_METRONOME
-    sta VERA_CTL_FLAGS
-    jmp NONEED
-
-@Disable:
-    lda VERA_CTL_FLAGS
-    and #$FE
-    sta VERA_CTL_FLAGS
-    jmp NONEED
-
-@Clear:
-    lda #VERA_REQ_CLEAR
-    sta VERA_CTL_REQUEST
-    jsr CALL_SERVICE
-    jmp NONEED
-
-@Demo:
-    lda #VERA_REQ_DEMO
-    sta VERA_CTL_REQUEST
-    jsr CALL_SERVICE
-    jmp NONEED
-
-@PutChar:
-    lda ICAX1,x
-    sta VERA_CTL_PARAM0
-    lda #VERA_REQ_PUTC
-    sta VERA_CTL_REQUEST
-    jsr CALL_SERVICE
-    jmp NONEED
-
-@SetCursor:
-    lda ICAX1,x
-    sta VERA_CTL_CURSOR_X
-    lda ICAX2,x
-    sta VERA_CTL_CURSOR_Y
-    lda #VERA_REQ_CURSOR
-    sta VERA_CTL_REQUEST
-    jsr CALL_SERVICE
-    jmp NONEED
-
-@Hooks:
-    lda #VERA_REQ_HOOKS
-    sta VERA_CTL_REQUEST
-    jsr CALL_SERVICE
-    jmp NONEED
-
-CALL_SERVICE:
-    lda #$01
-    sta CRITIC
-    lda #>(@Return-1)
-    pha
-    lda #<(@Return-1)
-    pha
-    jmp (VERA_CTL_ENTRY_LO)
-@Return:
-    rts
-
 NONEED:
     lda #$00
     sta CRITIC
@@ -808,50 +585,6 @@ Host800XL:
     .asciiz "ATARI 800XL"
 Host130XE:
     .asciiz "ATARI 130XE"
-
-; -------------------------------------------------------------------------
-; gate_code — 75 bytes copied to GATE_RAM ($0600) by INIT
-;
-; CIO uses the HATABS address as the base of a 12-byte dispatch table and
-; picks the handler vector by command offset (OPEN=0, CLOSE=2, GET=4,
-; PUT=6, STATUS=8, SPECIAL=10).
-;
-; OPEN/CLOSE share stub_noneed: NONEED needs no hardware access so we
-; inline it (no ROM mapping). GET/PUT/STATUS/SPECIAL each have a 12-byte
-; stub that maps the VERA ROM (D1FF=$80), JSRs into the ROM handler, then
-; JMPs to the shared epilogue which deselects (D1FF=$00) and returns.
-; LDA/STA in the epilogue leave Y and C (status/error from the handler)
-; untouched, so CIO gets the correct return values.
-; -------------------------------------------------------------------------
-gate_code:
-    ; Dispatch table (12 bytes): addr-1 for each CIO function.
-    ; OPEN and CLOSE share stub_noneed (no ROM mapping needed).
-    .word GATE_STUB_NONEED  - 1     ; OPEN
-    .word GATE_STUB_NONEED  - 1     ; CLOSE
-    .word GATE_STUB_GET     - 1     ; GET
-    .word GATE_STUB_PUT     - 1     ; PUT
-    .word GATE_STUB_STATUS  - 1     ; STATUS
-    .word GATE_STUB_SPECIAL - 1     ; SPECIAL
-    ; stub_noneed (8 bytes): OPEN/CLOSE need no ROM — inline NONEED result
-    .byte $A9, $00              ; LDA #$00
-    .byte $85, CRITIC           ; STA CRITIC
-    .byte $A0, $01              ; LDY #1
-    .byte $38                   ; SEC
-    .byte $60                   ; RTS
-    ; epilogue (7 bytes): shared tail — Y and C from handler are preserved
-    .byte $A9, $00              ; LDA #$00
-    .byte $8D, $FF, $D1         ; STA $D1FF  (deselect VERA, math pack back)
-    .byte $58                   ; CLI
-    .byte $60                   ; RTS
-    ; stub_get (12 bytes): SEI / map ROM / JSR GETBYT / JMP epilogue
-    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <GETBYT,  >GETBYT,  $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
-    ; stub_put (12 bytes)
-    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <PUTBYT,  >PUTBYT,  $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
-    ; stub_status (12 bytes)
-    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <GETSTA,  >GETSTA,  $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
-    ; stub_special (12 bytes)
-    .byte $78, $A9, DEVICE_ID_MASK, $8D, $FF, $D1, $20, <SPECIAL, >SPECIAL, $4C, <GATE_EPILOGUE, >GATE_EPILOGUE
-GATE_CODE_LEN = * - gate_code
 
 ; Boot font: 46 chars x 10 bytes = 460 bytes.
 ; Only the characters actually used by the boot banner (logo tiles +

@@ -36,7 +36,11 @@ ATRBUILD = .atrbuild
 #   make install ROMDIR=/path/to/roms
 ROMDIR   = ../roms
 
-.PHONY: all clean install atr
+MAPFILE_ROM = vera_pbi.map
+MAPFILE_SYS = vera_sys.map
+LABELS      = vera.lbl
+
+.PHONY: all clean install atr labels
 
 all: $(TARGET) $(SYS)
 
@@ -44,12 +48,16 @@ $(OBJ): $(SRC)
 	$(CA65) $(ASFLAGS) -o $(OBJ) $(SRC)
 
 $(TARGET): $(OBJ) $(CFG)
-	$(LD65) -C $(CFG) -o $(TARGET) $(OBJ)
+	$(LD65) -C $(CFG) --mapfile $(MAPFILE_ROM) -vm -o $(TARGET) $(OBJ)
 	@echo "ROM size: $$(wc -c < $(TARGET)) bytes (max 2048)"
 
 $(SYS): $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC) $(SYSCFG)
-	$(CL65) $(SYSCFLAGS) -C $(SYSCFG) -o $(SYS) $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC)
+	$(CL65) $(SYSCFLAGS) -C $(SYSCFG) -m $(MAPFILE_SYS) -o $(SYS) $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC)
 	@echo "SYS size: $$(wc -c < $(SYS)) bytes"
+
+labels: $(TARGET) $(SYS)
+	python3 make_labels.py $(MAPFILE_ROM) $(MAPFILE_SYS) > $(LABELS)
+	@echo "Labels written to $(LABELS) ($$(wc -l < $(LABELS)) entries)"
 
 $(AUTORUN): $(SYS)
 	cp $(SYS) $(AUTORUN)
@@ -69,7 +77,8 @@ atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS
 	@echo "ATR written to $(ATR)"
 
 clean:
-	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) \
+	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) $(LABELS) \
+		$(MAPFILE_ROM) $(MAPFILE_SYS) \
 		vera_sys.o vera_sys_vbi.o vera_sys_es_hook.o vera_sys_font.o vera_sys_dosini.o vera_sys_autorun.o
 
 install: $(TARGET)

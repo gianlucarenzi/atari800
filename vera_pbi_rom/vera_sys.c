@@ -18,10 +18,7 @@
 #define VERA_CTL_SIZE           12u
 
 #define VERA_REQ_NONE   0x00
-#define VERA_REQ_CLEAR  0x01
-#define VERA_REQ_DEMO   0x02
 #define VERA_REQ_PUTC   0x03
-#define VERA_REQ_CURSOR 0x05
 
 #define VERA_SCREEN_COLS 80
 #define VERA_SCREEN_ROWS 25
@@ -167,24 +164,6 @@ static unsigned char vera_cursor_cell_color(void)
 	}
 
 	return (unsigned char)((background_color << 4) | background_color);
-}
-
-static void vera_set_cursor(unsigned char column, unsigned char row)
-{
-	volatile VeraCtl* ctl = vera_ctl();
-
-	vera_hide_cursor();
-
-	if (column >= VERA_SCREEN_COLS) {
-		column = VERA_SCREEN_COLS - 1;
-	}
-	if (row >= VERA_SCREEN_ROWS) {
-		row = VERA_SCREEN_ROWS - 1;
-	}
-
-	ctl->cursor_x = column;
-	ctl->cursor_y = row;
-	vera_touch_cursor();
 }
 
 static void vera_set_cell(unsigned char column, unsigned char row, unsigned char ch)
@@ -375,26 +354,6 @@ static void vera_touch_cursor(void)
 }
 
 
-static void vera_draw_demo(void)
-{
-	vera_clear_text();
-	vera_write_text("VERA BACKEND READY");
-	vera_put_char(0x9B);
-	vera_put_char(0x9B);
-	vera_write_text("XIO 34  CLEAR SCREEN");
-	vera_put_char(0x9B);
-	vera_write_text("XIO 35  DRAW THIS DEMO");
-	vera_put_char(0x9B);
-	vera_write_text("XIO 37  SET CURSOR  (AX1=X AX2=Y)");
-	vera_put_char(0x9B);
-	vera_write_text("XIO 36  PUT CHAR    (AX1=ATASCII)");
-	vera_put_char(0x9B);
-	vera_write_text("XIO 38  (RESERVED)");
-	vera_put_char(0x9B);
-	vera_put_char(0x9B);
-	vera_write_text("E:/S: VERA. K: ATARI OS.");
-}
-
 void VeraApiService(void)
 {
 	volatile VeraCtl* ctl = vera_ctl();
@@ -404,25 +363,8 @@ void VeraApiService(void)
 		return;
 	}
 
-	switch (request) {
-	case VERA_REQ_CLEAR:
-		vera_clear_text();
-		break;
-
-	case VERA_REQ_DEMO:
-		vera_draw_demo();
-		break;
-
-	case VERA_REQ_PUTC:
+	if (request == VERA_REQ_PUTC) {
 		vera_put_char(ctl->param0);
-		break;
-
-	case VERA_REQ_CURSOR:
-		vera_set_cursor(ctl->cursor_x, ctl->cursor_y);
-		break;
-
-	default:
-		break;
 	}
 
 	ctl->request = VERA_REQ_NONE;
