@@ -576,6 +576,7 @@ static void vera_activate(void)
 	volatile VeraCtl* ctl = vera_ctl();
 
 	init_control_block();
+	ctl->flags |= VERA_CTL_FLAG_METRONOME;
 	vera_load_font();
 
 	ctl->cursor_x = 0;
@@ -584,8 +585,16 @@ static void vera_activate(void)
 	ctl->cursor_x = 0;
 	ctl->cursor_y = 10;
 
+	InitVbi();
+	/* install_vera_es(); */
 	vera_cursor_enabled = 1;
 	vera_touch_cursor();
+}
+
+void vera_reinit(void)
+{
+	InitVbi();
+	/* install_vera_es(); */
 }
 
 int main(void)

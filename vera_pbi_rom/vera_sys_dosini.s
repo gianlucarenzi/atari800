@@ -4,6 +4,8 @@
     .export _vera_dosini_hook
     .import _vera_saved_dosini
     .import _CallVeraApiService
+    .import _InitVbi
+    .import _vera_reinit
     .import _vera_ctl_block
 
     .include "atari.inc"
@@ -100,7 +102,13 @@ post_dosini:
     tya
     pha
 
+    ; 1. Re-init VERA hardware state in assembly
     jsr asm_reinit_vera
+
+    ; 2. Swap to cc65 ZP to call C reinit (E: and S: hooks)
+    jsr swap_to_cc65_zp
+    jsr _vera_reinit
+    jsr swap_to_os_zp
 
     pla
     tay
@@ -154,6 +162,28 @@ asm_reinit_vera:
     inx
     bne @write_ready
 @done_ready:
+    rts
+
+swap_to_cc65_zp:
+    ldx #CC65_ZP_SIZE - 1
+@loop:
+    lda c_sp,x
+    sta os_saved_zp,x
+    lda vera_saved_zp,x
+    sta c_sp,x
+    dex
+    bpl @loop
+    rts
+
+swap_to_os_zp:
+    ldx #CC65_ZP_SIZE - 1
+@loop:
+    lda c_sp,x
+    sta vera_saved_zp,x
+    lda os_saved_zp,x
+    sta c_sp,x
+    dex
+    bpl @loop
     rts
 
 ready_text:

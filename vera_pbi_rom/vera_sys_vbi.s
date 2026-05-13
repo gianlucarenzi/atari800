@@ -22,22 +22,22 @@ _InitVbi:
     rts
 
 _vbi_handler:
+    lda CRITIC
+    bne @skip_vbi_all
     pha
     txa
     pha
     tya
     pha
-    lda CRITIC
-    bne @skip_vbi
     jsr save_cc65_zp
     jsr _VBI
     jsr restore_cc65_zp
-@skip_vbi:
     pla
     tay
     pla
     tax
     pla
+@skip_vbi_all:
     jmp XITVBV
 
 _CallVeraApiService:
