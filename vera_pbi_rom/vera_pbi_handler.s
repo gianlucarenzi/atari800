@@ -205,13 +205,53 @@ IRQVECTOR:
     sta VERA_ISR
     rts
 
+; OS addresses
+SETVBV  = $E45C
+
+VERACTL_ADDR     = $8000
+VERACTL_SIG0     = VERACTL_ADDR + 0
+VERACTL_SIG1     = VERACTL_ADDR + 1
+VERACTL_SIG2     = VERACTL_ADDR + 2
+VERACTL_SIG3     = VERACTL_ADDR + 3
+VERACTL_VBI_LO   = VERACTL_ADDR + 12
+VERACTL_VBI_HI   = VERACTL_ADDR + 13
+
 PBI_INIT:
 INIT:
+    lda #0
+    sta CRITIC
+
     lda PDVMSK
     ora PNDEVREQ
     sta PDVMSK
 
     jsr INIT_VERA_SCREEN
+    jsr TRY_RECOVER_VBI
+    rts
+
+TRY_RECOVER_VBI:
+    ; Check for 'VCTL' signature at $8000
+    lda VERACTL_SIG0
+    cmp #'V'
+    bne @done
+    lda VERACTL_SIG1
+    cmp #'C'
+    bne @done
+    lda VERACTL_SIG2
+    cmp #'T'
+    bne @done
+    lda VERACTL_SIG3
+    cmp #'L'
+    bne @done
+
+    ; Signature found! Re-install RAM VBI
+    sei
+    ldy VERACTL_VBI_LO
+    ldx VERACTL_VBI_HI
+    lda #7 ; Immediate VBI
+    jsr SETVBV
+    cli
+@done:
     rts
 
 PBI_INIT_VERA_SCREEN:

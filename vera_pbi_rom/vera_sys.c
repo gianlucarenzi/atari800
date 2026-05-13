@@ -54,6 +54,7 @@
 #define VERA_DC_VIDEO (*(volatile unsigned char*)0xD109)
 
 extern void InitVbi(void);
+extern void vbi_handler(void);
 extern void CallVeraApiService(void);
 extern char vera_vbi_end;
 extern unsigned char vera_editrv[];
@@ -68,6 +69,7 @@ extern void vera_save_c_sp(void);   /* asm: saves the cc65 ZP workspace for warm
 extern void vera_dosini_hook(void); /* asm: DOSINI handler, restores resident VERA state and resumes warm start */
 extern unsigned vera_saved_dosini;  /* asm LOWBSS: old DOSINI value to chain to */
 #define DOSINI_ADDR (*(unsigned *)0x000C)
+#define CASINI_ADDR (*(unsigned *)0x0002)
 
 static void vera_load_font(void);
 static void vera_activate(void);
@@ -99,22 +101,22 @@ typedef struct VeraCtl {
 	unsigned char cursor_y;
 	unsigned char entry_lo;
 	unsigned char entry_hi;
+	unsigned char vbi_lo;
+	unsigned char vbi_hi;
 } VeraCtl;
 
 #pragma bss-name(push, "VERACTL")
 volatile VeraCtl vera_ctl_block;
 #pragma bss-name(pop)
 
-unsigned char frames_until_click = RATE;
-unsigned char click_active;
 unsigned char vera_cursor_saved_char = VERA_CHAR_BLANK;
 unsigned char vera_cursor_saved_color = VERA_TEXT_COLOR;
 unsigned char vera_cursor_draw_x;
 unsigned char vera_cursor_draw_y;
 unsigned char vera_cursor_drawn;
-unsigned char vera_cursor_frames = VERA_CURSOR_RATE;
 unsigned char vera_cursor_enabled;
 unsigned char vera_cursor_phase;
+unsigned char vera_cursor_frames;
 /* MUST be the last BSS variable: reserve_resident() sets MEMLO = &this + 1,
  * so everything above (CODE, RODATA, DATA, all BSS) is protected as resident. */
 unsigned char resident_end_marker;
@@ -446,12 +448,12 @@ static void install_dosini_hook(void)
 	unsigned current_dosini = DOSINI_ADDR;
 	unsigned hook_dosini = (unsigned)vera_dosini_hook;
 
-	if (current_dosini == hook_dosini) {
-		return;
+	if (current_dosini != hook_dosini) {
+		vera_saved_dosini = current_dosini;
+		DOSINI_ADDR = hook_dosini;
 	}
 
-	vera_saved_dosini = current_dosini;
-	DOSINI_ADDR = hook_dosini;
+	CASINI_ADDR = hook_dosini;
 }
 
 static void reserve_resident(void)
@@ -488,64 +490,14 @@ static void init_control_block(void)
 	ctl->cursor_y = 0x00;
 	ctl->entry_lo = (unsigned char)((unsigned)CallVeraApiService & 0xFFu);
 	ctl->entry_hi = (unsigned char)(((unsigned)CallVeraApiService >> 8) & 0xFFu);
+	ctl->vbi_lo = (unsigned char)((unsigned)vbi_handler & 0xFFu);
+	ctl->vbi_hi = (unsigned char)(((unsigned)vbi_handler >> 8) & 0xFFu);
 
 	ctl->sig0 = 'V';
 	ctl->sig1 = 'C';
 	ctl->sig2 = 'T';
 	ctl->sig3 = 'L';
 	ctl->flags |= VERA_CTL_FLAG_API_READY;
-
-	vera_cursor_saved_char = VERA_CHAR_BLANK;
-	vera_cursor_saved_color = VERA_TEXT_COLOR;
-	vera_cursor_draw_x = 0x00;
-	vera_cursor_draw_y = 0x00;
-	vera_cursor_drawn = 0;
-	vera_cursor_frames = VERA_CURSOR_RATE;
-	vera_cursor_enabled = 0;
-	vera_cursor_phase = 0;
-}
-
-void VBI(void)
-{
-	volatile VeraCtl* ctl = vera_ctl();
-
-	if ((ctl->flags & VERA_CTL_FLAG_METRONOME) == 0) {
-		if (click_active) {
-			AUDC1_ADDR = 0x00;
-			click_active = 0;
-		}
-		frames_until_click = RATE;
-	}
-	else {
-		if (click_active) {
-			AUDC1_ADDR = 0x00;
-			click_active = 0;
-		}
-
-		if (--frames_until_click == 0) {
-			AUDF1_ADDR = FREQ;
-			AUDC1_ADDR = VOLUME;
-			frames_until_click = RATE;
-			click_active = 1;
-		}
-	}
-
-	if ((ctl->flags & VERA_CTL_FLAG_API_READY) == 0) {
-		return;
-	}
-
-	if (vera_cursor_frames != 0) {
-		--vera_cursor_frames;
-		return;
-	}
-
-	vera_cursor_frames = VERA_CURSOR_RATE;
-	if (!vera_cursor_drawn) {
-		return;
-	}
-
-	vera_cursor_phase ^= 1u;
-	vera_redraw_cursor();
 }
 
 static void vera_load_font(void)
@@ -593,7 +545,6 @@ static void vera_activate(void)
 
 void vera_reinit(void)
 {
-	InitVbi();
 	/* install_vera_es(); */
 }
 

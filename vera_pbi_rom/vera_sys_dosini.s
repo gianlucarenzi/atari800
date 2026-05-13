@@ -2,6 +2,8 @@
 
     .export _vera_save_c_sp
     .export _vera_dosini_hook
+    .export vera_saved_zp
+    .export os_saved_zp
     .import _vera_saved_dosini
     .import _CallVeraApiService
     .import _InitVbi
@@ -46,6 +48,8 @@ VERACTL_CURSOR_X = 8
 VERACTL_CURSOR_Y = 9
 VERACTL_ENTRY_LO = 10
 VERACTL_ENTRY_HI = 11
+VERACTL_VBI_LO = 12
+VERACTL_VBI_HI = 13
 
     .segment "LOWBSS"
 vera_saved_zp:
@@ -102,10 +106,11 @@ post_dosini:
     tya
     pha
 
-    ; 1. Re-init VERA hardware state in assembly
+    ; 1. Re-init VERA hardware state and OS critical state in assembly
     jsr asm_reinit_vera
+    jsr _InitVbi
 
-    ; 2. Swap to cc65 ZP to call C reinit (E: and S: hooks)
+    ; 2. Swap to cc65 ZP to call C reinit (hooks etc)
     jsr swap_to_cc65_zp
     jsr _vera_reinit
     jsr swap_to_os_zp
@@ -118,6 +123,9 @@ post_dosini:
     jmp ROM_POST_DOSINI
 
 asm_reinit_vera:
+    lda #0
+    sta CRITIC
+
     lda _vera_ctl_block + VERACTL_FLAGS
     and #VERA_CTL_FLAG_METRONOME
     ora #VERA_CTL_FLAG_API_READY
