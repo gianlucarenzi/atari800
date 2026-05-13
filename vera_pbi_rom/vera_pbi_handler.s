@@ -201,6 +201,8 @@ IOVECTOR:
     rts
 
 IRQVECTOR:
+    lda #$00
+    sta VERA_ISR
     rts
 
 PBI_INIT:

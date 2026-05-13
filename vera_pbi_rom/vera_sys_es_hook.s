@@ -38,15 +38,16 @@ _vera_saved_dosini:
 
 ; CIO PUT BYTE handler shared by E: and S: — routes directly to VERA output.
 ; On entry: A = ATASCII character, X = IOCB index * 16, CRITIC = 1 (set by CIO)
-; On exit:  Y = 1, C = 1 (CIO success), CRITIC = 0
+; On exit:  A restored, Y = 1, CRITIC = 0
 .proc _VeraPutByte
+    pha
     sta VERA_CTL_PARAM0
     lda #VERA_REQ_PUTC
     sta VERA_CTL_REQUEST
     jsr _CallVeraApiService     ; CRITIC still 1 during VRAM write (blocks VBI cursor)
     lda #$00
     sta CRITIC                  ; re-enable deferred VBI (CIO never clears CRITIC itself)
+    pla
     ldy #1
-    sec
     rts
 .endproc

@@ -47,9 +47,6 @@
 #define IOCB_ICPTL_OFFSET    6u
 #define IOCB_ICPTH_OFFSET    7u
 
-#define EMUOS_EDITRV_ADDR 0xE400u
-#define EMUOS_SCRENV_ADDR 0xE410u
-
 #define VERA_INC1     0x10u
 #define CHARSET_VRAM  0x01F000UL
 
@@ -66,20 +63,20 @@ extern unsigned vera_orig_screen_put;
 extern void VeraPutByte(void);
 extern const unsigned char vera_x16_font[1024];
 
-/* Warm-restart mechanism: DOSINI hook + cc65 sp save */
-extern void vera_save_c_sp(void);   /* asm: saves cc65 sp to ZP $9C (warm-start safe) */
-extern void vera_dosini_hook(void); /* asm: DOSINI handler, restores sp, calls vera_reinit */
+/* Warm-restart mechanism: resident DOSINI hook + cc65 ZP save */
+extern void vera_save_c_sp(void);   /* asm: saves the cc65 ZP workspace for warm start */
+extern void vera_dosini_hook(void); /* asm: DOSINI handler, restores resident VERA state and resumes warm start */
 extern unsigned vera_saved_dosini;  /* asm LOWBSS: old DOSINI value to chain to */
-
 #define DOSINI_ADDR (*(unsigned *)0x000C)
 
-void vera_reinit(void);  /* called from vera_dosini_hook (asm) on every warm start */
 static void vera_load_font(void);
+static void vera_activate(void);
 static void install_hook_for_device(unsigned char device_name,
 									volatile unsigned char* wrapper_table,
 									unsigned* original_put_vector,
 									unsigned hook_put_vector);
 static void install_vera_es(void);
+static void install_dosini_hook(void);
 static void patch_open_iocbs(unsigned char hatabs_slot, unsigned put_vector);
 static void vera_clear_text(void);
 static void vera_hide_cursor(void);
@@ -397,7 +394,6 @@ static void install_hook_for_device(unsigned char device_name,
 	for (hatabs_slot = 0; hatabs_slot < HATABS_SIZE; hatabs_slot += HATABS_ENTRY_SIZE) {
 		unsigned current_table_addr;
 		volatile unsigned char* current_table;
-		unsigned fallback_table_addr;
 		unsigned char table_index;
 
 		if (HATABS_ADDR[hatabs_slot] == 0x00) {
@@ -409,10 +405,10 @@ static void install_hook_for_device(unsigned char device_name,
 
 		current_table_addr = (unsigned)HATABS_ADDR[hatabs_slot + 1] |
 							 ((unsigned)HATABS_ADDR[hatabs_slot + 2] << 8);
-		fallback_table_addr = (device_name == 'E') ? EMUOS_EDITRV_ADDR : EMUOS_SCRENV_ADDR;
 
 		if (current_table_addr == wrapper_addr) {
-			current_table_addr = fallback_table_addr;
+			patch_open_iocbs(hatabs_slot, hook_put_vector);
+			break;
 		}
 
 		current_table = (volatile unsigned char*)current_table_addr;
@@ -443,6 +439,19 @@ static void install_vera_es(void)
 	unsigned put_vec = (unsigned)VeraPutByte - 1u;
 	install_hook_for_device('E', vera_editrv, &vera_orig_editor_put, put_vec);
 	install_hook_for_device('S', vera_screnv, &vera_orig_screen_put, put_vec);
+}
+
+static void install_dosini_hook(void)
+{
+	unsigned current_dosini = DOSINI_ADDR;
+	unsigned hook_dosini = (unsigned)vera_dosini_hook;
+
+	if (current_dosini == hook_dosini) {
+		return;
+	}
+
+	vera_saved_dosini = current_dosini;
+	DOSINI_ADDR = hook_dosini;
 }
 
 static void reserve_resident(void)
@@ -562,66 +571,39 @@ static void vera_load_font(void)
 	VERA_DC_VIDEO = saved_video;
 }
 
-/* Called by vera_dosini_hook (asm) on every warm/cold restart.
- * At this point:
- *   - cc65 sp has been restored from vera_saved_sp (ZP $9C) by the asm stub
- *   - PBI ROM INIT_VERA_SCREEN has already run (clear screen + logo redrawn)
- *   - HATABS has been reset to OS defaults by the warm start; V: was re-added
- *     by PBI ROM INIT; E:/S: hooks are gone and must be reinstalled here
- *   - VVBLKD was reset to XITVBV by the OS; VBI must be reinstalled here
- */
-void vera_reinit(void)
+static void vera_activate(void)
 {
-    volatile VeraCtl* ctl = vera_ctl();
+	volatile VeraCtl* ctl = vera_ctl();
 
-    ctl->flags |= VERA_CTL_FLAG_API_READY;
-    ctl->entry_lo = (unsigned char)((unsigned)CallVeraApiService & 0xFFu);
-    ctl->entry_hi = (unsigned char)(((unsigned)CallVeraApiService >> 8) & 0xFFu);
+	init_control_block();
+	vera_load_font();
 
-    ctl->cursor_x = 0;
-    ctl->cursor_y = 8;
-    vera_write_text("DEVICE HANDLER READY");
-    ctl->cursor_x = 0;
-    ctl->cursor_y = 10;
+	ctl->cursor_x = 0;
+	ctl->cursor_y = 8;
+	vera_write_text("DEVICE HANDLER READY");
+	ctl->cursor_x = 0;
+	ctl->cursor_y = 10;
 
-    install_vera_es();
-    vera_cursor_enabled = 1;
-    vera_touch_cursor();
-    InitVbi();
-    ANTIC.nmien = NMIEN_VBI;
+	vera_cursor_enabled = 1;
+	vera_touch_cursor();
 }
 
 int main(void)
 {
 	reserve_resident();
-	init_control_block();
-	vera_load_font();
-	{
-		volatile VeraCtl *ctl = vera_ctl();
-		ctl->cursor_x = 0;
-		ctl->cursor_y = 8;
-		vera_write_text("DEVICE HANDLER READY");
-		ctl->cursor_x = 0;
-		ctl->cursor_y = 10;
-	}
-	install_vera_es();
-	vera_cursor_enabled = 1;
-	vera_touch_cursor();
-	InitVbi();
-	ANTIC.nmien = NMIEN_VBI;
+	vera_activate();
 
 	/* Install DOSINI hook for warm-restart survival.
-	 * Chain rule: save whatever DOSINI points to now (e.g. DOS 2.0 init),
-	 * then point DOSINI at our hook.  On each warm start the hook fires,
-	 * reinstalls the VBI and E:/S: hooks, then jumps to the saved value
-	 * so DOS can also reinitialise itself normally.
+	 * Keep DOSINI permanently pointed at our resident hook; save the
+	 * previous DOSINI target separately and call it from inside the hook.
+	 * The asm stub temporarily swaps the cc65 ZP workspace in only around
+	 * vera_reinit(), then restores the OS's live ZP before returning.
 	 *
 	 * vera_save_c_sp() must be the LAST call before return: it captures
 	 * the cc65 sp at the deepest point in the call stack that we can
 	 * guarantee is fully unwound (i.e. main() about to return).  The
 	 * DOSINI hook restores sp to this value so the C runtime is usable. */
-	vera_saved_dosini = DOSINI_ADDR;
-	DOSINI_ADDR = (unsigned)vera_dosini_hook;
+	install_dosini_hook();
 	vera_save_c_sp();
 	return 0;
 }
