@@ -1,8 +1,8 @@
     .setcpu "6502"
 
-    .export _InitVbi, _CallVeraApiService, _vera_vbi_end, _vbi_handler
-    .import _VeraApiService, _vera_ctl_block
-    .import vera_saved_zp, os_saved_zp
+    .export _InitVbi, _vera_vbi_end, _vbi_handler
+    .export _vera_save_c_sp, _vera_warm_start
+    .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
 
     .include "atari.inc"
     .include "zeropage.inc"
@@ -30,7 +30,12 @@ VERA_SCREEN_BASE_M = $B0
 VERA_SCREEN_BANK   = $11
 VERA_TEXT_COLOR    = $61
 
+CC65_ZP_SIZE = $2A
+
     .segment "LOWBSS"
+vera_saved_zp:      .res CC65_ZP_SIZE
+os_saved_zp:        .res CC65_ZP_SIZE
+
 frames_until_click: .res 1
 click_active:       .res 1
 cursor_frames:      .res 1
@@ -63,6 +68,32 @@ _InitVbi:
     sta cursor_phase
     sta cursor_drawn
     cli
+    rts
+
+; _vera_save_c_sp  — called once at the end of main().
+_vera_save_c_sp:
+    ldx #CC65_ZP_SIZE - 1
+@save_zp:
+    lda c_sp,x
+    sta vera_saved_zp,x
+    dex
+    bpl @save_zp
+    rts
+
+_vera_warm_start:
+    pha
+    txa
+    pha
+    tya
+    pha
+    jsr swap_to_cc65_zp
+    jsr _vera_warm_reinit
+    jsr swap_to_os_zp
+    pla
+    tay
+    pla
+    tax
+    pla
     rts
 
 _vbi_handler:
@@ -111,13 +142,7 @@ _vbi_handler:
     sta click_active
 
 @metronome_done:
-    ; --- Cursor Logic ---
-    lda _vera_ctl_block + VERACTL_FLAGS
-    and #VERA_CTL_FLAG_API_READY
-    beq @vbi_done
-
-    dec cursor_frames
-    beq @cursor_toggle
+    ; --- Cursor Logic Disabled for Debug ---
     jmp @vbi_done
 
 @cursor_toggle:

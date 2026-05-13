@@ -215,6 +215,8 @@ VERACTL_SIG2     = VERACTL_ADDR + 2
 VERACTL_SIG3     = VERACTL_ADDR + 3
 VERACTL_VBI_LO   = VERACTL_ADDR + 12
 VERACTL_VBI_HI   = VERACTL_ADDR + 13
+VERACTL_REINIT_LO = VERACTL_ADDR + 14
+VERACTL_REINIT_HI = VERACTL_ADDR + 15
 
 PBI_INIT:
 INIT:
@@ -244,14 +246,21 @@ TRY_RECOVER_VBI:
     cmp #'L'
     bne @done
 
-    ; Signature found! Re-install RAM VBI
+    ; Signature found! Re-install RAM VBI and call Reinit
     sei
     ldy VERACTL_VBI_LO
     ldx VERACTL_VBI_HI
     lda #7 ; Immediate VBI
     jsr SETVBV
+    
+    ; Call the driver's reinit routine
+    jsr REINIT_DRIVER
     cli
 @done:
+    rts
+
+REINIT_DRIVER:
+    jsr VERACTL_REINIT_LO ; This jumps to the assembly wrapper _vera_warm_start
     rts
 
 PBI_INIT_VERA_SCREEN:

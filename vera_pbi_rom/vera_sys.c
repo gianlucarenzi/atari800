@@ -56,6 +56,7 @@
 extern void InitVbi(void);
 extern void vbi_handler(void);
 extern void CallVeraApiService(void);
+extern void vera_warm_start(void);
 extern char vera_vbi_end;
 extern unsigned char vera_editrv[];
 extern unsigned char vera_screnv[];
@@ -70,6 +71,15 @@ extern void vera_dosini_hook(void); /* asm: DOSINI handler, restores resident VE
 extern unsigned vera_saved_dosini;  /* asm LOWBSS: old DOSINI value to chain to */
 #define DOSINI_ADDR (*(unsigned *)0x000C)
 #define CASINI_ADDR (*(unsigned *)0x0002)
+
+extern void vera_dosini_asm_hook(void);
+
+static void install_dosini_hook(void)
+{
+	unsigned hook_dosini = (unsigned)vera_dosini_asm_hook;
+	DOSINI_ADDR = hook_dosini;
+	CASINI_ADDR = hook_dosini;
+}
 
 static void vera_load_font(void);
 static void vera_activate(void);
@@ -103,6 +113,8 @@ typedef struct VeraCtl {
 	unsigned char entry_hi;
 	unsigned char vbi_lo;
 	unsigned char vbi_hi;
+	unsigned char reinit_lo;
+	unsigned char reinit_hi;
 } VeraCtl;
 
 #pragma bss-name(push, "VERACTL")
@@ -443,19 +455,6 @@ static void install_vera_es(void)
 	install_hook_for_device('S', vera_screnv, &vera_orig_screen_put, put_vec);
 }
 
-static void install_dosini_hook(void)
-{
-	unsigned current_dosini = DOSINI_ADDR;
-	unsigned hook_dosini = (unsigned)vera_dosini_hook;
-
-	if (current_dosini != hook_dosini) {
-		vera_saved_dosini = current_dosini;
-		DOSINI_ADDR = hook_dosini;
-	}
-
-	CASINI_ADDR = hook_dosini;
-}
-
 static void reserve_resident(void)
 {
 	unsigned resident_end = (unsigned)&resident_end_marker + 1u;
@@ -492,6 +491,8 @@ static void init_control_block(void)
 	ctl->entry_hi = (unsigned char)(((unsigned)CallVeraApiService >> 8) & 0xFFu);
 	ctl->vbi_lo = (unsigned char)((unsigned)vbi_handler & 0xFFu);
 	ctl->vbi_hi = (unsigned char)(((unsigned)vbi_handler >> 8) & 0xFFu);
+	ctl->reinit_lo = (unsigned char)((unsigned)vera_warm_start & 0xFFu);
+	ctl->reinit_hi = (unsigned char)(((unsigned)vera_warm_start >> 8) & 0xFFu);
 
 	ctl->sig0 = 'V';
 	ctl->sig1 = 'C';
@@ -543,9 +544,19 @@ static void vera_activate(void)
 	vera_touch_cursor();
 }
 
-void vera_reinit(void)
+void vera_warm_reinit(void)
 {
-	/* install_vera_es(); */
+	volatile VeraCtl* ctl = vera_ctl();
+
+	/* Restore the visual feedback */
+	ctl->cursor_x = 0;
+	ctl->cursor_y = 8;
+	vera_write_text("DEVICE HANDLER READY");
+	ctl->cursor_x = 0;
+	ctl->cursor_y = 10;
+
+	/* Re-touch the cursor if it's enabled */
+	vera_touch_cursor();
 }
 
 int main(void)
@@ -553,17 +564,6 @@ int main(void)
 	reserve_resident();
 	vera_activate();
 
-	/* Install DOSINI hook for warm-restart survival.
-	 * Keep DOSINI permanently pointed at our resident hook; save the
-	 * previous DOSINI target separately and call it from inside the hook.
-	 * The asm stub temporarily swaps the cc65 ZP workspace in only around
-	 * vera_reinit(), then restores the OS's live ZP before returning.
-	 *
-	 * vera_save_c_sp() must be the LAST call before return: it captures
-	 * the cc65 sp at the deepest point in the call stack that we can
-	 * guarantee is fully unwound (i.e. main() about to return).  The
-	 * DOSINI hook restores sp to this value so the C runtime is usable. */
-	install_dosini_hook();
 	vera_save_c_sp();
 	return 0;
 }

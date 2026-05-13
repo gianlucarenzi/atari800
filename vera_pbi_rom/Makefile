@@ -24,9 +24,10 @@ TARGET   = vera_pbi_handler.rom
 OBJ      = vera_pbi_handler.o
 SRC      = vera_pbi_handler.s
 CFG      = vera_pbi.cfg
-SYS      = VERA.SYS
-SYSSRC   = vera_sys.c
+SYS = VERA.SYS
+SYSSRC = vera_stub.c vera_driver.s
 SYSASMSRC = vera_sys_vbi.s vera_sys_es_hook.s vera_sys_font.s vera_sys_dosini.s
+
 AUTORUN  = AUTORUN.SYS
 ATR      = vera_pbi.atr
 ATRBUILD = .atrbuild
