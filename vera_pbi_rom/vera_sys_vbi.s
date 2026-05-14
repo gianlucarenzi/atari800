@@ -129,13 +129,25 @@ _vbi_handler:
     sta click_active
 
 @metronome_done:
-    ; --- Cursor Logic Disabled for Debug ---
+    ; --- Cursor Logic ---
+    dec cursor_frames
+    beq @do_cursor_toggle
     jmp @vbi_done
 
-@cursor_toggle:
+@do_cursor_toggle:
     lda #VBI_CURSOR_RATE
     sta cursor_frames
+    jmp @cursor_toggle_real
 
+@vbi_done:
+    pla
+    tay
+    pla
+    tax
+    pla
+    jmp XITVBV
+
+@cursor_toggle_real:
     ; Save VERA state
     lda VERA_ADDR_L
     sta vera_save_addr_l
@@ -151,14 +163,51 @@ _vbi_handler:
     and #$FE
     sta VERA_CTRL
 
-    ; Set VERA address to cursor position
-    lda _vera_ctl_block + VERACTL_CURSOR_X
-    asl
-    sta VERA_ADDR_L
+    ; Set VERA address to cursor position: 
+    ; Address = (Y * 160) + (X * 2)
+    
     lda _vera_ctl_block + VERACTL_CURSOR_Y
+    cmp #25 ; Standard screen rows
+    bcc @calc_row
+    jmp @cursor_done
+    
+@calc_row:
+    ; Calculate row offset: Y * 160
+    tay
+    asl
+    asl
+    asl
+    asl
+    asl ; Y * 32
+    sta VERA_ADDR_L ; Temporary
+    tya
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl ; Y * 128
     clc
+    adc VERA_ADDR_L
+    sta VERA_ADDR_L
+    tya
+    rol
+    rol
+    and #$01
     adc #VERA_SCREEN_BASE_M
     sta VERA_ADDR_M
+    
+    ; Add column offset: X * 2
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    asl
+    clc
+    adc VERA_ADDR_L
+    sta VERA_ADDR_L
+    lda VERA_ADDR_M
+    adc #0
+    sta VERA_ADDR_M
+    
     lda #($10 | VERA_SCREEN_BANK) ; Increment 1
     sta VERA_ADDR_H
 
@@ -193,14 +242,7 @@ _vbi_handler:
     sta VERA_ADDR_H
     lda vera_save_ctrl
     sta VERA_CTRL
-
-@vbi_done:
-    pla
-    tay
-    pla
-    tax
-    pla
-    jmp XITVBV
+    jmp @vbi_done
 
 _CallVeraApiService:
     pha
