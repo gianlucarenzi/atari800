@@ -31,6 +31,8 @@ MEMLO       = $02E7
 DOSINI      = $000C
 CASINI      = $0002
 SETVBV      = $E45C
+COLBK       = $D01A         ; GTIA background/border colour register
+COLOR4      = $02C8         ; OS shadow of COLBK (restored each VBI)
 
 ; ============================================================================
 ; ZP scratch (safe — bootstrap runs before BASIC starts)
@@ -223,6 +225,7 @@ bootstrap_entry:
     lda (target_lo),y
     adc delta_hi
     sta (target_lo),y
+    sta COLBK                 ; raster bar continues during fixup pass
 
     jmp @fixup_loop
 
@@ -368,6 +371,12 @@ bootstrap_entry:
     sta jmp_vec+1
     jsr trampoline
 
+    ; --- Restore the border to whatever colour the OS expects, otherwise
+    ;     the last raster-bar byte stays on screen for ~1 frame before the
+    ;     next VBI copies COLOR4 → COLBK on its own. ---
+    lda COLOR4
+    sta COLBK
+
     rts
 
 ; ============================================================================
@@ -393,6 +402,7 @@ copy_block:
 @inner:
     lda (src_lo),y
     sta (dest_lo),y
+    sta COLBK                 ; decruncher-style raster bar
     iny
     bne @inner
     inc src_hi
@@ -406,6 +416,7 @@ copy_block:
 @tail_loop:
     lda (src_lo),y
     sta (dest_lo),y
+    sta COLBK
     iny
     cpy count_lo
     bne @tail_loop
