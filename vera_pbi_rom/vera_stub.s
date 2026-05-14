@@ -3,8 +3,11 @@
     .export start, _vera_ctl_block
     .import __MAIN_LAST__
     .import _CallVeraApiService, _InitVbi, _vbi_handler
+    .import _vera_dosini_asm_hook
     .import _vera_warm_reinit, _vera_warm_start
 
+CASINI              = $0002
+DOSINI              = $000C
 MEMLO               = $02E7
 VERACTL_FLAGS       = 4
 VERACTL_REQUEST     = 5
@@ -70,6 +73,12 @@ init_control_block:
     sta _vera_ctl_block + 2
     lda #'L'
     sta _vera_ctl_block + 3
+    lda #<_vera_dosini_asm_hook
+    sta DOSINI
+    sta CASINI
+    lda #>_vera_dosini_asm_hook
+    sta DOSINI+1
+    sta CASINI+1
     jsr _InitVbi
     jsr _vera_warm_reinit
     rts

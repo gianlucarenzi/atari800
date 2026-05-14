@@ -40,7 +40,7 @@ MAPFILE_ROM = vera_pbi.map
 MAPFILE_SYS = vera_sys.map
 LABELS      = vera.lbl
 
-.PHONY: all clean install atr labels
+.PHONY: all clean cleanall install atr labels
 
 all: $(TARGET) $(SYS)
 
@@ -81,8 +81,10 @@ atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS
 
 clean:
 	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) $(LABELS) \
-		$(MAPFILE_ROM) $(MAPFILE_SYS) \
 		$(SYSOBJ)
+
+cleanall: clean
+	rm -rf $(MAPFILE_ROM) $(MAPFILE_SYS)
 
 install: $(TARGET)
 	@mkdir -p $(ROMDIR)
