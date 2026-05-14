@@ -260,7 +260,12 @@ TRY_RECOVER_VBI:
     rts
 
 REINIT_DRIVER:
-    jsr VERACTL_REINIT_LO ; This jumps to the assembly wrapper _vera_warm_start
+    lda #>(@return - 1)
+    pha
+    lda #<(@return - 1)
+    pha
+    jmp (VERACTL_REINIT_LO)
+@return:
     rts
 
 PBI_INIT_VERA_SCREEN:
