@@ -5,7 +5,6 @@
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
 
     .include "atari.inc"
-    .include "zeropage.inc"
 
 ; VERA registers
 VERA_ADDR_L = $D100
@@ -29,13 +28,9 @@ VBI_CURSOR_RATE = 20
 VERA_SCREEN_BASE_M = $B0
 VERA_SCREEN_BANK   = $11
 VERA_TEXT_COLOR    = $61
-
-CC65_ZP_SIZE = $2A
+SETVBV = $E45C
 
     .segment "LOWBSS"
-vera_saved_zp:      .res CC65_ZP_SIZE
-os_saved_zp:        .res CC65_ZP_SIZE
-
 frames_until_click: .res 1
 click_active:       .res 1
 cursor_frames:      .res 1
@@ -70,14 +65,8 @@ _InitVbi:
     cli
     rts
 
-; _vera_save_c_sp  — called once at the end of main().
+; Compatibility shim kept while external callers are migrated off the old cc65 path.
 _vera_save_c_sp:
-    ldx #CC65_ZP_SIZE - 1
-@save_zp:
-    lda c_sp,x
-    sta vera_saved_zp,x
-    dex
-    bpl @save_zp
     rts
 
 _vera_warm_start:
@@ -86,9 +75,7 @@ _vera_warm_start:
     pha
     tya
     pha
-    jsr swap_to_cc65_zp
     jsr _vera_warm_reinit
-    jsr swap_to_os_zp
     pla
     tay
     pla
@@ -221,9 +208,7 @@ _CallVeraApiService:
     pha
     tya
     pha
-    jsr swap_to_cc65_zp
     jsr _VeraApiService
-    jsr swap_to_os_zp
     pla
     tay
     pla
@@ -231,27 +216,4 @@ _CallVeraApiService:
     pla
     rts
 
-swap_to_cc65_zp:
-    ldx #zpspace - 1
-@loop:
-    lda c_sp,x
-    sta os_saved_zp,x
-    lda vera_saved_zp,x
-    sta c_sp,x
-    dex
-    bpl @loop
-    rts
-
-swap_to_os_zp:
-    ldx #zpspace - 1
-@loop:
-    lda c_sp,x
-    sta vera_saved_zp,x
-    lda os_saved_zp,x
-    sta c_sp,x
-    dex
-    bpl @loop
-    rts
-
 _vera_vbi_end:
-

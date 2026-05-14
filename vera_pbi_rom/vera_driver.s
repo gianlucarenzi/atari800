@@ -2,13 +2,8 @@
 
     .setcpu "6502"
 
-    .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService, vera_saved_zp, os_saved_zp
-
-CC65_ZP_SIZE = $2A
-
-    .segment "LOWBSS"
-vera_saved_zp:      .res CC65_ZP_SIZE
-os_saved_zp:        .res CC65_ZP_SIZE
+    .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
+    .import _vera_x16_font
 
     .segment "CODE"
 
@@ -23,6 +18,10 @@ VERA_DC_VIDEO = $D109
 VERA_SCREEN_BASE_M = $B0
 VERA_SCREEN_BANK   = $11
 VERA_TEXT_COLOR    = $61
+VERA_INC1          = $10
+CHARSET_VRAM_L     = $00
+CHARSET_VRAM_M     = $F0
+CHARSET_VRAM_H     = $11
 
 ; POKEY
 AUDF4       = $D206
@@ -43,6 +42,7 @@ ctl_request:  .byte 0
 
 ; --- Warm Reinit ---
 _vera_warm_reinit:
+    jsr vera_load_font
     lda #0
     sta $D100
     lda #(VERA_SCREEN_BASE_M + 8)
@@ -59,6 +59,47 @@ _vera_warm_reinit:
     inx
     bne @loop
 @done:
+    rts
+
+vera_load_font:
+    lda #$00
+    sta VERA_CTRL
+    lda VERA_DC_VIDEO
+    pha
+    and #$CF
+    sta VERA_DC_VIDEO
+    lda #CHARSET_VRAM_L
+    sta VERA_ADDR_L
+    lda #CHARSET_VRAM_M
+    sta VERA_ADDR_M
+    lda #CHARSET_VRAM_H
+    sta VERA_ADDR_H
+    ldx #$00
+@copy_page0:
+    lda _vera_x16_font,x
+    sta VERA_DATA0
+    inx
+    bne @copy_page0
+    ldx #$00
+@copy_page1:
+    lda _vera_x16_font + $100,x
+    sta VERA_DATA0
+    inx
+    bne @copy_page1
+    ldx #$00
+@copy_page2:
+    lda _vera_x16_font + $200,x
+    sta VERA_DATA0
+    inx
+    bne @copy_page2
+    ldx #$00
+@copy_page3:
+    lda _vera_x16_font + $300,x
+    sta VERA_DATA0
+    inx
+    bne @copy_page3
+    pla
+    sta VERA_DC_VIDEO
     rts
 
 ReadyText:

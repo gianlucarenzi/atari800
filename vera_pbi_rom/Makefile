@@ -10,23 +10,22 @@
 
 CA65     = ca65
 LD65     = ld65
-CL65     ?= cl65
 DIR2ATR  ?= dir2atr
 
 ASFLAGS  = --cpu 6502 --feature labels_without_colons
-CFLAGS   ?= -Oirs -t atarixl
-SYSSTART ?= 0x8000
 SYSCFG   = vera_sys.cfg
+SYSASFLAGS = $(ASFLAGS) -D __ATARIXL__ -D SHRAM_HANDLERS
 SYSAUTORUNSRC = vera_sys_autorun.s
-SYSCFLAGS = $(CFLAGS)
 
 TARGET   = vera_pbi_handler.rom
 OBJ      = vera_pbi_handler.o
 SRC      = vera_pbi_handler.s
 CFG      = vera_pbi.cfg
 SYS = VERA.SYS
-SYSSRC = vera_stub.c vera_driver.s
+SYSSRC = vera_stub.s vera_driver.s
 SYSASMSRC = vera_sys_vbi.s vera_sys_es_hook.s vera_sys_font.s vera_sys_dosini.s
+SYSHDRSRC = vera_sys_header.s
+SYSOBJ = $(SYSSRC:.s=.o) $(SYSASMSRC:.s=.o) $(SYSAUTORUNSRC:.s=.o) $(SYSHDRSRC:.s=.o)
 
 AUTORUN  = AUTORUN.SYS
 ATR      = vera_pbi.atr
@@ -52,8 +51,11 @@ $(TARGET): $(OBJ) $(CFG)
 	$(LD65) -C $(CFG) --mapfile $(MAPFILE_ROM) -vm -o $(TARGET) $(OBJ)
 	@echo "ROM size: $$(wc -c < $(TARGET)) bytes (max 2048)"
 
-$(SYS): $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC) $(SYSCFG)
-	$(CL65) $(SYSCFLAGS) -C $(SYSCFG) -m $(MAPFILE_SYS) -o $(SYS) $(SYSSRC) $(SYSASMSRC) $(SYSAUTORUNSRC)
+$(SYSOBJ): %.o: %.s
+	$(CA65) $(SYSASFLAGS) -o $@ $<
+
+$(SYS): $(SYSOBJ) $(SYSCFG)
+	$(LD65) -C $(SYSCFG) --mapfile $(MAPFILE_SYS) -vm -o $(SYS) $(SYSOBJ)
 	@echo "SYS size: $$(wc -c < $(SYS)) bytes"
 
 labels: $(TARGET) $(SYS)
@@ -80,7 +82,7 @@ atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS
 clean:
 	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) $(LABELS) \
 		$(MAPFILE_ROM) $(MAPFILE_SYS) \
-		vera_sys.o vera_sys_vbi.o vera_sys_es_hook.o vera_sys_font.o vera_sys_dosini.o vera_sys_autorun.o
+		$(SYSOBJ)
 
 install: $(TARGET)
 	@mkdir -p $(ROMDIR)
