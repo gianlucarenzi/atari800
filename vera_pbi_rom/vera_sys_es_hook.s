@@ -6,10 +6,10 @@
     .export _vera_saved_dosini, _vera_saved_casini
 
     .import _CallVeraApiService
+    .import _vera_ctl_block
 
-VERA_CTL_BASE    = $8000
-VERA_CTL_REQUEST = VERA_CTL_BASE + 5
-VERA_CTL_PARAM0  = VERA_CTL_BASE + 6
+VERA_CTL_REQUEST = _vera_ctl_block + 5
+VERA_CTL_PARAM0  = _vera_ctl_block + 6
 
 VERA_REQ_PUTC    = $03
 
@@ -30,7 +30,8 @@ _vera_orig_screen_put:
     .res 2
 
 ; Old DOSINI value chained by vera_dosini_hook.
-; Survives warm start (LOWBSS is in $8000+ RAM, untouched by OS warm start).
+; Survives warm start (LOWBSS sits in the relocated body, above MEMLO,
+; untouched by OS warm start).
 _vera_saved_dosini:
     .res 2
 

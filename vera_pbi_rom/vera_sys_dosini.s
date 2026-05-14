@@ -3,17 +3,27 @@
     .export _vera_dosini_asm_hook, _vera_casini_asm_hook
     .import _vera_warm_reinit, _InitVbi
     .import _vera_saved_dosini, _vera_saved_casini
+    .import __VERA_EXPORTS__
 
     .include "atari.inc"
 
+; Offsets within __VERA_EXPORTS__ — must stay in sync with vera_stub.s.
+EXP_DOSINI_HOOK = 2
+EXP_CASINI_HOOK = 4
+
+; Install our DOSINI/CASINI hooks. The pointer table is read with absolute
+; addressing so the linker generates 3-byte instructions (opcode + 16-bit
+; addr) — those addresses go through the runtime relocator, unlike the
+; `#</#>` immediate-byte pattern which would corrupt the previous opcode
+; when MEMLO is not page-aligned.
 install_hooks:
-    lda #<_vera_dosini_asm_hook
+    lda __VERA_EXPORTS__+EXP_DOSINI_HOOK
     sta DOSINI
-    lda #>_vera_dosini_asm_hook
+    lda __VERA_EXPORTS__+EXP_DOSINI_HOOK+1
     sta DOSINI+1
-    lda #<_vera_casini_asm_hook
+    lda __VERA_EXPORTS__+EXP_CASINI_HOOK
     sta CASINI
-    lda #>_vera_casini_asm_hook
+    lda __VERA_EXPORTS__+EXP_CASINI_HOOK+1
     sta CASINI+1
     rts
 

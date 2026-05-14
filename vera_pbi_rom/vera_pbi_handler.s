@@ -207,16 +207,20 @@ IRQVECTOR:
 
 ; OS addresses
 SETVBV  = $E45C
+MEMLO   = $02E7         ; OS pointer to first free RAM byte
 
-VERACTL_ADDR     = $8000
-VERACTL_SIG0     = VERACTL_ADDR + 0
-VERACTL_SIG1     = VERACTL_ADDR + 1
-VERACTL_SIG2     = VERACTL_ADDR + 2
-VERACTL_SIG3     = VERACTL_ADDR + 3
-VERACTL_VBI_LO   = VERACTL_ADDR + 12
-VERACTL_VBI_HI   = VERACTL_ADDR + 13
-VERACTL_REINIT_LO = VERACTL_ADDR + 14
-VERACTL_REINIT_HI = VERACTL_ADDR + 15
+; Offsets within the 16-byte VCTL block (signature + ptr table).
+VCTL_SIG0_OFF   = 0
+VCTL_SIG1_OFF   = 1
+VCTL_SIG2_OFF   = 2
+VCTL_SIG3_OFF   = 3
+VCTL_VBI_LO_OFF = 12
+VCTL_VBI_HI_OFF = 13
+VCTL_REINIT_LO_OFF = 14
+VCTL_REINIT_HI_OFF = 15
+
+; ZP scratch for the (MEMLO - 16) pointer.
+VCTL_PTR = TMP_PTR_LO   ; reuses $80/$81
 
 PBI_INIT:
 INIT:
@@ -231,40 +235,67 @@ INIT:
     jsr TRY_RECOVER_VBI
     rts
 
+; VCTL sits in the last 16 bytes of the resident driver block, immediately
+; below the current MEMLO. Compute (MEMLO - 16) into VCTL_PTR, then validate
+; the signature before trusting the pointer table.
 TRY_RECOVER_VBI:
-    ; Check for 'VCTL' signature at $8000
-    lda VERACTL_SIG0
+    sec
+    lda MEMLO
+    sbc #16
+    sta VCTL_PTR
+    lda MEMLO+1
+    sbc #0
+    sta VCTL_PTR+1
+
+    ldy #VCTL_SIG0_OFF
+    lda (VCTL_PTR),y
     cmp #'V'
     bne @done
-    lda VERACTL_SIG1
+    ldy #VCTL_SIG1_OFF
+    lda (VCTL_PTR),y
     cmp #'C'
     bne @done
-    lda VERACTL_SIG2
+    ldy #VCTL_SIG2_OFF
+    lda (VCTL_PTR),y
     cmp #'T'
     bne @done
-    lda VERACTL_SIG3
+    ldy #VCTL_SIG3_OFF
+    lda (VCTL_PTR),y
     cmp #'L'
     bne @done
 
-    ; Signature found! Re-install RAM VBI and call Reinit
+    ; Signature OK — re-install deferred VBI and call the driver reinit.
+    ; SETVBV protocol: Y=addr_lo, X=addr_hi, A=mode.
     sei
-    ldy VERACTL_VBI_LO
-    ldx VERACTL_VBI_HI
-    lda #7 ; Immediate VBI
+    ldy #VCTL_VBI_HI_OFF
+    lda (VCTL_PTR),y
+    tax
+    ldy #VCTL_VBI_LO_OFF
+    lda (VCTL_PTR),y
+    tay
+    lda #7                  ; immediate + deferred VBI
     jsr SETVBV
-    
-    ; Call the driver's reinit routine
+
     jsr REINIT_DRIVER
     cli
 @done:
     rts
 
+; Indirect call through (VCTL_PTR)+REINIT_LO/HI. Stash a return address on
+; the stack, copy the relocated reinit pointer into ZP, jmp indirect.
+; TMP0/TMP1 are free here — INIT_VERA_SCREEN has already returned.
 REINIT_DRIVER:
+    ldy #VCTL_REINIT_LO_OFF
+    lda (VCTL_PTR),y
+    sta TMP0
+    ldy #VCTL_REINIT_HI_OFF
+    lda (VCTL_PTR),y
+    sta TMP1
     lda #>(@return - 1)
     pha
     lda #<(@return - 1)
     pha
-    jmp (VERACTL_REINIT_LO)
+    jmp (TMP0)
 @return:
     rts
 

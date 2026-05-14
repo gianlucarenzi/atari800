@@ -3,6 +3,7 @@
     .export _InitVbi, _vera_vbi_end, _vbi_handler
     .export _vera_save_c_sp, _vera_warm_start
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
+    .import __VERA_EXPORTS__
 
     .include "atari.inc"
 
@@ -84,10 +85,16 @@ nibble_tmp:          .res 1         ; scratch for the color nibble-swap
 ; _InitVbi — install the deferred VBI and prime state.
 ; ============================================================================
 
+; EXPORTS offset for _vbi_handler — must stay in sync with vera_stub.s.
+EXP_VBI_HANDLER = 10
+
 _InitVbi:
     sei
-    ldy #<_vbi_handler
-    ldx #>_vbi_handler
+    ; Reading the relocated _vbi_handler from the EXPORTS table via absolute
+    ; addressing — the `#</#>` immediate-byte pattern would survive only
+    ; with page-aligned MEMLO (see gen_fixups limitation).
+    ldy __VERA_EXPORTS__+EXP_VBI_HANDLER
+    ldx __VERA_EXPORTS__+EXP_VBI_HANDLER+1
     lda #7                          ; immediate+deferred (cf. SETVBV docs)
     jsr SETVBV
     lda #VBI_RATE

@@ -7,3 +7,21 @@ src/x16edit_E_labels.h
 .vscode/
 .idea/
 /build
+
+# Build artifacts for relocatable VERA.SYS
+body_*.bin
+body_*.lbl
+body_*.map
+loader.bin
+loader.lbl
+loader.map
+fixups.bin
+vera_pbi.map
+vera_sys.map
+vera.lbl
+
+# Final build outputs (rebuild with `make`)
+VERA.SYS
+AUTORUN.SYS
+vera_pbi.atr
+.atrbuild/
