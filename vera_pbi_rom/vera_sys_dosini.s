@@ -3,6 +3,7 @@
     .export _vera_dosini_asm_hook, _vera_casini_asm_hook
     .import _vera_warm_reinit, _InitVbi
     .import _vera_saved_dosini, _vera_saved_casini
+    .import _install_es_hooks
     .import __VERA_EXPORTS__
 
     .include "atari.inc"
@@ -39,6 +40,10 @@ common_reinit:
 
     ; Re-run the resident VERA warm-start init directly in asm.
     jsr _vera_warm_reinit
+
+    ; Re-establish E:/S: HATABS hooks — the OS rebuilds HATABS to defaults
+    ; on every warm start, so without this every reset loses VERA mirror.
+    jsr _install_es_hooks
     rts
 
 ; Standard DOS warm-start path.
