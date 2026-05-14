@@ -3,7 +3,8 @@
     .export start, _vera_ctl_block
     .import __MAIN_LAST__
     .import _CallVeraApiService, _InitVbi, _vbi_handler
-    .import _vera_dosini_asm_hook
+    .import _vera_dosini_asm_hook, _vera_casini_asm_hook
+    .import _vera_saved_dosini, _vera_saved_casini
     .import _vera_warm_reinit, _vera_warm_start
 
 CASINI              = $0002
@@ -73,11 +74,37 @@ init_control_block:
     sta _vera_ctl_block + 2
     lda #'L'
     sta _vera_ctl_block + 3
+    lda DOSINI
+    cmp #<_vera_dosini_asm_hook
+    bne save_old_dosini
+    lda DOSINI+1
+    cmp #>_vera_dosini_asm_hook
+    beq check_casini
+save_old_dosini:
+    lda DOSINI
+    sta _vera_saved_dosini
+    lda DOSINI+1
+    sta _vera_saved_dosini+1
+check_casini:
+    lda CASINI
+    cmp #<_vera_casini_asm_hook
+    bne save_old_casini
+    lda CASINI+1
+    cmp #>_vera_casini_asm_hook
+    beq install_hooks
+save_old_casini:
+    lda CASINI
+    sta _vera_saved_casini
+    lda CASINI+1
+    sta _vera_saved_casini+1
+install_hooks:
     lda #<_vera_dosini_asm_hook
     sta DOSINI
-    sta CASINI
     lda #>_vera_dosini_asm_hook
     sta DOSINI+1
+    lda #<_vera_casini_asm_hook
+    sta CASINI
+    lda #>_vera_casini_asm_hook
     sta CASINI+1
     jsr _InitVbi
     jsr _vera_warm_reinit

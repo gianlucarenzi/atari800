@@ -3,7 +3,7 @@
     .export _vera_editrv, _vera_screnv
     .export _vera_orig_editor_put, _vera_orig_screen_put
     .export _VeraPutByte
-    .export _vera_saved_dosini
+    .export _vera_saved_dosini, _vera_saved_casini
 
     .import _CallVeraApiService
 
@@ -32,6 +32,9 @@ _vera_orig_screen_put:
 ; Old DOSINI value chained by vera_dosini_hook.
 ; Survives warm start (LOWBSS is in $8000+ RAM, untouched by OS warm start).
 _vera_saved_dosini:
+    .res 2
+
+_vera_saved_casini:
     .res 2
 
     .segment "CODE"

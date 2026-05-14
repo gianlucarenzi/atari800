@@ -1,29 +1,42 @@
     .setcpu "6502"
 
-    .export _vera_dosini_asm_hook
+    .export _vera_dosini_asm_hook, _vera_casini_asm_hook
     .import _vera_warm_reinit, _InitVbi
+    .import _vera_saved_dosini, _vera_saved_casini
 
     .include "atari.inc"
 
-; This assembly hook is called by DOSINI/CASINI (the standard warm-start vector)
-_vera_dosini_asm_hook:
-    ; 1. Clear OS critical section flag
+install_hooks:
+    lda #<_vera_dosini_asm_hook
+    sta DOSINI
+    lda #>_vera_dosini_asm_hook
+    sta DOSINI+1
+    lda #<_vera_casini_asm_hook
+    sta CASINI
+    lda #>_vera_casini_asm_hook
+    sta CASINI+1
+    rts
+
+common_reinit:
     lda #0
     sta CRITIC
 
-    ; 2. Ensure VBI is re-installed
+    ; Ensure VBI is re-installed.
     jsr _InitVbi
 
-    ; 3. Keep the warm-start vectors hooked across DOS/BASIC/cartridge transitions.
-    lda #<_vera_dosini_asm_hook
-    sta DOSINI
-    sta CASINI
-    lda #>_vera_dosini_asm_hook
-    sta DOSINI+1
-    sta CASINI+1
+    ; Keep the warm-start and cartridge vectors hooked across transitions.
+    jsr install_hooks
 
-    ; 4. Re-run the resident VERA warm-start init directly in asm.
+    ; Re-run the resident VERA warm-start init directly in asm.
     jsr _vera_warm_reinit
+    rts
 
-    ; 5. Chain to original warm-start logic (the OS expects us to return)
-    jmp $C410 ; ROM_POST_DOSINI
+; Standard DOS warm-start path.
+_vera_dosini_asm_hook:
+    jsr common_reinit
+    jmp (_vera_saved_dosini)
+
+; DOS "cartridge mode" path.
+_vera_casini_asm_hook:
+    jsr common_reinit
+    jmp (_vera_saved_casini)
