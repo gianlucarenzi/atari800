@@ -2,6 +2,7 @@
 
     .export _InitVbi, _vera_vbi_end, _vbi_handler
     .export _vera_save_c_sp, _vera_warm_start
+    .export _vera_cursor_invalidate
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
 
@@ -110,6 +111,27 @@ _InitVbi:
 
 ; Compatibility shim kept while external callers migrate off the old cc65 path.
 _vera_save_c_sp:
+    rts
+
+
+; ============================================================================
+; _vera_cursor_invalidate — called by putc before writing VRAM. If the VBI
+; has the cursor drawn (inverted block visible), restore the underlying cell
+; first so putc doesn't have to fight a stale invert on the next blink.
+;
+; Forces ADDRSEL=0 because cursor_erase / point_vera_at_latched configure
+; the DATA0 address; if a caller left ADDRSEL=1 we'd otherwise clobber the
+; DATA1 pointer instead.
+; ============================================================================
+
+_vera_cursor_invalidate:
+    lda cursor_drawn
+    beq @done
+    lda VERA_CTRL
+    and #VERA_ADDRSEL_CLEAR
+    sta VERA_CTRL
+    jsr cursor_erase                ; restores saved char/color, sets drawn=0
+@done:
     rts
 
 

@@ -84,6 +84,7 @@ EXP_API_SERVICE  = 12
 EXP_WARM_START   = 14
 EXP_VCTL_BLOCK   = 16
 EXP_INIT_VBI     = 18
+EXP_INSTALL_ES   = 20
 
 ; ============================================================================
 ; VCTL block layout (16 bytes)
@@ -367,6 +368,15 @@ bootstrap_entry:
     lda (exp_lo),y
     sta jmp_vec
     ldy #EXP_WARM_REINIT+1
+    lda (exp_lo),y
+    sta jmp_vec+1
+    jsr trampoline
+
+    ; --- 10. Install E:/S: HATABS hooks so PRINT mirrors to VERA. ---
+    ldy #EXP_INSTALL_ES
+    lda (exp_lo),y
+    sta jmp_vec
+    ldy #EXP_INSTALL_ES+1
     lda (exp_lo),y
     sta jmp_vec+1
     jsr trampoline
