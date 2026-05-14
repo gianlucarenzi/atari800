@@ -131,23 +131,16 @@ _vbi_handler:
 @metronome_done:
     ; --- Cursor Logic ---
     dec cursor_frames
-    beq @do_cursor_toggle
-    jmp @vbi_done
-
-@do_cursor_toggle:
+    jmp vbi_done
+    
     lda #VBI_CURSOR_RATE
     sta cursor_frames
-    jmp @cursor_toggle_real
-
-@vbi_done:
-    pla
-    tay
-    pla
-    tax
-    pla
-    jmp XITVBV
-
-@cursor_toggle_real:
+    
+    ; Toggle phase
+    lda cursor_phase
+    eor #$01
+    sta cursor_phase
+    
     ; Save VERA state
     lda VERA_ADDR_L
     sta vera_save_addr_l
@@ -165,21 +158,24 @@ _vbi_handler:
 
     ; Set VERA address to cursor position: 
     ; Address = (Y * 160) + (X * 2)
-    
     lda _vera_ctl_block + VERACTL_CURSOR_Y
-    cmp #25 ; Standard screen rows
-    bcc @calc_row
-    jmp @cursor_done
+    cmp #25
+    jmp vbi_done
     
-@calc_row:
-    ; Calculate row offset: Y * 160
+    ; Row calculation: Y * 160
     tay
+    lda #0
+    sta VERA_ADDR_L
+    lda #0
+    sta VERA_ADDR_M
+    ; (Y * 128) + (Y * 32) = Y * 160
+    tya
     asl
     asl
     asl
     asl
-    asl ; Y * 32
-    sta VERA_ADDR_L ; Temporary
+    asl
+    sta VERA_ADDR_L
     tya
     asl
     asl
@@ -187,7 +183,7 @@ _vbi_handler:
     asl
     asl
     asl
-    asl ; Y * 128
+    asl
     clc
     adc VERA_ADDR_L
     sta VERA_ADDR_L
@@ -208,31 +204,27 @@ _vbi_handler:
     adc #0
     sta VERA_ADDR_M
     
-    lda #($10 | VERA_SCREEN_BANK) ; Increment 1
+    lda #($10 | VERA_SCREEN_BANK)
     sta VERA_ADDR_H
 
-    ; Toggle phase
     lda cursor_phase
-    eor #$01
-    sta cursor_phase
-    bne @cursor_on
+    beq @off
 
-@cursor_off:
-    ; Standard color
-    lda #' '
-    sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
-    sta VERA_DATA0
-    jmp @cursor_done
-
-@cursor_on:
-    ; Inverted/Blink color
+    ; ON: draw cursor
     lda #' '
     sta VERA_DATA0
     lda #$66
     sta VERA_DATA0
+    jmp @cursor_done
 
-@cursor_done:
+    @off:
+    ; OFF: restore original
+    lda cursor_saved_char
+    sta VERA_DATA0
+    lda cursor_saved_color
+    sta VERA_DATA0
+
+    @cursor_done:
     ; Restore VERA state
     lda vera_save_addr_l
     sta VERA_ADDR_L
@@ -242,7 +234,21 @@ _vbi_handler:
     sta VERA_ADDR_H
     lda vera_save_ctrl
     sta VERA_CTRL
-    jmp @vbi_done
+
+    vbi_done:
+    pla
+    tay
+    pla
+    tax
+    pla
+    jmp XITVBV
+
+    pla
+    tay
+    pla
+    tax
+    pla
+    jmp XITVBV
 
 _CallVeraApiService:
     pha
