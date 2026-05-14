@@ -6,68 +6,109 @@
 
     .include "atari.inc"
 
-; VERA registers
-VERA_ADDR_L = $D100
-VERA_ADDR_M = $D101
-VERA_ADDR_H = $D102
-VERA_DATA0  = $D103
-VERA_CTRL   = $D105
+; ============================================================================
+; VERA hardware registers
+; ============================================================================
 
-; VeraCtl offsets
-VERACTL_FLAGS    = 4
-VERACTL_CURSOR_X = 8
-VERACTL_CURSOR_Y = 9
+VERA_ADDR_L         = $D100
+VERA_ADDR_M         = $D101
+VERA_ADDR_H         = $D102
+VERA_DATA0          = $D103
+VERA_CTRL           = $D105
+
+VERA_INC1           = $10           ; ADDR_H[7:4] = 1 → auto-increment by 1
+VERA_ADDRSEL_CLEAR  = $FE           ; mask to clear CTRL bit0 (select ADDR0)
+
+; ============================================================================
+; Screen layout — must stay in sync with vera_pbi_handler.s
+;   SCREEN_ADDR  = $01B000    (bank 1, mid byte $B0)
+;   MAP_COLS     = 128        → per-row stride = 256 bytes
+;   visible 80x25 inside a 128x64 tilemap
+; ============================================================================
+
+SCREEN_ADDR_M       = $B0
+SCREEN_ADDR_BANK    = $01
+VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
+
+SCREEN_COLS         = 80
+SCREEN_ROWS         = 25
+
+; ============================================================================
+; VeraCtl block offsets
+; ============================================================================
+
+VERACTL_FLAGS       = 4
+VERACTL_CURSOR_X    = 8
+VERACTL_CURSOR_Y    = 9
 VERA_CTL_FLAG_METRONOME = $01
 VERA_CTL_FLAG_API_READY = $80
 
-VBI_RATE        = 10
-VBI_FREQ        = $08
-VBI_VOLUME      = $AF
-VBI_CURSOR_RATE = 20
+; ============================================================================
+; Timing / audio
+; ============================================================================
 
-VERA_SCREEN_BASE_M = $B0
-VERA_SCREEN_BANK   = $11
-VERA_TEXT_COLOR    = $61
-SETVBV = $E45C
+VBI_RATE            = 10            ; frames between metronome ticks
+VBI_FREQ            = $08
+VBI_VOLUME          = $AF
+VBI_CURSOR_RATE     = 20            ; frames between cursor blink toggles
+
+SETVBV              = $E45C
+
+; ============================================================================
+; Resident state (LOWBSS survives warm start)
+; ============================================================================
 
     .segment "LOWBSS"
-frames_until_click: .res 1
-click_active:       .res 1
-cursor_frames:      .res 1
-cursor_phase:       .res 1
-cursor_drawn:       .res 1
-cursor_draw_x:      .res 1
-cursor_draw_y:      .res 1
-cursor_saved_char:  .res 1
-cursor_saved_color: .res 1
-vera_save_addr_l:   .res 1
-vera_save_addr_m:   .res 1
-vera_save_addr_h:   .res 1
-vera_save_ctrl:     .res 1
+
+frames_until_click:  .res 1
+click_active:        .res 1
+
+cursor_frames:       .res 1         ; countdown to next blink toggle
+cursor_drawn:        .res 1         ; 0 = erased, 1 = drawn (also = phase)
+cursor_at_x:         .res 1         ; latched X where cursor is currently drawn
+cursor_at_y:         .res 1         ; latched Y where cursor is currently drawn
+cursor_saved_char:   .res 1         ; original char under cursor
+cursor_saved_color:  .res 1         ; original color under cursor
+
+vera_save_addr_l:    .res 1
+vera_save_addr_m:    .res 1
+vera_save_addr_h:    .res 1
+vera_save_ctrl:      .res 1
+
+nibble_tmp:          .res 1         ; scratch for the color nibble-swap
+
 
     .segment "CODE"
+
+; ============================================================================
+; _InitVbi — install the deferred VBI and prime state.
+; ============================================================================
 
 _InitVbi:
     sei
     ldy #<_vbi_handler
     ldx #>_vbi_handler
-    lda #7
+    lda #7                          ; immediate+deferred (cf. SETVBV docs)
     jsr SETVBV
     lda #VBI_RATE
     sta frames_until_click
     lda #0
     sta click_active
+    sta cursor_drawn                ; start in erased state
     lda #VBI_CURSOR_RATE
     sta cursor_frames
-    lda #0
-    sta cursor_phase
-    sta cursor_drawn
     cli
     rts
 
-; Compatibility shim kept while external callers are migrated off the old cc65 path.
+
+; Compatibility shim kept while external callers migrate off the old cc65 path.
 _vera_save_c_sp:
     rts
+
+
+; ============================================================================
+; _vera_warm_start — entry referenced by VERACTL_REINIT_LO/HI.
+; ============================================================================
 
 _vera_warm_start:
     pha
@@ -83,42 +124,66 @@ _vera_warm_start:
     pla
     rts
 
+
+; ============================================================================
+; _vbi_handler — deferred VBI. Bails out while a critical section is active
+; so foreground VRAM writes are never interrupted.
+; ============================================================================
+
 _vbi_handler:
     lda CRITIC
-    beq @vbi_ok
+    beq @ok
     jmp XITVBV
-
-@vbi_ok:
+@ok:
     pha
     txa
     pha
     tya
     pha
 
-    ; --- Metronome Logic ---
+    jsr metronome_tick
+    jsr cursor_tick
+
+    pla
+    tay
+    pla
+    tax
+    pla
+    jmp XITVBV
+
+_vera_vbi_end:
+
+
+; ============================================================================
+; metronome_tick — audible heartbeat on POKEY voice 4.
+;   Driven by VERA_CTL_FLAG_METRONOME in _vera_ctl_block[VERACTL_FLAGS].
+; ============================================================================
+
+metronome_tick:
     lda _vera_ctl_block + VERACTL_FLAGS
     and #VERA_CTL_FLAG_METRONOME
-    bne @metronome_on
+    bne @on
 
-    ; Metronome OFF
+    ; Flag is OFF — make sure the click isn't sustained.
     lda click_active
-    beq @metronome_done
+    beq @done
     lda #0
     sta AUDC4
     sta click_active
     lda #VBI_RATE
     sta frames_until_click
-    jmp @metronome_done
+    rts
 
-@metronome_on:
+@on:
+    ; If the previous frame emitted a click, silence it now.
     lda click_active
-    beq @check_timer
+    beq @count
     lda #0
     sta AUDC4
     sta click_active
-@check_timer:
+@count:
     dec frames_until_click
-    bne @metronome_done
+    bne @done
     lda #VBI_FREQ
     sta AUDF4
     lda #VBI_VOLUME
@@ -127,105 +192,49 @@ _vbi_handler:
     sta frames_until_click
     lda #1
     sta click_active
+@done:
+    rts
 
-@metronome_done:
-    ; --- Cursor Logic ---
+
+; ============================================================================
+; cursor_tick — blink driver. Snapshots VERA state, then toggles between
+; "draw" and "erase" once every VBI_CURSOR_RATE frames.
+;
+; Why latch the position on draw: foreground code can move the desired
+; cursor at any time. If we always rendered against the current X/Y, the
+; erase phase would clear the WRONG cell after a move, leaving a stuck
+; cursor block on screen. Latching cursor_at_x/y at draw time pins the
+; matching erase to the same cell.
+; ============================================================================
+
+cursor_tick:
     dec cursor_frames
-    jmp vbi_done
-    
+    beq @go
+    rts
+@go:
     lda #VBI_CURSOR_RATE
     sta cursor_frames
-    
-    ; Toggle phase
-    lda cursor_phase
-    eor #$01
-    sta cursor_phase
-    
-    ; Save VERA state
+
+    ; Snapshot VERA state, then force ADDR0 selection for our work.
+    lda VERA_CTRL
+    sta vera_save_ctrl
+    and #VERA_ADDRSEL_CLEAR
+    sta VERA_CTRL
     lda VERA_ADDR_L
     sta vera_save_addr_l
     lda VERA_ADDR_M
     sta vera_save_addr_m
     lda VERA_ADDR_H
     sta vera_save_addr_h
-    lda VERA_CTRL
-    sta vera_save_ctrl
 
-    ; Select ADDR0
-    lda vera_save_ctrl
-    and #$FE
-    sta VERA_CTRL
+    lda cursor_drawn
+    bne @erase
+    jsr cursor_draw
+    jmp @restore
+@erase:
+    jsr cursor_erase
 
-    ; Set VERA address to cursor position: 
-    ; Address = (Y * 160) + (X * 2)
-    lda _vera_ctl_block + VERACTL_CURSOR_Y
-    cmp #25
-    jmp vbi_done
-    
-    ; Row calculation: Y * 160
-    tay
-    lda #0
-    sta VERA_ADDR_L
-    lda #0
-    sta VERA_ADDR_M
-    ; (Y * 128) + (Y * 32) = Y * 160
-    tya
-    asl
-    asl
-    asl
-    asl
-    asl
-    sta VERA_ADDR_L
-    tya
-    asl
-    asl
-    asl
-    asl
-    asl
-    asl
-    asl
-    clc
-    adc VERA_ADDR_L
-    sta VERA_ADDR_L
-    tya
-    rol
-    rol
-    and #$01
-    adc #VERA_SCREEN_BASE_M
-    sta VERA_ADDR_M
-    
-    ; Add column offset: X * 2
-    lda _vera_ctl_block + VERACTL_CURSOR_X
-    asl
-    clc
-    adc VERA_ADDR_L
-    sta VERA_ADDR_L
-    lda VERA_ADDR_M
-    adc #0
-    sta VERA_ADDR_M
-    
-    lda #($10 | VERA_SCREEN_BANK)
-    sta VERA_ADDR_H
-
-    lda cursor_phase
-    beq @off
-
-    ; ON: draw cursor
-    lda #' '
-    sta VERA_DATA0
-    lda #$66
-    sta VERA_DATA0
-    jmp @cursor_done
-
-    @off:
-    ; OFF: restore original
-    lda cursor_saved_char
-    sta VERA_DATA0
-    lda cursor_saved_color
-    sta VERA_DATA0
-
-    @cursor_done:
-    ; Restore VERA state
+@restore:
     lda vera_save_addr_l
     sta VERA_ADDR_L
     lda vera_save_addr_m
@@ -234,34 +243,113 @@ _vbi_handler:
     sta VERA_ADDR_H
     lda vera_save_ctrl
     sta VERA_CTRL
-
-    vbi_done:
-    pla
-    tay
-    pla
-    tax
-    pla
-    jmp XITVBV
-
-    pla
-    tay
-    pla
-    tax
-    pla
-    jmp XITVBV
-
-_CallVeraApiService:
-    pha
-    txa
-    pha
-    tya
-    pha
-    jsr _VeraApiService
-    pla
-    tay
-    pla
-    tax
-    pla
     rts
 
-_vera_vbi_end:
+
+; ============================================================================
+; cursor_draw — at the position requested by _vera_ctl_block, save the
+; underlying char + color, then write the char back with foreground and
+; background swapped (classic inverted-block cursor).
+;
+; Address math (per-row stride = 256, MAP_COLS=128 × 2):
+;   ADDR_L = X * 2
+;   ADDR_M = $B0 + Y
+;   ADDR_H = $11               (bank 1 | INC1)
+;
+; Reads via VERA_DATA0 advance the pointer by 1 each, so after reading
+; char + color the pointer sits 2 bytes past the target cell. We must
+; re-point ADDR before writing — otherwise the write lands on the next
+; cell.
+; ============================================================================
+
+cursor_draw:
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    cmp #SCREEN_COLS
+    bcs @oob
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    cmp #SCREEN_ROWS
+    bcs @oob
+
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta cursor_at_x
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sta cursor_at_y
+
+    jsr point_vera_at_latched
+
+    lda VERA_DATA0
+    sta cursor_saved_char
+    lda VERA_DATA0
+    sta cursor_saved_color
+
+    jsr point_vera_at_latched
+
+    lda cursor_saved_char
+    sta VERA_DATA0
+    lda cursor_saved_color
+    jsr swap_color_nibbles
+    sta VERA_DATA0
+
+    lda #1
+    sta cursor_drawn
+    rts
+@oob:
+    ; Don't latch a draw — but also clear any stale drawn flag so the
+    ; next tick will retry rather than try to erase nothing.
+    lda #0
+    sta cursor_drawn
+    rts
+
+
+; ============================================================================
+; cursor_erase — restore the saved cell at the latched position.
+; ============================================================================
+
+cursor_erase:
+    jsr point_vera_at_latched
+    lda cursor_saved_char
+    sta VERA_DATA0
+    lda cursor_saved_color
+    sta VERA_DATA0
+    lda #0
+    sta cursor_drawn
+    rts
+
+
+; ============================================================================
+; point_vera_at_latched — set ADDR0 to (cursor_at_x, cursor_at_y).
+; ============================================================================
+
+point_vera_at_latched:
+    lda cursor_at_x
+    asl a                           ; X * 2 (X < 80 ⇒ no carry into ADDR_M)
+    sta VERA_ADDR_L
+    lda #SCREEN_ADDR_M
+    clc
+    adc cursor_at_y                 ; $B0 + Y (Y < 25 ⇒ no carry into bank)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+    rts
+
+
+; ============================================================================
+; swap_color_nibbles — A := (A >> 4) | (A << 4). Swaps the foreground and
+; background nibbles of a VERA attribute byte so the cursor cell appears
+; inverted on top of the original character.
+; ============================================================================
+
+swap_color_nibbles:
+    pha                             ; save original
+    lsr a
+    lsr a
+    lsr a
+    lsr a                           ; A = high nibble, now in low half
+    sta nibble_tmp
+    pla                             ; restore original
+    asl a
+    asl a
+    asl a
+    asl a                           ; A = low nibble, now in high half
+    ora nibble_tmp
+    rts

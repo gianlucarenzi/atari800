@@ -3,7 +3,12 @@
     .setcpu "6502"
 
     .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
-    .import _vera_x16_font
+    .import _vera_x16_font, _vera_ctl_block
+
+VERACTL_CURSOR_X    = 8
+VERACTL_CURSOR_Y    = 9
+
+READY_ROW           = 8     ; row where "DEVICE HANDLER READY" is rendered
 
     .segment "CODE"
 
@@ -59,6 +64,11 @@ _vera_warm_reinit:
     inx
     bne @loop
 @done:
+    ; Park the cursor at column 0 of the row below the banner.
+    lda #0
+    sta _vera_ctl_block + VERACTL_CURSOR_X
+    lda #(READY_ROW + 1)
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
     rts
 
 vera_load_font:
@@ -103,7 +113,7 @@ vera_load_font:
     rts
 
 ReadyText:
-    .asciiz "DEVICE HANDLER READY"
+    .asciiz "DEVICE HANDLER READY."
 
 ; --- API Service ---
 _CallVeraApiService:
