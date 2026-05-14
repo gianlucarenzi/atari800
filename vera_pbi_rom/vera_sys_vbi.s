@@ -35,6 +35,16 @@ VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
 SCREEN_COLS         = 80
 SCREEN_ROWS         = 25
 
+; The 40x24 mirror viewport used by putc — must agree with vera_driver.s.
+SCREEN_COLS_VIEW    = 40
+SCREEN_ROWS_VIEW    = 24
+
+; OS Editor cursor shadow — driven by both PUT BYTE *and* arrow-key handling.
+; The VBI snapshots these into VCTL so the VERA cursor follows arrow-key moves
+; that never invoke CIO.
+ROWCRS_OS           = $54
+COLCRS_OS           = $55           ; LO byte only (HI is for graphics modes)
+
 ; ============================================================================
 ; VeraCtl block offsets
 ; ============================================================================
@@ -170,6 +180,7 @@ _vbi_handler:
     tya
     pha
 
+    jsr sync_cursor_from_os
     jsr metronome_tick
     jsr cursor_tick
 
@@ -179,6 +190,43 @@ _vbi_handler:
     tax
     pla
     jmp XITVBV
+
+
+; ============================================================================
+; sync_cursor_from_os — copy OS Editor's ROWCRS/COLCRS into VCTL cursor X/Y,
+; clamping to the 40x24 mirror viewport. The blinker reads VCTL on each tick,
+; so this is what makes arrow-key moves visible on VERA even though they
+; never reach our PUT BYTE hook.
+;
+; If the OS cursor moved since the last frame, also force cursor_frames=1 so
+; the next VBI runs cursor_tick immediately (instead of waiting up to 333 ms
+; for the regular blink cycle to come around).
+; ============================================================================
+
+sync_cursor_from_os:
+    lda ROWCRS_OS
+    cmp #SCREEN_ROWS_VIEW
+    bcc @row_ok
+    lda #(SCREEN_ROWS_VIEW - 1)
+@row_ok:
+    cmp _vera_ctl_block + VERACTL_CURSOR_Y
+    beq @y_same
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    lda #1
+    sta cursor_frames
+@y_same:
+    lda COLCRS_OS
+    cmp #SCREEN_COLS_VIEW
+    bcc @col_ok
+    lda #(SCREEN_COLS_VIEW - 1)
+@col_ok:
+    cmp _vera_ctl_block + VERACTL_CURSOR_X
+    beq @x_same
+    sta _vera_ctl_block + VERACTL_CURSOR_X
+    lda #1
+    sta cursor_frames
+@x_same:
+    rts
 
 _vera_vbi_end:
 
