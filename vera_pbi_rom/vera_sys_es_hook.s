@@ -47,6 +47,21 @@ HATABS_SIZE      = 99
 PUT_BYTE_OFFSET  = 6                ; offset inside a handler vector table
 
 ; ============================================================================
+; IOCB layout — 8 IOCBs at $0340-$03BF, 16 bytes each. CIO caches the device's
+; PUT BYTE pointer in ICPTL/ICPTH at OPEN time, so we must rewrite those
+; cached values for every IOCB already open to E:/S: when we install. Without
+; this pass, anyone who OPENed before our bootstrap ran keeps the original
+; pointer in cache and bypasses our hook.
+; ============================================================================
+
+IOCB_BASE        = $0340
+IOCB_ICHID       = 0
+IOCB_ICPTL       = 6
+IOCB_ICPTH       = 7
+IOCB_STRIDE      = 16
+IOCB_COUNT       = 8
+
+; ============================================================================
 ; ZP scratch — saved and restored around use so we don't disturb BASIC/DOS.
 ; ============================================================================
 
@@ -71,6 +86,9 @@ chain_saved_y:          .res 1
 ; ZP backup so we can borrow $CB/$CC while walking HATABS.
 save_zp_cb:             .res 1
 save_zp_cc:             .res 1
+
+; Scratch for the IOCB-update pass (CMP-against-register without a free reg).
+iocb_match_id:          .res 1
 
     .segment "DATA"
 
@@ -266,6 +284,31 @@ install_e:
     sta HATABS+1, x
     lda vera_editrv_addr + 1
     sta HATABS+2, x
+
+    ; Now patch every IOCB whose ICHID matches this HATABS offset — those
+    ; were OPENed against the original vector table and cache the original
+    ; PUT BYTE pointer in ICPTL/ICPTH. Without this pass, BASIC's IOCB #0
+    ; (opened during cart INIT before our bootstrap runs) keeps the old
+    ; pointer and PRINT bypasses our hook until a CLOSE+OPEN cycle.
+    stx iocb_match_id
+    ldy #0
+@iocb_loop_e:
+    lda IOCB_BASE + IOCB_ICHID, y
+    cmp iocb_match_id
+    bne @next_iocb_e
+    lda chained_editor_put_minus1
+    sta IOCB_BASE + IOCB_ICPTL, y
+    lda chained_editor_put_minus1 + 1
+    sta IOCB_BASE + IOCB_ICPTH, y
+@next_iocb_e:
+    tya
+    clc
+    adc #IOCB_STRIDE
+    tay
+    cpy #(IOCB_STRIDE * IOCB_COUNT)
+    bne @iocb_loop_e
+
+    ldx iocb_match_id                ; restore X for the outer scan loop
     rts
 
 ; ----------------------------------------------------------------------------
@@ -299,4 +342,25 @@ install_s:
     sta HATABS+1, x
     lda vera_screnv_addr + 1
     sta HATABS+2, x
+
+    ; Refresh cached PUT BYTE pointers in any IOCB already OPEN to S:.
+    stx iocb_match_id
+    ldy #0
+@iocb_loop_s:
+    lda IOCB_BASE + IOCB_ICHID, y
+    cmp iocb_match_id
+    bne @next_iocb_s
+    lda chained_screen_put_minus1
+    sta IOCB_BASE + IOCB_ICPTL, y
+    lda chained_screen_put_minus1 + 1
+    sta IOCB_BASE + IOCB_ICPTH, y
+@next_iocb_s:
+    tya
+    clc
+    adc #IOCB_STRIDE
+    tay
+    cpy #(IOCB_STRIDE * IOCB_COUNT)
+    bne @iocb_loop_s
+
+    ldx iocb_match_id
     rts
