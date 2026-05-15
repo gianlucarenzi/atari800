@@ -10,6 +10,8 @@
     .import _vera_x16_font, _vera_ctl_block
     .import _vera_cursor_invalidate
 
+    .include "atari.inc"
+    
 ; ============================================================================
 ; VCTL block offsets — must stay in sync with vera_stub.s + the bootstrap.
 ; ============================================================================
@@ -82,14 +84,6 @@ ATASCII_INSERT_CHAR = $FF
 
 VERA_INVERSE_COLOR  = $16           ; swap nibbles of $61: BG=1 white, FG=6 blue
 
-; ============================================================================
-; OS equates (only what the warm-reinit banner needs — putc is self-contained)
-; ============================================================================
-
-CRITIC      = $42
-SETVBV      = $E45C
-XITVBV      = $E462
-
     .segment "LOWBSS"
 
 ; Scratch byte used by routines that need a loop counter outside Y/X.
@@ -113,6 +107,12 @@ _VeraApiService:
 ; ============================================================================
 
 _vera_warm_reinit:
+    sei
+    ; Disable NMI VBI
+    lda NMIEN
+    and #$BF
+    sta NMIEN
+
     jsr vera_load_font
     lda #$00
     sta VERA_CTRL
@@ -138,6 +138,12 @@ _vera_warm_reinit:
     sta _vera_ctl_block + VERACTL_CURSOR_X
     lda #(READY_ROW + 1)
     sta _vera_ctl_block + VERACTL_CURSOR_Y
+
+    ; Enable NMI VBI
+    lda NMIEN
+    ora #$40
+    sta NMIEN
+    cli
     rts
 
 
@@ -147,6 +153,12 @@ _vera_warm_reinit:
 ; ============================================================================
 
 vera_load_font:
+    sei
+    ; Disable NMI VBI
+    lda NMIEN
+    and #$BF
+    sta NMIEN
+
     lda #$00
     sta VERA_CTRL
     lda VERA_DC_VIDEO
@@ -160,22 +172,40 @@ vera_load_font:
     lda #CHARSET_VRAM_H
     sta VERA_ADDR_H
 	
-    ldy #4    ; 4 pages for 1024k font
+    ; Copy 4 pages of 256 bytes each
     ldx #0
-@copy_page:
-    lda _vera_x16_font,x
+@page0:
+    lda _vera_x16_font + $000,x
     sta VERA_DATA0
     inx
-    bne @copy_page
-    
-    ; We manually update the high byte of the indexed instruction in the
-    ; dirty way...
-    inc @copy_page + 2
-    dey
-    bne @copy_page
+    bne @page0
+
+@page1:
+    lda _vera_x16_font + $100,x
+    sta VERA_DATA0
+    inx
+    bne @page1
+
+@page2:
+    lda _vera_x16_font + $200,x
+    sta VERA_DATA0
+    inx
+    bne @page2
+
+@page3:
+    lda _vera_x16_font + $300,x
+    sta VERA_DATA0
+    inx
+    bne @page3
     
     pla
     sta VERA_DC_VIDEO
+
+    ; Enable NMI VBI
+    lda NMIEN
+    ora #$40
+    sta NMIEN
+    cli
     rts
 
 ReadyText:
@@ -295,6 +325,7 @@ _VeraPutByte:
 
 print_literal:
     pha
+    inc CRITIC
     lda #$00
     sta VERA_CTRL
     lda _vera_ctl_block + VERACTL_CURSOR_X
@@ -327,6 +358,7 @@ print_literal:
     bcc @done
     jsr cr_lf
 @done:
+    dec CRITIC
     rts
 
 
@@ -357,6 +389,7 @@ cr_lf:
 ; ----------------------------------------------------------------------------
 
 scroll_up:
+    inc CRITIC
     lda #0
     sta putc_tmp                        ; dest row index
 @row_loop:
@@ -415,6 +448,7 @@ scroll_up:
     sta VERA_DATA0
     dey
     bne @clear_loop
+    dec CRITIC
     rts
 
 
@@ -432,6 +466,7 @@ do_eol:
 ; ----------------------------------------------------------------------------
 
 do_clear:
+    inc CRITIC
     lda #$00
     sta VERA_CTRL
     lda #0
@@ -461,6 +496,7 @@ do_clear:
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_X
     sta _vera_ctl_block + VERACTL_CURSOR_Y
+    dec CRITIC
     rts
 
 
@@ -469,6 +505,7 @@ do_clear:
 ; ----------------------------------------------------------------------------
 
 do_backspace:
+    inc CRITIC
     lda _vera_ctl_block + VERACTL_CURSOR_X
     beq @done
     dec _vera_ctl_block + VERACTL_CURSOR_X
@@ -487,7 +524,10 @@ do_backspace:
     sta VERA_DATA0
     lda #VERA_TEXT_COLOR
     sta VERA_DATA0
+    dec CRITIC
+    rts
 @done:
+    dec CRITIC
     rts
 
 
@@ -567,6 +607,7 @@ do_tab:
 ; ----------------------------------------------------------------------------
 
 do_delete_line:
+    inc CRITIC
     lda _vera_ctl_block + VERACTL_CURSOR_Y
     sta putc_tmp                        ; first dest row = cursor_y
 @dl_row:
@@ -630,6 +671,7 @@ do_delete_line:
     sta VERA_DATA0
     dey
     bne @dl_clr_loop
+    dec CRITIC
     rts
 
 
@@ -639,6 +681,7 @@ do_delete_line:
 ; ----------------------------------------------------------------------------
 
 do_insert_line:
+    inc CRITIC
     ; Start from row 22 (second-to-last) and move down to cursor_y.
     lda #(SCREEN_ROWS_VIEW - 2)
     sta putc_tmp
@@ -705,6 +748,7 @@ do_insert_line:
     sta VERA_DATA0
     dey
     bne @il_clr_loop
+    dec CRITIC
     rts
 
 
@@ -715,6 +759,7 @@ do_insert_line:
 ; ----------------------------------------------------------------------------
 
 do_delete_char:
+    inc CRITIC
     lda #$00
     sta VERA_CTRL
     ; DATA1 → dest: cursor_x cell.
@@ -780,6 +825,7 @@ do_delete_char:
     sta VERA_DATA0
     lda #VERA_TEXT_COLOR
     sta VERA_DATA0
+    dec CRITIC
     rts
 
 
@@ -790,6 +836,7 @@ do_delete_char:
 ; ----------------------------------------------------------------------------
 
 do_insert_char:
+    inc CRITIC
     lda #(SCREEN_COLS_VIEW - 2)
     sta putc_tmp
 @ic_shift:
@@ -851,4 +898,5 @@ do_insert_char:
     sta VERA_DATA0
     lda #VERA_TEXT_COLOR
     sta VERA_DATA0
+    dec CRITIC
     rts

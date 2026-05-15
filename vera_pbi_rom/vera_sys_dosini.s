@@ -31,6 +31,12 @@ install_hooks:
 common_reinit:
     lda #0
     sta CRITIC
+    sei
+
+    ; Disable NMI VBI (bit 6 = $40)
+    lda NMIEN
+    and #$BF
+    sta NMIEN
 
     ; Ensure VBI is re-installed.
     jsr _InitVbi
@@ -44,6 +50,12 @@ common_reinit:
     ; Re-establish E:/S: HATABS hooks — the OS rebuilds HATABS to defaults
     ; on every warm start, so without this every reset loses VERA mirror.
     jsr _install_es_hooks
+
+    ; Enable NMI VBI
+    lda NMIEN
+    ora #$40
+    sta NMIEN
+    cli
     rts
 
 ; Standard DOS warm-start path.
