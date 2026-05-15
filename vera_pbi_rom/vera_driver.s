@@ -159,34 +159,23 @@ vera_load_font:
     sta VERA_ADDR_M
     lda #CHARSET_VRAM_H
     sta VERA_ADDR_H
-    ldx #$00
-@copy_page0:
+
+    ldy #8
+    ldx #0
+@copy_page:
     lda _vera_x16_font,x
     sta VERA_DATA0
     inx
-    bne @copy_page0
-    ldx #$00
-@copy_page1:
-    lda _vera_x16_font + $100,x
-    sta VERA_DATA0
-    inx
-    bne @copy_page1
-    ldx #$00
-@copy_page2:
-    lda _vera_x16_font + $200,x
-    sta VERA_DATA0
-    inx
-    bne @copy_page2
-    ldx #$00
-@copy_page3:
-    lda _vera_x16_font + $300,x
-    sta VERA_DATA0
-    inx
-    bne @copy_page3
+    bne @copy_page
+    
+    ; We manually update the high byte of the indexed instruction.
+    inc @copy_page + 2
+    dey
+    bne @copy_page
+    
     pla
     sta VERA_DC_VIDEO
     rts
-
 
 ReadyText:
     .asciiz "DEVICE HANDLER READY."
