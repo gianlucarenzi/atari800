@@ -152,7 +152,7 @@ static inline UBYTE compose_pixel_index(UBYTE sprite_z, UBYTE sprite_col,
  * Render a tile layer.
  * ------------------------------------------------------------------ */
 static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
-                              const VERA_RegSnap *rs, int py, int ax0, int ay0, int ax1)
+                              const VERA_RegSnap *rs, int py, int ax0, int ay0, int start, int end)
 {
     const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
     UBYTE l_config = l[0];
@@ -180,7 +180,7 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
         int tile_row = (ly / tile_h) % map_h;
         int tile_fy = ly % tile_h;
 
-        for (int px = ax0; px < ax1; px++) {
+        for (int px = start; px < end; px++) {
             int lx_raw = ((px - ax0) * hscale) >> 7;
             int lx = (lx_raw + hscroll) & 0xFFF;
             int tile_col = (lx / tile_w) % map_w;
@@ -239,7 +239,7 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
  * Render a bitmap layer.
  * ------------------------------------------------------------------ */
 static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
-                                const VERA_RegSnap *rs, int py, int ax0, int ay0, int ax1)
+                                const VERA_RegSnap *rs, int py, int ax0, int ay0, int start, int end)
 {
     const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
     UBYTE l_config = l[0];
@@ -258,7 +258,7 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
 
     {
         int ly = ((py - ay0) * vscale) >> 7;
-        for (int px = ax0; px < ax1; px++) {
+        for (int px = start; px < end; px++) {
             int lx = ((px - ax0) * hscale) >> 7;
             ULONG pixel_offset_bits;
             ULONG byte_offset;
@@ -422,15 +422,15 @@ static void render_scanline_range(int py, int xstart, int xend)
 
     if (rs.dc[0][0] & 0x10) {
         if (rs.l0[0] & 0x04)
-            render_bitmap_layer(layer0_row, vram, 0, &rs, py, start, ay0, end);
+            render_bitmap_layer(layer0_row, vram, 0, &rs, py, ax0, ay0, start, end);
         else
-            render_tile_layer(layer0_row, vram, 0, &rs, py, start, ay0, end);
+            render_tile_layer(layer0_row, vram, 0, &rs, py, ax0, ay0, start, end);
     }
     if (rs.dc[0][0] & 0x20) {
         if (rs.l1[0] & 0x04)
-            render_bitmap_layer(layer1_row, vram, 1, &rs, py, start, ay0, end);
+            render_bitmap_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
         else
-            render_tile_layer(layer1_row, vram, 1, &rs, py, start, ay0, end);
+            render_tile_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
     }
     if (rs.dc[0][0] & 0x40)
         render_sprites(sprite_col_row, sprite_z_row, vram, py, start, end);
