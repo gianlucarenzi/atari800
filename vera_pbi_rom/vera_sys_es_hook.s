@@ -1,21 +1,16 @@
-; vera_sys_es_hook.s — chained E:/S: PUT BYTE hooks + HATABS installer.
+; vera_sys_es_hook.s — E:/S: PUT BYTE replace hooks + HATABS installer.
 ;
-; Mirror strategy (Phase 1B):
+; Primary-display strategy (Phase 2 / XEP80-style):
 ;   1. install_es_hooks walks HATABS, finds 'E' and 'S' devices
 ;   2. copies their vector tables into local LOWBSS slots (_vera_editrv,
-;      _vera_screnv) so the original handler stays reachable
-;   3. saves the original PUT BYTE pointer (addr-1 format) for chaining
-;   4. patches the local table's PUT BYTE slot to point at our chained_*
-;      hook, then redirects HATABS to the local table
+;      _vera_screnv)
+;   3. patches the local table's PUT BYTE slot to point at vera_editor_put /
+;      vera_screen_put, and OPEN slot to vera_editor_open / vera_screen_open
+;   4. redirects HATABS to the local table
 ;
-; chained_editor_put / chained_screen_put:
-;   - run the original PUT BYTE first (ANTIC sees the byte as before)
-;   - then mirror the same byte through the VERA putc state machine
-;   - preserve the handler's Y return code and CIO calling convention
-;
-; The chain uses the classic RTS-trampoline: push (continue-1), push the
-; saved (orig-1), RTS to original. When original RTSes it lands at the
-; continue label, which performs the VERA mirror and returns to CIO.
+; The original OS PUT BYTE handler is NOT called; VERA is the primary display.
+; On OPEN, LMARGIN/RMARGIN are set for 80 columns so the OS state machine
+; and software (e.g. Atari Writer) see an 80-column device.
 
     .setcpu "6502"
 
@@ -44,7 +39,11 @@ CRITIC           = $42
 
 HATABS           = $031A
 HATABS_SIZE      = 99
-PUT_BYTE_OFFSET  = 6                ; offset inside a handler vector table
+OPEN_BYTE_OFFSET = 0                ; offset of OPEN vector in handler table
+PUT_BYTE_OFFSET  = 6                ; offset of PUT BYTE vector in handler table
+
+LMARGIN          = $52              ; Atari OS left margin
+RMARGIN          = $53              ; Atari OS right margin
 
 ; ============================================================================
 ; IOCB layout — 8 IOCBs at $0340-$03BF, 16 bytes each. CIO caches the device's
@@ -71,17 +70,13 @@ HATABS_PTR       = $CB              ; 2 bytes ($CB/$CC), user-reserved area
 
 _vera_editrv:           .res 16     ; local copy of E: vector table
 _vera_screnv:           .res 16     ; local copy of S: vector table
-_vera_orig_editor_put:  .res 2      ; original (addr-1) for E: PUT BYTE
-_vera_orig_screen_put:  .res 2      ; original (addr-1) for S: PUT BYTE
+_vera_orig_editor_put:  .res 2      ; kept for potential future use (not chained)
+_vera_orig_screen_put:  .res 2      ; kept for potential future use (not chained)
 
 ; LOWBSS slots used by the DOSINI/CASINI chain (kept here historically because
 ; bootstrap and dosini.s both reference them via __VERA_EXPORTS__).
 _vera_saved_dosini:     .res 2
 _vera_saved_casini:     .res 2
-
-; Per-call scratch for the chained hook — survives across the RTS trampoline.
-chain_saved_char:       .res 1
-chain_saved_y:          .res 1
 
 ; ZP backup so we can borrow $CB/$CC while walking HATABS.
 save_zp_cb:             .res 1
@@ -92,120 +87,90 @@ iocb_match_id:          .res 1
 
     .segment "DATA"
 
-; Pre-computed (chained_*_put - 1) — these are the values we write into
-; HATABS PUT BYTE slots. Storing them as .word lets the relocator patch them
-; as normal 16-bit pointers, dodging the #</#> immediate-byte trap.
-chained_editor_put_minus1:  .word chained_editor_put - 1
-chained_screen_put_minus1:  .word chained_screen_put - 1
+; Pre-computed handler addresses (addr - 1) stored as .word so the relocator
+; patches them as 16-bit pointers, dodging the #</#> immediate-byte trap.
+vera_editor_put_minus1:     .word vera_editor_put - 1
+vera_screen_put_minus1:     .word vera_screen_put - 1
+vera_editor_open_minus1:    .word vera_editor_open - 1
+vera_screen_open_minus1:    .word vera_screen_open - 1
 
-; Continuation addresses for the RTS-trampoline chain. Same reasoning —
-; pushed onto the stack one byte at a time, but stored as a .word so the
-; relocator patches them as 16-bit pointers rather than triggering the
-; immediate-byte trap on `#</#>`.
-after_editor_orig_minus1:   .word after_editor_orig - 1
-after_screen_orig_minus1:   .word after_screen_orig - 1
-
-; Same trick for the addresses of our local vector tables.
+; Addresses of our local vector tables (for HATABS redirection).
 vera_editrv_addr:           .word _vera_editrv
 vera_screnv_addr:           .word _vera_screnv
 
     .segment "CODE"
 
 ; ============================================================================
-; _VeraPutByte — legacy direct entry kept for callers that bypass HATABS
-; (e.g. an XIO test stub). CIO sets CRITIC=1; we clear it on exit.
+; _VeraPutByte — direct entry kept for callers that bypass HATABS.
+; Entry: A = char. Exit: Y = 1 (success), CRITIC cleared.
 ; ============================================================================
 
 .proc _VeraPutByte
-    pha
     sta VERA_CTL_PARAM0
     lda #VERA_REQ_PUTC
     sta VERA_CTL_REQUEST
     jsr _CallVeraApiService
     lda #$00
     sta CRITIC
-    pla
     ldy #1
     rts
 .endproc
 
 ; ============================================================================
-; chained_editor_put — E: PUT BYTE hook. Runs original ANTIC handler first,
-; then mirrors to VERA.
-;
+; vera_editor_put — E: PUT BYTE. VERA is the primary display; the OS handler
+; is NOT called.
 ; Entry: A = char, X = IOCB index * 16.
-; Exit:  Y = result code from original handler, A preserved, CRITIC cleared.
+; Exit:  Y = 1 (success), CRITIC cleared.
 ; ============================================================================
 
-chained_editor_put:
-    sta chain_saved_char
-
-    ; Build chain stack so RTS lands on original handler, original's RTS
-    ; lands on after_editor_orig. HI/LO of (continuation - 1) come from a
-    ; relocatable .word slot to dodge the immediate-byte trap.
-    lda after_editor_orig_minus1 + 1
-    pha
-    lda after_editor_orig_minus1
-    pha
-    lda _vera_orig_editor_put + 1
-    pha
-    lda _vera_orig_editor_put
-    pha
-
-    lda chain_saved_char            ; restore A for the handler
-    rts                              ; → original E: PUT BYTE
-
-after_editor_orig:
-    sty chain_saved_y                ; preserve handler's Y result
-
-    ; Mirror byte to VERA.
-    lda chain_saved_char
+vera_editor_put:
     sta VERA_CTL_PARAM0
     lda #VERA_REQ_PUTC
     sta VERA_CTL_REQUEST
     jsr _CallVeraApiService
-
-    lda #$00
-    sta CRITIC                       ; CIO never clears this for us
-
-    lda chain_saved_char
-    ldy chain_saved_y
-    rts
-
-; ============================================================================
-; chained_screen_put — S: PUT BYTE hook, structurally identical to the E:
-; chain.
-; ============================================================================
-
-chained_screen_put:
-    sta chain_saved_char
-
-    lda after_screen_orig_minus1 + 1
-    pha
-    lda after_screen_orig_minus1
-    pha
-    lda _vera_orig_screen_put + 1
-    pha
-    lda _vera_orig_screen_put
-    pha
-
-    lda chain_saved_char
-    rts
-
-after_screen_orig:
-    sty chain_saved_y
-
-    lda chain_saved_char
-    sta VERA_CTL_PARAM0
-    lda #VERA_REQ_PUTC
-    sta VERA_CTL_REQUEST
-    jsr _CallVeraApiService
-
     lda #$00
     sta CRITIC
+    ldy #1
+    rts
 
-    lda chain_saved_char
-    ldy chain_saved_y
+; ============================================================================
+; vera_screen_put — S: PUT BYTE, identical to vera_editor_put.
+; ============================================================================
+
+vera_screen_put:
+    sta VERA_CTL_PARAM0
+    lda #VERA_REQ_PUTC
+    sta VERA_CTL_REQUEST
+    jsr _CallVeraApiService
+    lda #$00
+    sta CRITIC
+    ldy #1
+    rts
+
+; ============================================================================
+; vera_editor_open — E: OPEN handler. Sets LMARGIN/RMARGIN for 80 columns so
+; software that reads these OS variables (e.g. Atari Writer) sees 80 cols.
+; Entry: A/X as per CIO convention. Exit: Y = 1 (success).
+; ============================================================================
+
+vera_editor_open:
+    lda #0
+    sta LMARGIN
+    lda #79
+    sta RMARGIN
+    ldy #1
+    rts
+
+; ============================================================================
+; vera_screen_open — S: OPEN handler, same margin setup as E:.
+; ============================================================================
+
+vera_screen_open:
+    lda #0
+    sta LMARGIN
+    lda #79
+    sta RMARGIN
+    ldy #1
     rts
 
 ; ============================================================================
@@ -267,17 +232,23 @@ install_e:
     dey
     bpl @copy
 
-    ; Capture the original PUT BYTE pointer (addr-1 format).
+    ; Save original PUT BYTE pointer (kept for reference, not used for chaining).
     lda _vera_editrv + PUT_BYTE_OFFSET
     sta _vera_orig_editor_put
     lda _vera_editrv + PUT_BYTE_OFFSET + 1
     sta _vera_orig_editor_put + 1
 
-    ; Install our hook in the local table's PUT BYTE slot.
-    lda chained_editor_put_minus1
+    ; Install our PUT BYTE handler (replace, not chain).
+    lda vera_editor_put_minus1
     sta _vera_editrv + PUT_BYTE_OFFSET
-    lda chained_editor_put_minus1 + 1
+    lda vera_editor_put_minus1 + 1
     sta _vera_editrv + PUT_BYTE_OFFSET + 1
+
+    ; Install our OPEN handler (sets LMARGIN/RMARGIN = 0/79).
+    lda vera_editor_open_minus1
+    sta _vera_editrv + OPEN_BYTE_OFFSET
+    lda vera_editor_open_minus1 + 1
+    sta _vera_editrv + OPEN_BYTE_OFFSET + 1
 
     ; Redirect HATABS at the local table.
     lda vera_editrv_addr
@@ -285,20 +256,17 @@ install_e:
     lda vera_editrv_addr + 1
     sta HATABS+2, x
 
-    ; Now patch every IOCB whose ICHID matches this HATABS offset — those
-    ; were OPENed against the original vector table and cache the original
-    ; PUT BYTE pointer in ICPTL/ICPTH. Without this pass, BASIC's IOCB #0
-    ; (opened during cart INIT before our bootstrap runs) keeps the old
-    ; pointer and PRINT bypasses our hook until a CLOSE+OPEN cycle.
+    ; Patch every IOCB whose ICHID matches this HATABS offset — those were
+    ; OPENed before our bootstrap and cache the old PUT BYTE in ICPTL/ICPTH.
     stx iocb_match_id
     ldy #0
 @iocb_loop_e:
     lda IOCB_BASE + IOCB_ICHID, y
     cmp iocb_match_id
     bne @next_iocb_e
-    lda chained_editor_put_minus1
+    lda vera_editor_put_minus1
     sta IOCB_BASE + IOCB_ICPTL, y
-    lda chained_editor_put_minus1 + 1
+    lda vera_editor_put_minus1 + 1
     sta IOCB_BASE + IOCB_ICPTH, y
 @next_iocb_e:
     tya
@@ -308,7 +276,7 @@ install_e:
     cpy #(IOCB_STRIDE * IOCB_COUNT)
     bne @iocb_loop_e
 
-    ldx iocb_match_id                ; restore X for the outer scan loop
+    ldx iocb_match_id
     rts
 
 ; ----------------------------------------------------------------------------
@@ -333,26 +301,30 @@ install_s:
     lda _vera_screnv + PUT_BYTE_OFFSET + 1
     sta _vera_orig_screen_put + 1
 
-    lda chained_screen_put_minus1
+    lda vera_screen_put_minus1
     sta _vera_screnv + PUT_BYTE_OFFSET
-    lda chained_screen_put_minus1 + 1
+    lda vera_screen_put_minus1 + 1
     sta _vera_screnv + PUT_BYTE_OFFSET + 1
+
+    lda vera_screen_open_minus1
+    sta _vera_screnv + OPEN_BYTE_OFFSET
+    lda vera_screen_open_minus1 + 1
+    sta _vera_screnv + OPEN_BYTE_OFFSET + 1
 
     lda vera_screnv_addr
     sta HATABS+1, x
     lda vera_screnv_addr + 1
     sta HATABS+2, x
 
-    ; Refresh cached PUT BYTE pointers in any IOCB already OPEN to S:.
     stx iocb_match_id
     ldy #0
 @iocb_loop_s:
     lda IOCB_BASE + IOCB_ICHID, y
     cmp iocb_match_id
     bne @next_iocb_s
-    lda chained_screen_put_minus1
+    lda vera_screen_put_minus1
     sta IOCB_BASE + IOCB_ICPTL, y
-    lda chained_screen_put_minus1 + 1
+    lda vera_screen_put_minus1 + 1
     sta IOCB_BASE + IOCB_ICPTH, y
 @next_iocb_s:
     tya
