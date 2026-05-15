@@ -30,12 +30,12 @@ VCTL_FLAG_API_READY = $80
 VERA_REQ_PUTC       = $03
 
 ; ============================================================================
-; Viewport — 80x24 primary display, top-left aligned in the 128x64 VERA
+; Viewport — 80x60 primary display, top-left aligned in the 128x64 VERA
 ; tilemap. VERA is the authoritative screen; Atari screen RAM is not used.
 ; ============================================================================
 
 SCREEN_COLS_VIEW    = 80
-SCREEN_ROWS_VIEW    = 24
+SCREEN_ROWS_VIEW    = 60
 READY_ROW           = 8             ; row used by warm_reinit's banner
 
 ; ============================================================================
@@ -144,6 +144,10 @@ _vera_warm_reinit:
     ora #$40
     sta NMIEN
     cli
+    ; Disable ANTIC DMA (POKE 559,0 and POKE 542,0)
+    lda #0
+    sta $D405
+    sta $022F
     rts
 
 
@@ -206,6 +210,10 @@ vera_load_font:
     ora #$40
     sta NMIEN
     cli
+    ; Disable ANTIC DMA (POKE 559,0 and POKE 542,0)
+    lda #0
+    sta $D405
+    sta $022F
     rts
 
 ReadyText:
@@ -417,7 +425,7 @@ scroll_up:
     lda #VERA_ADDR_H_BASE
     sta VERA_ADDR_H
 
-    ldy #(SCREEN_COLS_VIEW * 2)         ; 80 bytes per row (40 char + 40 color)
+    ldy #(SCREEN_COLS_VIEW * 2)         ; 160 bytes per row (80 char + 80 color)
 @byte_loop:
     lda VERA_DATA0
     sta VERA_DATA1
