@@ -180,8 +180,6 @@ _vbi_handler:
     tya
     pha
 
-    jsr sync_cursor_from_os
-    jsr metronome_tick
     jsr cursor_tick
 
     pla
@@ -191,87 +189,7 @@ _vbi_handler:
     pla
     jmp XITVBV
 
-
-; ============================================================================
-; sync_cursor_from_os — copy OS Editor's ROWCRS/COLCRS into VCTL cursor X/Y,
-; clamping to the 40x24 mirror viewport. The blinker reads VCTL on each tick,
-; so this is what makes arrow-key moves visible on VERA even though they
-; never reach our PUT BYTE hook.
-;
-; If the OS cursor moved since the last frame, also force cursor_frames=1 so
-; the next VBI runs cursor_tick immediately (instead of waiting up to 333 ms
-; for the regular blink cycle to come around).
-; ============================================================================
-
-sync_cursor_from_os:
-    lda ROWCRS_OS
-    cmp #SCREEN_ROWS_VIEW
-    bcc @row_ok
-    lda #(SCREEN_ROWS_VIEW - 1)
-@row_ok:
-    cmp _vera_ctl_block + VERACTL_CURSOR_Y
-    beq @y_same
-    sta _vera_ctl_block + VERACTL_CURSOR_Y
-    lda #1
-    sta cursor_frames
-@y_same:
-    lda COLCRS_OS
-    cmp #SCREEN_COLS_VIEW
-    bcc @col_ok
-    lda #(SCREEN_COLS_VIEW - 1)
-@col_ok:
-    cmp _vera_ctl_block + VERACTL_CURSOR_X
-    beq @x_same
-    sta _vera_ctl_block + VERACTL_CURSOR_X
-    lda #1
-    sta cursor_frames
-@x_same:
-    rts
-
 _vera_vbi_end:
-
-
-; ============================================================================
-; metronome_tick — audible heartbeat on POKEY voice 4.
-;   Driven by VERA_CTL_FLAG_METRONOME in _vera_ctl_block[VERACTL_FLAGS].
-; ============================================================================
-
-metronome_tick:
-    lda _vera_ctl_block + VERACTL_FLAGS
-    and #VERA_CTL_FLAG_METRONOME
-    bne @on
-
-    ; Flag is OFF — make sure the click isn't sustained.
-    lda click_active
-    beq @done
-    lda #0
-    sta AUDC4
-    sta click_active
-    lda #VBI_RATE
-    sta frames_until_click
-    rts
-
-@on:
-    ; If the previous frame emitted a click, silence it now.
-    lda click_active
-    beq @count
-    lda #0
-    sta AUDC4
-    sta click_active
-@count:
-    dec frames_until_click
-    bne @done
-    lda #VBI_FREQ
-    sta AUDF4
-    lda #VBI_VOLUME
-    sta AUDC4
-    lda #VBI_RATE
-    sta frames_until_click
-    lda #1
-    sta click_active
-@done:
-    rts
-
 
 ; ============================================================================
 ; cursor_tick — blink driver. Snapshots VERA state, then toggles between
