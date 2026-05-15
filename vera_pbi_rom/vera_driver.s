@@ -159,8 +159,8 @@ vera_load_font:
     sta VERA_ADDR_M
     lda #CHARSET_VRAM_H
     sta VERA_ADDR_H
-
-    ldy #8
+	
+    ldy #4    ; 4 pages for 1024k font
     ldx #0
 @copy_page:
     lda _vera_x16_font,x
@@ -168,7 +168,8 @@ vera_load_font:
     inx
     bne @copy_page
     
-    ; We manually update the high byte of the indexed instruction.
+    ; We manually update the high byte of the indexed instruction in the
+    ; dirty way...
     inc @copy_page + 2
     dey
     bne @copy_page
