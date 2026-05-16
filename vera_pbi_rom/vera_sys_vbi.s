@@ -50,6 +50,7 @@ COLCRS_OS           = $55           ; LO byte only (HI is for graphics modes)
 ; ============================================================================
 
 VERACTL_FLAGS       = 4
+VERACTL_BLINK_EN    = $04
 VERACTL_CURSOR_X    = 8
 VERACTL_CURSOR_Y    = 9
 VERA_CTL_FLAG_METRONOME = $01
@@ -195,14 +196,23 @@ _vera_vbi_end:
 ; cursor_tick — blink driver. Snapshots VERA state, then toggles between
 ; "draw" and "erase" once every VBI_CURSOR_RATE frames.
 ;
-; Why latch the position on draw: foreground code can move the desired
-; cursor at any time. If we always rendered against the current X/Y, the
-; erase phase would clear the WRONG cell after a move, leaving a stuck
-; cursor block on screen. Latching cursor_at_x/y at draw time pins the
-; matching erase to the same cell.
+; If bit VERACTL_BLINK_EN is 0, the cursor is forced to 'draw' and blink
+; is skipped.
 ; ============================================================================
 
 cursor_tick:
+    ; Check blink enable flag (bit 2 = $04)
+    lda _vera_ctl_block + VERACTL_FLAGS
+    and #VERACTL_BLINK_EN
+    bne @do_blink
+
+    ; Blink disabled: ensure cursor is drawn
+    lda cursor_drawn
+    bne @done
+    jsr cursor_draw
+    jmp @done
+
+@do_blink:
     dec cursor_frames
     beq @go
     rts
@@ -238,6 +248,7 @@ cursor_tick:
     sta VERA_ADDR_H
     lda vera_save_ctrl
     sta VERA_CTRL
+@done:
     rts
 
 

@@ -17,6 +17,7 @@
 ; ============================================================================
 
 VERACTL_FLAGS       = 4
+VERACTL_BLINK_EN    = $04
 VERACTL_REQUEST     = 5
 VERACTL_PARAM0      = 6
 VERACTL_PARAM1      = 7
@@ -144,9 +145,8 @@ _vera_warm_reinit:
     ora #$40
     sta NMIEN
     cli
-    ; Disable ANTIC DMA (POKE 559,0 and POKE 542,0)
+    ; Disable ANTIC DMA 
     lda #0
-    sta $D405
     sta $022F
     rts
 
@@ -210,9 +210,8 @@ vera_load_font:
     ora #$40
     sta NMIEN
     cli
-    ; Disable ANTIC DMA (POKE 559,0 and POKE 542,0)
+    ; Disable ANTIC DMA 
     lda #0
-    sta $D405
     sta $022F
     rts
 
