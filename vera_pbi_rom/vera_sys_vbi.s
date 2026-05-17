@@ -112,9 +112,11 @@ _InitVbi:
     sta frames_until_click
     lda #0
     sta click_active
-    sta cursor_drawn                ; start in erased state
-    lda #VBI_CURSOR_RATE
-    sta cursor_frames
+    lda #$FF
+    sta cursor_at_x
+    sta cursor_at_y
+    lda #0
+    sta cursor_drawn
     cli
     rts
 
@@ -203,72 +205,52 @@ _vera_vbi_end:
 ; ============================================================================
 
 cursor_tick:
-    dec cursor_frames
-    beq @go
-    rts
-@go:
-    lda #VBI_CURSOR_RATE
-    sta cursor_frames
+    lda ROWCRS_OS
+    cmp _vera_ctl_block + VERACTL_CURSOR_Y
+    bne @do_sync
+    lda COLCRS_OS
+    cmp _vera_ctl_block + VERACTL_CURSOR_X
+    beq @no_sync
+@do_sync:
+    ; Sync driver to OS shadow (arrow keys etc.)
+    lda ROWCRS_OS
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    lda COLCRS_OS
+    sta _vera_ctl_block + VERACTL_CURSOR_X
+@no_sync:
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    cmp cursor_at_y
+    bne @do_update
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    cmp cursor_at_x
+    beq @done
 
-    ; Snapshot VERA state, then force ADDR0 selection for our work.
-    lda VERA_CTRL
-    sta vera_save_ctrl
-    and #VERA_ADDRSEL_CLEAR
-    sta VERA_CTRL
-    lda VERA_ADDR_L
-    sta vera_save_addr_l
-    lda VERA_ADDR_M
-    sta vera_save_addr_m
-    lda VERA_ADDR_H
-    sta vera_save_addr_h
-
+@do_update:
     lda cursor_drawn
-    bne @erase
-    jsr cursor_draw
-    jmp @restore
-@erase:
+    beq @no_erase
     jsr cursor_erase
-
-@restore:
-    lda vera_save_addr_l
-    sta VERA_ADDR_L
-    lda vera_save_addr_m
-    sta VERA_ADDR_M
-    lda vera_save_addr_h
-    sta VERA_ADDR_H
-    lda vera_save_ctrl
-    sta VERA_CTRL
+@no_erase:
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sta cursor_at_y
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta cursor_at_x
+    jsr cursor_draw
+@done:
     rts
 
 
 ; ============================================================================
-; cursor_draw — at the position requested by _vera_ctl_block, save the
-; underlying char + color, then write the char back with foreground and
-; background swapped (classic inverted-block cursor).
-;
-; Address math (per-row stride = 256, MAP_COLS=128 × 2):
-;   ADDR_L = X * 2
-;   ADDR_M = $B0 + Y
-;   ADDR_H = $11               (bank 1 | INC1)
-;
-; Reads via VERA_DATA0 advance the pointer by 1 each, so after reading
-; char + color the pointer sits 2 bytes past the target cell. We must
-; re-point ADDR before writing — otherwise the write lands on the next
-; cell.
+; cursor_draw — save the underlying char + color at (cursor_at_x, cursor_at_y),
+; then write the char back with foreground and background swapped.
 ; ============================================================================
 
 cursor_draw:
-    lda _vera_ctl_block + VERACTL_CURSOR_X
+    lda cursor_at_x
     cmp #SCREEN_COLS
     bcs @oob
-    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    lda cursor_at_y
     cmp #SCREEN_ROWS
     bcs @oob
-
-    lda _vera_ctl_block + VERACTL_CURSOR_X
-    sta cursor_at_x
-    lda _vera_ctl_block + VERACTL_CURSOR_Y
-    sta cursor_at_y
 
     jsr point_vera_at_latched
 

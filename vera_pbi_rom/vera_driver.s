@@ -8,7 +8,7 @@
 
     .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
-    .import _vera_cursor_invalidate
+    .import _vera_cursor_invalidate, cursor_draw
 
 ; ============================================================================
 ; VCTL block offsets — must stay in sync with vera_stub.s + the bootstrap.
@@ -37,27 +37,74 @@ SCREEN_ROWS_VIEW    = 60
 READY_ROW           = 8             ; row used by warm_reinit's banner
 
 ; ============================================================================
-; VERA hardware
+; VERA hardware register base and register names (synced with vera_pbi_handler.s)
 ; ============================================================================
 
-VERA_ADDR_L         = $D100
-VERA_ADDR_M         = $D101
-VERA_ADDR_H         = $D102
-VERA_DATA0          = $D103
-VERA_DATA1          = $D104
-VERA_CTRL           = $D105
-VERA_DC_VIDEO       = $D109
+PBI_ADDR        = $D100
 
-VERA_SCREEN_BASE_M  = $B0
-VERA_SCREEN_BANK    = $11           ; bank 1 | INC1
-VERA_ADDR_H_BASE    = VERA_SCREEN_BANK
-VERA_TEXT_COLOR     = $61           ; (BG=6 blue) (FG=1 white)
-VERA_INC1           = $10
-VERA_ADDRSEL_CLEAR  = $FE
+VERA_ADDR_L     = PBI_ADDR + $00    ; VRAM address bits  7:0  (active port)
+VERA_ADDR_M     = PBI_ADDR + $01    ; VRAM address bits 15:8
+VERA_ADDR_H     = PBI_ADDR + $02    ; bit[0]=A16  bits[7:4]=INCR
+VERA_DATA0      = PBI_ADDR + $03    ; VRAM data port 0
+VERA_DATA1      = PBI_ADDR + $04    ; VRAM data port 1
+VERA_CTRL_REG   = PBI_ADDR + $05    ; CTRL: ADDRSEL(0) DCSEL(1) RESET(7)
+VERA_IEN        = PBI_ADDR + $06    ; Interrupt enable
+VERA_ISR        = PBI_ADDR + $07    ; Interrupt status (write 1 to clear)
 
-CHARSET_VRAM_L      = $00
-CHARSET_VRAM_M      = $F0
-CHARSET_VRAM_H      = $11
+VERA_DC_VIDEO   = PBI_ADDR + $09    ; Output enable, layer enable, sprites
+VERA_DC_HSCALE  = PBI_ADDR + $0A    ; Horizontal scale (128 = 1:1)
+VERA_DC_VSCALE  = PBI_ADDR + $0B    ; Vertical scale
+VERA_DC_BORDER  = PBI_ADDR + $0C    ; Border colour index
+
+; ============================================================================
+; VERA constants (synced with vera_pbi_handler.s)
+; ============================================================================
+
+VERA_INC0       = $00           ; No auto-increment
+VERA_INC1       = $10           ; Auto-increment by 1
+
+VERA_DCSEL0     = $00           ; Access DC_VIDEO/HSCALE/VSCALE/BORDER bank
+VERA_DCSEL1     = $02           ; Access DC_HSTART/HSTOP/VSTART/VSTOP bank
+
+VERA_VIDEO_VGA  = $01           ; VGA output (640x480)
+VERA_LAYER1_EN  = $20           ; Enable Layer 1
+
+VERA_MAP_128x64 = $60           ; 128-tile wide, 64-tile tall map
+
+SCREEN_ADDR     = $01B000       ; Tilemap start (128x64 = 8 KB, in bank 1)
+CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars x 8 bytes)
+
+SCREEN_MAPBASE  = $D8           ; L1_MAPBASE  = SCREEN_ADDR >> 9
+SCREEN_TILEBASE = $F8           ; L1_TILEBASE = CHARSET_ADDR >> 9, 8x8 tiles
+
+MAP_COLS        = 128
+MAP_ROWS        = 64
+TEXT_COLOR      = $61           ; White on blue
+
+DC_HSTART_VAL   = $00
+DC_HSTOP_VAL    = $A0
+DC_VSTART_VAL   = $00
+DC_VSTOP_VAL    = $F0
+
+LOGO1_ADDR      = SCREEN_ADDR + (0 * MAP_COLS * 2) + (0 * 2)
+LOGO2_ADDR      = SCREEN_ADDR + (1 * MAP_COLS * 2) + (0 * 2)
+LOGO3_ADDR      = SCREEN_ADDR + (2 * MAP_COLS * 2) + (0 * 2)
+LOGO4_ADDR      = SCREEN_ADDR + (3 * MAP_COLS * 2) + (0 * 2)
+LOGO5_ADDR      = SCREEN_ADDR + (4 * MAP_COLS * 2) + (0 * 2)
+LOGO6_ADDR      = SCREEN_ADDR + (5 * MAP_COLS * 2) + (0 * 2)
+LOGO7_ADDR      = SCREEN_ADDR + (6 * MAP_COLS * 2) + (0 * 2)
+VER_LINE_ADDR   = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
+HOST_LINE_ADDR  = SCREEN_ADDR + (3 * MAP_COLS * 2) + (8 * 2)
+
+; Internal driver shims for legacy code
+VERA_SCREEN_BASE_M  = >SCREEN_ADDR
+VERA_ADDR_H_BASE    = (VERA_INC1 | ^SCREEN_ADDR)
+VERA_TEXT_COLOR     = TEXT_COLOR
+VERA_CTRL           = VERA_CTRL_REG
+
+CHARSET_VRAM_L      = <CHARSET_ADDR
+CHARSET_VRAM_M      = >CHARSET_ADDR
+CHARSET_VRAM_H      = (VERA_INC1 | ^CHARSET_ADDR)
 
 ; ============================================================================
 ; ATASCII control set we recognise. Anything else is treated as printable.
@@ -97,6 +144,7 @@ putc_tmp:           .res 1
 ; Inverse-video flag set by print_literal, used by clear-row helpers.
 putc_inverse:       .res 1
 save_nmien:         .res 1
+first_init:         .res 1
 
     .segment "CODE"
 
@@ -112,9 +160,17 @@ _VeraApiService:
 ; _vera_warm_reinit — uploads the font, draws the boot banner. Called by the
 ; bootstrap at install and by the warm-start hook on every reset.
 ; ============================================================================
+RTCLOK = $14
+ROWCRS = $54
+COLCRS = $55
 
 _vera_warm_reinit:
     jsr vera_load_font
+
+    lda first_init
+    bne @skip_banner
+
+    ; Print Banner (Cold Start only)
     lda #$00
     sta VERA_CTRL
     lda #0
@@ -126,21 +182,35 @@ _vera_warm_reinit:
     ldx #0
 @loop:
     lda ReadyText,x
-    beq @done
+    beq @banner_done
     sta VERA_DATA0
     lda #VERA_TEXT_COLOR
     sta VERA_DATA0
     inx
     bne @loop
-@done:
-    ; Park the cursor at column 0 of the row below the banner so the first
-    ; user PRINT lands somewhere visible during Phase 1A interactive tests.
+@banner_done:
+    lda #1
+    sta first_init
+
+@skip_banner:
+    ; Wait 
+    lda #250
+    ldx RTCLOK
+@wait:
+    cpx RTCLOK
+    beq @wait
+    dex
+    bne @wait
+
+    jsr do_clear
+
+    ; Inizializzazione cursore a (0,0)
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_X
-    lda #(READY_ROW + 1)
     sta _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS
+    sta COLCRS
     rts
-
 
 ; ============================================================================
 ; vera_load_font — copy the 1 KB X16 font into VRAM at the charset address.
@@ -190,7 +260,7 @@ vera_load_font:
 
 
 ReadyText:
-    .asciiz "DEVICE HANDLER READY."
+    .asciiz "DEVICE DRIVER INSTALLED"
 
 
 ; ============================================================================
@@ -240,75 +310,97 @@ _VeraPutByte:
     and #($FF - VCTL_FLAG_ESCAPE)
     sta _vera_ctl_block + VERACTL_FLAGS
     pla
-    jmp print_literal
+    jsr print_literal
+    jmp @done_putc
 @not_escaped:
     pla
 
-    ; Long-jump dispatch — targets are too far for short branches.
+    ; Dispatch handlers.
     cmp #ATASCII_EOL
     bne @not_eol
-    jmp do_eol
+    jsr do_eol
+    jmp @done_putc
 @not_eol:
     cmp #ATASCII_CLEAR
     bne @not_clear
-    jmp do_clear
+    jsr do_clear
+    jmp @done_putc
 @not_clear:
     cmp #ATASCII_BACKSPACE
     bne @not_bs
-    jmp do_backspace
+    jsr do_backspace
+    jmp @done_putc
 @not_bs:
     cmp #ATASCII_ESC
     bne @not_esc
-    jmp do_esc
+    jsr do_esc
+    jmp @done_putc
 @not_esc:
     cmp #ATASCII_CURSOR_UP
     bne @not_cu
-    jmp do_cursor_up
+    jsr do_cursor_up
+    jmp @done_putc
 @not_cu:
     cmp #ATASCII_CURSOR_DOWN
     bne @not_cd
-    jmp do_cursor_down
+    jsr do_cursor_down
+    jmp @done_putc
 @not_cd:
     cmp #ATASCII_CURSOR_LEFT
     bne @not_cl
-    jmp do_cursor_left
+    jsr do_cursor_left
+    jmp @done_putc
 @not_cl:
     cmp #ATASCII_CURSOR_RIGHT
     bne @not_cr
-    jmp do_cursor_right
+    jsr do_cursor_right
+    jmp @done_putc
 @not_cr:
     cmp #ATASCII_BELL
     bne @not_bell
-    jmp do_bell
+    jsr do_bell
+    jmp @done_putc
 @not_bell:
     cmp #ATASCII_TAB
     bne @not_tab
-    jmp do_tab
+    jsr do_tab
+    jmp @done_putc
 @not_tab:
     cmp #ATASCII_DELETE_LINE
     bne @not_dl
-    jmp do_delete_line
+    jsr do_delete_line
+    jmp @done_putc
 @not_dl:
     cmp #ATASCII_INSERT_LINE
     bne @not_il
-    jmp do_insert_line
+    jsr do_insert_line
+    jmp @done_putc
 @not_il:
     cmp #ATASCII_DELETE_CHAR
     bne @not_dc
-    jmp do_delete_char
+    jsr do_delete_char
+    jmp @done_putc
 @not_dc:
     cmp #ATASCII_INSERT_CHAR
     bne @not_ic
-    jmp do_insert_char
+    jsr do_insert_char
+    jmp @done_putc
 @not_ic:
 
-    ; Default: printable. Bit 7 signals inverse video: save the flag, strip
-    ; the bit so we index within the 128-tile font, then render.
+    ; Default: printable. Bit 7 signals inverse video.
     and #$80
     sta putc_inverse
     lda _vera_ctl_block + VERACTL_PARAM0
     and #$7F
-    jmp print_literal
+    jsr print_literal
+
+@done_putc:
+    ; Sync back to OS shadow registers.
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta COLCRS
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS
+    rts
 
 
 ; ----------------------------------------------------------------------------
@@ -471,10 +563,12 @@ do_eol:
 ; ----------------------------------------------------------------------------
 
 do_clear:
-    lda #$00
+    sei
+    lda #0                      ; Ensure ADDRSEL=0
     sta VERA_CTRL
+    
     lda #0
-    sta putc_tmp                        ; current row
+    sta putc_tmp                ; row counter
 @row_loop:
     lda #0
     sta VERA_ADDR_L
@@ -482,9 +576,10 @@ do_clear:
     clc
     adc #VERA_SCREEN_BASE_M
     sta VERA_ADDR_M
-    lda #VERA_ADDR_H_BASE
+    lda #VERA_ADDR_H_BASE       ; Bank 1, INC=1
     sta VERA_ADDR_H
-    ldy #SCREEN_COLS_VIEW
+
+    ldy #0                      ; 256 bytes = 128 tiles
 @col_loop:
     lda #' '
     sta VERA_DATA0
@@ -492,14 +587,16 @@ do_clear:
     sta VERA_DATA0
     dey
     bne @col_loop
+
     inc putc_tmp
     lda putc_tmp
-    cmp #SCREEN_ROWS_VIEW
+    cmp #64                     ; Clear all 64 rows of the 128x64 map
     bne @row_loop
 
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_X
     sta _vera_ctl_block + VERACTL_CURSOR_Y
+    cli
     rts
 
 
@@ -890,4 +987,25 @@ do_insert_char:
     sta VERA_DATA0
     lda #VERA_TEXT_COLOR
     sta VERA_DATA0
+    rts
+
+_pbi_clear_screen:
+    lda #<SCREEN_ADDR
+    sta VERA_ADDR_L
+    lda #>SCREEN_ADDR
+    sta VERA_ADDR_M
+    lda #(VERA_INC1 | ^SCREEN_ADDR)
+    sta VERA_ADDR_H
+    ldy #MAP_ROWS
+@Row:
+    ldx #MAP_COLS
+@Col:
+    lda #' '
+    sta VERA_DATA0
+    lda #TEXT_COLOR
+    sta VERA_DATA0
+    dex
+    bne @Col
+    dey
+    bne @Row
     rts
