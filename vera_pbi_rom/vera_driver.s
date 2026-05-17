@@ -136,6 +136,7 @@ VERA_INVERSE_COLOR  = $16           ; swap nibbles of $61: BG=1 white, FG=6 blue
 CRITIC      = $42
 SETVBV      = $E45C
 XITVBV      = $E462
+LMARGIN     = $52
 
     .segment "LOWBSS"
 
@@ -204,11 +205,13 @@ _vera_warm_reinit:
 
     jsr do_clear
 
-    ; Inizializzazione cursore a (0,0)
-    lda #0
+    ; Inizializzazione cursore a (LMARGIN,0)
+    lda LMARGIN
     sta _vera_ctl_block + VERACTL_CURSOR_X
+    lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_Y
     sta ROWCRS
+    lda LMARGIN
     sta COLCRS
     rts
 
@@ -446,11 +449,11 @@ print_literal:
 
 
 ; ----------------------------------------------------------------------------
-; cr_lf — newline: x=0, y++, scroll if past last row.
+; cr_lf — newline: x=LMARGIN, y++, scroll if past last row.
 ; ----------------------------------------------------------------------------
 
 cr_lf:
-    lda #0
+    lda LMARGIN
     sta _vera_ctl_block + VERACTL_CURSOR_X
     inc _vera_ctl_block + VERACTL_CURSOR_Y
     lda _vera_ctl_block + VERACTL_CURSOR_Y
@@ -593,8 +596,9 @@ do_clear:
     cmp #64                     ; Clear all 64 rows of the 128x64 map
     bne @row_loop
 
-    lda #0
+    lda LMARGIN
     sta _vera_ctl_block + VERACTL_CURSOR_X
+    lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_Y
     cli
     rts
@@ -606,6 +610,7 @@ do_clear:
 
 do_backspace:
     lda _vera_ctl_block + VERACTL_CURSOR_X
+    cmp LMARGIN
     beq @done
     dec _vera_ctl_block + VERACTL_CURSOR_X
     lda #$00
@@ -659,6 +664,7 @@ do_cursor_down:
 
 do_cursor_left:
     lda _vera_ctl_block + VERACTL_CURSOR_X
+    cmp LMARGIN
     beq @done
     dec _vera_ctl_block + VERACTL_CURSOR_X
 @done:
