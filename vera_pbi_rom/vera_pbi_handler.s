@@ -567,6 +567,7 @@ NONEED:
     sta CRITIC
     ldy #1
     sec
+    sta $D1FF ; Reenable the Math Pack when exiting
     rts
 
 LogoLine1:
