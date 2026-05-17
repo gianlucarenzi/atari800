@@ -298,7 +298,7 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 			/* reactivate the floating point rom */
 			if (!fp_active) {
 				memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
-				Log_D("Floating point rom activated");
+				Log_D("%s", "Floating point rom activated");
 				fp_active = TRUE;
 			}
 		}
