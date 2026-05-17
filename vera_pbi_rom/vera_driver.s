@@ -96,6 +96,7 @@ XITVBV      = $E462
 putc_tmp:           .res 1
 ; Inverse-video flag set by print_literal, used by clear-row helpers.
 putc_inverse:       .res 1
+save_nmien:         .res 1
 
     .segment "CODE"
 
@@ -197,10 +198,26 @@ ReadyText:
 ; routed; everything else falls through to rts (no-op).
 ; ============================================================================
 
+NMIEN       = $D40E
+
 _CallVeraApiService:
+    sei
+    lda NMIEN
+    sta save_nmien
+    lda #0
+    sta NMIEN
     lda _vera_ctl_block + VERACTL_REQUEST
     cmp #VERA_REQ_PUTC
-    beq _VeraPutByte
+    beq @do_putc
+    lda save_nmien
+    sta NMIEN
+    cli
+    rts
+@do_putc:
+    jsr _VeraPutByte
+    lda save_nmien
+    sta NMIEN
+    cli
     rts
 
 
@@ -371,6 +388,10 @@ DMACTL      = $022F
 
 scroll_up:
     sei                         ; Disable interrupts
+    lda NMIEN                   ; Save NMIEN
+    sta save_nmien
+    lda #0                      ; Disable NMI (VBI)
+    sta NMIEN
     lda DMACTL                  ; Save ANTIC DMA state
     pha
     lda #0                      ; Disable ANTIC DMA
@@ -438,6 +459,8 @@ scroll_up:
 
     pla                         ; Restore ANTIC DMA state
     sta DMACTL
+    lda save_nmien              ; Restore NMIEN
+    sta NMIEN
     cli                         ; Re-enable interrupts
     rts
 
