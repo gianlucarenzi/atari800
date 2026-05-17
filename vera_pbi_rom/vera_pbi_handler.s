@@ -109,13 +109,6 @@ MAP_ROWS        = 64
 SCREEN_ROWS     = 25
 TEXT_COLOR      = $61           ; White on blue
 
-TMP_PTR_LO      = $80
-TMP_PTR_HI      = $81
-TMP0            = $82
-TMP1            = $83
-TMP2            = $84
-
-
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
 DC_VSTART_VAL   = $00
@@ -664,4 +657,9 @@ boot_font_data:
     .byte $B8,$F2, $63,$63,$63,$6B,$7F,$77,$63,$00  ; 'W'
     .byte $C0,$F2, $66,$66,$3C,$18,$3C,$66,$66,$00  ; 'X'
 
-; End of ROM
+; ZP scratch for the (MEMLO - 16) pointer.
+TMP_PTR_LO      = $CB
+TMP_PTR_HI      = $CC
+TMP0            = $CD
+TMP1            = $CE
+TMP2            = $CF
