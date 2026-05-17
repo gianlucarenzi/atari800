@@ -35,9 +35,9 @@ VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
 SCREEN_COLS         = 80
 SCREEN_ROWS         = 25
 
-; The 40x24 mirror viewport used by putc — must agree with vera_driver.s.
-SCREEN_COLS_VIEW    = 40
-SCREEN_ROWS_VIEW    = 24
+; The 80x60 mirror viewport used by putc — must agree with vera_driver.s.
+SCREEN_COLS_VIEW    =80
+SCREEN_ROWS_VIEW    = 60
 
 ; OS Editor cursor shadow — driven by both PUT BYTE *and* arrow-key handling.
 ; The VBI snapshots these into VCTL so the VERA cursor follows arrow-key moves

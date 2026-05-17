@@ -33,7 +33,7 @@ VERA_REQ_PUTC       = $03
 ; ============================================================================
 
 SCREEN_COLS_VIEW    = 80
-SCREEN_ROWS_VIEW    = 24
+SCREEN_ROWS_VIEW    = 60
 READY_ROW           = 8             ; row used by warm_reinit's banner
 
 ; ============================================================================
@@ -622,7 +622,7 @@ do_delete_line:
     lda #$00
     sta VERA_CTRL
     inc putc_tmp
-    bne @dl_row                         ; always taken (putc_tmp < 24)
+    bne @dl_row                         ; always taken (putc_tmp < number of rows)
 
 @dl_clear:
     ; Clear the last row.
