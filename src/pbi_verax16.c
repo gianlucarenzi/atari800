@@ -228,9 +228,6 @@ static int32_t fx_mult_accumulator = 0;
 static int fx_2bit_poke_mode = FALSE;
 static UBYTE fx_16bit_hop_start_index = 0;
 
-/* Scratchpad RAM for PBI handler variables ($D120 - $D19F, 128 bytes) */
-static UBYTE vera_pbi_scratchpad[0x80];
-
 /* Layer 0 — fixed at offsets 0x0D-0x13 (7 registers) */
 static UBYTE vera_l0[7];        /* CONFIG, MAPBASE, TILEBASE, HSCROLL_L/H, VSCROLL_L/H */
 
@@ -2064,8 +2061,6 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
         Log_D("PBI_GetByte: %04X -> %02X", addr, val);
         return (int)val;
     }
-    if (offset >= 0x20 && offset < 0xA0) /* $D120 - $D19F */
-        return (int)vera_pbi_scratchpad[offset - 0x20];
     return PBI_NOT_HANDLED;
 }
 
@@ -2080,8 +2075,6 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
         Log_D("PBI_PutByte: %04X <- %02X", addr, byte);
         vera_write_reg(offset, byte);
     }
-    else if (offset >= 0x20 && offset < 0xA0) /* $D120 - $D19F */
-        vera_pbi_scratchpad[offset - 0x20] = byte;
 }
 
 /* ------------------------------------------------------------------ */
