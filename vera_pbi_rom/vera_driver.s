@@ -198,25 +198,21 @@ ReadyText:
 ; routed; everything else falls through to rts (no-op).
 ; ============================================================================
 
-NMIEN       = $D40E
-
 _CallVeraApiService:
     sei
-    lda NMIEN
-    sta save_nmien
-    lda #0
-    sta NMIEN
+    lda #1
+    sta CRITIC
     lda _vera_ctl_block + VERACTL_REQUEST
     cmp #VERA_REQ_PUTC
     beq @do_putc
-    lda save_nmien
-    sta NMIEN
+    lda #0
+    sta CRITIC
     cli
     rts
 @do_putc:
     jsr _VeraPutByte
-    lda save_nmien
-    sta NMIEN
+    lda #0
+    sta CRITIC
     cli
     rts
 
@@ -387,11 +383,9 @@ cr_lf:
 DMACTL      = $022F
 
 scroll_up:
-    sei                         ; Disable interrupts
-    lda NMIEN                   ; Save NMIEN
-    sta save_nmien
-    lda #0                      ; Disable NMI (VBI)
-    sta NMIEN
+    sei
+    lda #1                      ; Set Critical Section
+    sta CRITIC
     lda DMACTL                  ; Save ANTIC DMA state
     pha
     lda #0                      ; Disable ANTIC DMA
@@ -400,8 +394,6 @@ scroll_up:
     lda #0
     sta putc_tmp                ; dest row index
 @row_loop:
-    ; ... (loop di copia) ...
-    ; DATA0 → read source row (= dest row + 1)
     lda #$00
     sta VERA_CTRL
     lda #0
@@ -459,9 +451,9 @@ scroll_up:
 
     pla                         ; Restore ANTIC DMA state
     sta DMACTL
-    lda save_nmien              ; Restore NMIEN
-    sta NMIEN
-    cli                         ; Re-enable interrupts
+    lda #0                      ; Clear Critical Section
+    sta CRITIC
+    cli
     rts
 
 
