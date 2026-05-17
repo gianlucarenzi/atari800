@@ -1,25 +1,12 @@
     .setcpu "6502"
 
+    .include "vera_common.inc"
+
     .export _InitVbi, _vera_vbi_end, _vbi_handler
     .export _vera_save_c_sp, _vera_warm_start
     .export _vera_cursor_invalidate
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
-
-    .include "atari.inc"
-
-; ============================================================================
-; VERA hardware registers
-; ============================================================================
-
-VERA_ADDR_L         = $D100
-VERA_ADDR_M         = $D101
-VERA_ADDR_H         = $D102
-VERA_DATA0          = $D103
-VERA_CTRL           = $D105
-
-VERA_INC1           = $10           ; ADDR_H[7:4] = 1 → auto-increment by 1
-VERA_ADDRSEL_CLEAR  = $FE           ; mask to clear CTRL bit0 (select ADDR0)
 
 ; ============================================================================
 ; Screen layout — must stay in sync with vera_pbi_handler.s
@@ -28,32 +15,12 @@ VERA_ADDRSEL_CLEAR  = $FE           ; mask to clear CTRL bit0 (select ADDR0)
 ;   visible 80x25 inside a 128x64 tilemap
 ; ============================================================================
 
-SCREEN_ADDR_M       = $B0
-SCREEN_ADDR_BANK    = $01
-VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
-
-SCREEN_COLS         = 80
-SCREEN_ROWS         = 60
-
-; The 80x60 mirror viewport used by putc — must agree with vera_driver.s.
-SCREEN_COLS_VIEW    =80
-SCREEN_ROWS_VIEW    = 60
-
+; ============================================================================
 ; OS Editor cursor shadow — driven by both PUT BYTE *and* arrow-key handling.
 ; The VBI snapshots these into VCTL so the VERA cursor follows arrow-key moves
 ; that never invoke CIO.
-ROWCRS_OS           = $54
-COLCRS_OS           = $55           ; LO byte only (HI is for graphics modes)
-
-; ============================================================================
-; VeraCtl block offsets
-; ============================================================================
-
-VERACTL_FLAGS       = 4
-VERACTL_CURSOR_X    = 8
-VERACTL_CURSOR_Y    = 9
-VERA_CTL_FLAG_METRONOME = $01
-VERA_CTL_FLAG_API_READY = $80
+ROWCRS_OS           = ROWCRS
+COLCRS_OS           = COLCRS        ; LO byte only (HI is for graphics modes)
 
 ; ============================================================================
 ; Timing / audio

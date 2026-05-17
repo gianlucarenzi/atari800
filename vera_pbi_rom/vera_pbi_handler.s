@@ -32,82 +32,11 @@
 
     .setcpu "6502"
 
-; ============================================================================
-; OS equates
-; ============================================================================
-
-PDVMSK  = $0247         ; PBI device mask     (enabled-device bitmask)
-PNDEVREQ = $0248        ; PBI device request  (this device's bit, set by OS)
-PDIMSK  = $0249         ; PBI interrupt mask
-
-CRITIC  = $42           ; Critical section flag (0 = deferred VBI enabled)
-RAMTOP  = $6A
-PORTB   = $D301
-
+    .include "vera_common.inc"
 
 ; ============================================================================
-; VERA hardware register base and register names
+; Local equates
 ; ============================================================================
-
-PBI_ADDR        = $D100
-
-VERA_ADDR_L     = PBI_ADDR + $00    ; VRAM address bits  7:0  (active port)
-VERA_ADDR_M     = PBI_ADDR + $01    ; VRAM address bits 15:8
-VERA_ADDR_H     = PBI_ADDR + $02    ; bit[0]=A16  bits[7:4]=INCR
-VERA_DATA0      = PBI_ADDR + $03    ; VRAM data port 0
-VERA_DATA1      = PBI_ADDR + $04    ; VRAM data port 1
-VERA_CTRL_REG   = PBI_ADDR + $05    ; CTRL: ADDRSEL(0) DCSEL(1) RESET(7)
-VERA_IEN        = PBI_ADDR + $06    ; Interrupt enable
-VERA_ISR        = PBI_ADDR + $07    ; Interrupt status (write 1 to clear)
-
-VERA_DC_VIDEO   = PBI_ADDR + $09    ; Output enable, layer enable, sprites
-VERA_DC_HSCALE  = PBI_ADDR + $0A    ; Horizontal scale (128 = 1:1)
-VERA_DC_VSCALE  = PBI_ADDR + $0B    ; Vertical scale
-VERA_DC_BORDER  = PBI_ADDR + $0C    ; Border colour index
-
-VERA_DC_HSTART  = PBI_ADDR + $09    ; Active area start column (/4)
-VERA_DC_HSTOP   = PBI_ADDR + $0A    ; Active area stop  column (/4)
-VERA_DC_VSTART  = PBI_ADDR + $0B    ; Active area start row    (/2)
-VERA_DC_VSTOP   = PBI_ADDR + $0C    ; Active area stop  row    (/2)
-
-VERA_L1_CONFIG  = PBI_ADDR + $14
-VERA_L1_MAPBASE = PBI_ADDR + $15
-VERA_L1_TILEBASE= PBI_ADDR + $16
-VERA_L1_HSCR_L  = PBI_ADDR + $17
-VERA_L1_HSCR_H  = PBI_ADDR + $18
-VERA_L1_VSCR_L  = PBI_ADDR + $19
-VERA_L1_VSCR_H  = PBI_ADDR + $1A
-
-VERA_REG_ARRAY  = PBI_ADDR + $00
-
-; ============================================================================
-; VERA constants
-; ============================================================================
-
-DEVICE_ID_MASK  = $80           ; This card occupies PBI bit 7
-
-VERA_INC0       = $00           ; No auto-increment
-VERA_INC1       = $10           ; Auto-increment by 1
-
-VERA_DCSEL0     = $00           ; Access DC_VIDEO/HSCALE/VSCALE/BORDER bank
-VERA_DCSEL1     = $02           ; Access DC_HSTART/HSTOP/VSTART/VSTOP bank
-
-VERA_VIDEO_VGA  = $01           ; VGA output (640x480)
-VERA_LAYER1_EN  = $20           ; Enable Layer 1
-
-VERA_MAP_128x64 = $60           ; 128-tile wide, 64-tile tall map
-
-SCREEN_ADDR     = $01B000       ; Tilemap start (128x64 = 8 KB, in bank 1)
-CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars x 8 bytes)
-
-SCREEN_MAPBASE  = $D8           ; L1_MAPBASE  = SCREEN_ADDR >> 9
-SCREEN_TILEBASE = $F8           ; L1_TILEBASE = CHARSET_ADDR >> 9, 8x8 tiles
-
-SCREEN_COLS     = 80
-MAP_COLS        = 128
-MAP_ROWS        = 64
-SCREEN_ROWS     = 25
-TEXT_COLOR      = $61           ; White on blue
 
 DC_HSTART_VAL   = $00
 DC_HSTOP_VAL    = $A0
@@ -195,10 +124,6 @@ IRQVECTOR:
     lda #$00
     sta VERA_ISR
     rts
-
-; OS addresses
-SETVBV  = $E45C
-MEMLO   = $02E7         ; OS pointer to first free RAM byte
 
 ; Offsets within the 16-byte VCTL block (signature + ptr table).
 VCTL_SIG0_OFF   = 0

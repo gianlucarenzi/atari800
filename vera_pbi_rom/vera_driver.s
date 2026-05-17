@@ -6,137 +6,11 @@
 
     .setcpu "6502"
 
+    .include "vera_common.inc"
+
     .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
     .import _vera_cursor_invalidate, cursor_draw
-
-; ============================================================================
-; VCTL block offsets — must stay in sync with vera_stub.s + the bootstrap.
-; ============================================================================
-
-VERACTL_FLAGS       = 4
-VERACTL_REQUEST     = 5
-VERACTL_PARAM0      = 6
-VERACTL_PARAM1      = 7
-VERACTL_CURSOR_X    = 8
-VERACTL_CURSOR_Y    = 9
-
-VCTL_FLAG_METRONOME = $01
-VCTL_FLAG_ESCAPE    = $02           ; next byte is treated as literal
-VCTL_FLAG_API_READY = $80
-
-VERA_REQ_PUTC       = $03
-
-; ============================================================================
-; Viewport — 80x24 primary display, top-left aligned in the 128x64 VERA
-; tilemap. VERA is the authoritative screen; Atari screen RAM is not used.
-; ============================================================================
-
-SCREEN_COLS_VIEW    = 80
-SCREEN_ROWS_VIEW    = 60
-READY_ROW           = 8             ; row used by warm_reinit's banner
-
-; ============================================================================
-; VERA hardware register base and register names (synced with vera_pbi_handler.s)
-; ============================================================================
-
-PBI_ADDR        = $D100
-
-VERA_ADDR_L     = PBI_ADDR + $00    ; VRAM address bits  7:0  (active port)
-VERA_ADDR_M     = PBI_ADDR + $01    ; VRAM address bits 15:8
-VERA_ADDR_H     = PBI_ADDR + $02    ; bit[0]=A16  bits[7:4]=INCR
-VERA_DATA0      = PBI_ADDR + $03    ; VRAM data port 0
-VERA_DATA1      = PBI_ADDR + $04    ; VRAM data port 1
-VERA_CTRL_REG   = PBI_ADDR + $05    ; CTRL: ADDRSEL(0) DCSEL(1) RESET(7)
-VERA_IEN        = PBI_ADDR + $06    ; Interrupt enable
-VERA_ISR        = PBI_ADDR + $07    ; Interrupt status (write 1 to clear)
-
-VERA_DC_VIDEO   = PBI_ADDR + $09    ; Output enable, layer enable, sprites
-VERA_DC_HSCALE  = PBI_ADDR + $0A    ; Horizontal scale (128 = 1:1)
-VERA_DC_VSCALE  = PBI_ADDR + $0B    ; Vertical scale
-VERA_DC_BORDER  = PBI_ADDR + $0C    ; Border colour index
-
-; ============================================================================
-; VERA constants (synced with vera_pbi_handler.s)
-; ============================================================================
-
-VERA_INC0       = $00           ; No auto-increment
-VERA_INC1       = $10           ; Auto-increment by 1
-
-VERA_DCSEL0     = $00           ; Access DC_VIDEO/HSCALE/VSCALE/BORDER bank
-VERA_DCSEL1     = $02           ; Access DC_HSTART/HSTOP/VSTART/VSTOP bank
-
-VERA_VIDEO_VGA  = $01           ; VGA output (640x480)
-VERA_LAYER1_EN  = $20           ; Enable Layer 1
-
-VERA_MAP_128x64 = $60           ; 128-tile wide, 64-tile tall map
-
-SCREEN_ADDR     = $01B000       ; Tilemap start (128x64 = 8 KB, in bank 1)
-CHARSET_ADDR    = $01F000       ; Character glyphs (256 chars x 8 bytes)
-
-SCREEN_MAPBASE  = $D8           ; L1_MAPBASE  = SCREEN_ADDR >> 9
-SCREEN_TILEBASE = $F8           ; L1_TILEBASE = CHARSET_ADDR >> 9, 8x8 tiles
-
-MAP_COLS        = 128
-MAP_ROWS        = 64
-TEXT_COLOR      = $61           ; White on blue
-
-DC_HSTART_VAL   = $00
-DC_HSTOP_VAL    = $A0
-DC_VSTART_VAL   = $00
-DC_VSTOP_VAL    = $F0
-
-LOGO1_ADDR      = SCREEN_ADDR + (0 * MAP_COLS * 2) + (0 * 2)
-LOGO2_ADDR      = SCREEN_ADDR + (1 * MAP_COLS * 2) + (0 * 2)
-LOGO3_ADDR      = SCREEN_ADDR + (2 * MAP_COLS * 2) + (0 * 2)
-LOGO4_ADDR      = SCREEN_ADDR + (3 * MAP_COLS * 2) + (0 * 2)
-LOGO5_ADDR      = SCREEN_ADDR + (4 * MAP_COLS * 2) + (0 * 2)
-LOGO6_ADDR      = SCREEN_ADDR + (5 * MAP_COLS * 2) + (0 * 2)
-LOGO7_ADDR      = SCREEN_ADDR + (6 * MAP_COLS * 2) + (0 * 2)
-VER_LINE_ADDR   = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
-HOST_LINE_ADDR  = SCREEN_ADDR + (3 * MAP_COLS * 2) + (8 * 2)
-
-; Internal driver shims for legacy code
-VERA_SCREEN_BASE_M  = >SCREEN_ADDR
-VERA_ADDR_H_BASE    = (VERA_INC1 | ^SCREEN_ADDR)
-VERA_TEXT_COLOR     = TEXT_COLOR
-VERA_CTRL           = VERA_CTRL_REG
-
-CHARSET_VRAM_L      = <CHARSET_ADDR
-CHARSET_VRAM_M      = >CHARSET_ADDR
-CHARSET_VRAM_H      = (VERA_INC1 | ^CHARSET_ADDR)
-
-; ============================================================================
-; ATASCII control set we recognise. Anything else is treated as printable.
-; Inverse-video bit ($80) is stripped before tile lookup; the cell color is
-; left at VERA_TEXT_COLOR (no inverse rendering yet — see Phase 1A scope).
-; ============================================================================
-
-ATASCII_EOL         = $9B
-ATASCII_CLEAR       = $7D
-ATASCII_BACKSPACE   = $7E
-ATASCII_TAB         = $7F
-ATASCII_BELL        = $FD
-ATASCII_ESC         = $1B
-ATASCII_CURSOR_UP   = $1C
-ATASCII_CURSOR_DOWN = $1D
-ATASCII_CURSOR_LEFT = $1E
-ATASCII_CURSOR_RIGHT = $1F
-ATASCII_DELETE_LINE = $9C
-ATASCII_INSERT_LINE = $9D
-ATASCII_DELETE_CHAR = $FE
-ATASCII_INSERT_CHAR = $FF
-
-VERA_INVERSE_COLOR  = $16           ; swap nibbles of $61: BG=1 white, FG=6 blue
-
-; ============================================================================
-; OS equates (only what the warm-reinit banner needs — putc is self-contained)
-; ============================================================================
-
-CRITIC      = $42
-SETVBV      = $E45C
-XITVBV      = $E462
-LMARGIN     = $52
 
     .segment "LOWBSS"
 
@@ -164,10 +38,6 @@ _VeraApiService:
 ; _vera_warm_reinit — uploads the font, draws the boot banner. Called by the
 ; bootstrap at install and by the warm-start hook on every reset.
 ; ============================================================================
-RTCLOK = $14
-ROWCRS = $54
-COLCRS = $55
-
 _vera_warm_reinit:
     lda #1
     sta CRITIC                          ; Prevent VBI from touching VERA
@@ -498,8 +368,6 @@ cr_lf:
 ; bytes through both ports with one read/write per cycle.
 ; Optimized by disabling interrupts and ANTIC DMA.
 ; ----------------------------------------------------------------------------
-
-DMACTL      = $022F
 
 scroll_up:
     sei

@@ -23,16 +23,7 @@
 
     .setcpu "6502"
 
-; ============================================================================
-; OS equates
-; ============================================================================
-
-MEMLO       = $02E7
-DOSINI      = $000C
-CASINI      = $0002
-SETVBV      = $E45C
-COLBK       = $D01A         ; GTIA background/border colour register
-COLOR4      = $02C8         ; OS shadow of COLBK (restored each VBI)
+    .include "vera_common.inc"
 
 ; ============================================================================
 ; ZP scratch (safe — bootstrap runs before BASIC starts)
@@ -86,16 +77,7 @@ EXP_VCTL_BLOCK   = 16
 EXP_INIT_VBI     = 18
 EXP_INSTALL_ES   = 20
 
-; ============================================================================
-; VCTL block layout (16 bytes)
-; ============================================================================
-
-VCTL_FLAGS      = 4
-VCTL_REQUEST    = 5
-VCTL_PARAM0     = 6
-VCTL_PARAM1     = 7
-VCTL_CURSOR_X   = 8
-VCTL_CURSOR_Y   = 9
+; VCTL layout shims for symbols used in this file but renamed in common.inc
 VCTL_ENTRY_LO   = 10
 VCTL_ENTRY_HI   = 11
 VCTL_VBI_LO     = 12
@@ -103,8 +85,13 @@ VCTL_VBI_HI     = 13
 VCTL_REINIT_LO  = 14
 VCTL_REINIT_HI  = 15
 
-VCTL_FLAG_METRONOME = $01
-VCTL_FLAG_API_READY = $80
+; VCTL layout shims
+VCTL_FLAGS      = VERACTL_FLAGS
+VCTL_REQUEST    = VERACTL_REQUEST
+VCTL_PARAM0     = VERACTL_PARAM0
+VCTL_PARAM1     = VERACTL_PARAM1
+VCTL_CURSOR_X   = VERACTL_CURSOR_X
+VCTL_CURSOR_Y   = VERACTL_CURSOR_Y
 
     .segment "CODE"
 
