@@ -360,16 +360,26 @@ cr_lf:
 
 
 ; ----------------------------------------------------------------------------
-; scroll_up — shift rows 1..23 up to rows 0..22, clear row 23.
+; scroll_up — shift rows 1..59 up to rows 0..58, clear row 59.
 ;
 ; Uses DATA0 (source) and DATA1 (destination) so a single inner loop streams
 ; bytes through both ports with one read/write per cycle.
+; Optimized by disabling interrupts and ANTIC DMA.
 ; ----------------------------------------------------------------------------
 
+DMACTL      = $022F
+
 scroll_up:
+    sei                         ; Disable interrupts
+    lda DMACTL                  ; Save ANTIC DMA state
+    pha
+    lda #0                      ; Disable ANTIC DMA
+    sta DMACTL
+
     lda #0
-    sta putc_tmp                        ; dest row index
+    sta putc_tmp                ; dest row index
 @row_loop:
+    ; ... (loop di copia) ...
     ; DATA0 → read source row (= dest row + 1)
     lda #$00
     sta VERA_CTRL
@@ -425,6 +435,10 @@ scroll_up:
     sta VERA_DATA0
     dey
     bne @clear_loop
+
+    pla                         ; Restore ANTIC DMA state
+    sta DMACTL
+    cli                         ; Re-enable interrupts
     rts
 
 
