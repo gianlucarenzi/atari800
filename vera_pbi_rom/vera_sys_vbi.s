@@ -33,7 +33,7 @@ SCREEN_ADDR_BANK    = $01
 VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
 
 SCREEN_COLS         = 80
-SCREEN_ROWS         = 25
+SCREEN_ROWS         = 60
 
 ; The 80x60 mirror viewport used by putc — must agree with vera_driver.s.
 SCREEN_COLS_VIEW    =80
