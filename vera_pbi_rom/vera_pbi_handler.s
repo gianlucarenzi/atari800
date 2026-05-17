@@ -658,6 +658,7 @@ boot_font_data:
     .byte $C0,$F2, $66,$66,$3C,$18,$3C,$66,$66,$00  ; 'X'
 
 ; ZP scratch for the (MEMLO - 16) pointer.
+; These must be in Zero Page.
 TMP_PTR_LO      = $CB
 TMP_PTR_HI      = $CC
 TMP0            = $CD
