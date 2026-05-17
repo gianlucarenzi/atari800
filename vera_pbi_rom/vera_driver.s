@@ -145,7 +145,10 @@ putc_tmp:           .res 1
 ; Inverse-video flag set by print_literal, used by clear-row helpers.
 putc_inverse:       .res 1
 save_nmien:         .res 1
-first_init:         .res 1
+
+    .segment "DATA"
+
+first_init:         .byte 0
 
     .segment "CODE"
 
@@ -166,6 +169,9 @@ ROWCRS = $54
 COLCRS = $55
 
 _vera_warm_reinit:
+    lda #1
+    sta CRITIC                          ; Prevent VBI from touching VERA
+
     jsr vera_load_font
 
     lda first_init
@@ -194,14 +200,28 @@ _vera_warm_reinit:
     sta first_init
 
 @skip_banner:
-    ; Wait 
-    lda #250
+    ; Wait
+    lda #2
+    sta putc_tmp
+@wait_outer:
     ldx RTCLOK
-@wait:
+@wait_tick:
     cpx RTCLOK
-    beq @wait
-    dex
-    bne @wait
+    beq @wait_tick
+
+    lda #60
+    sta putc_inverse                    ; reuse scratch byte
+@wait_60:
+    ldx RTCLOK
+@wait_inner:
+    cpx RTCLOK
+    beq @wait_inner
+    ldx RTCLOK
+    dec putc_inverse
+    bne @wait_60
+
+    dec putc_tmp
+    bne @wait_outer
 
     jsr do_clear
 
@@ -213,7 +233,11 @@ _vera_warm_reinit:
     sta ROWCRS
     lda LMARGIN
     sta COLCRS
+
+    lda #0
+    sta CRITIC                          ; Re-enable VBI access to VERA
     rts
+
 
 ; ============================================================================
 ; vera_load_font — copy the 1 KB X16 font into VRAM at the charset address.
@@ -263,7 +287,7 @@ vera_load_font:
 
 
 ReadyText:
-    .asciiz "DEVICE DRIVER INSTALLED"
+    .asciiz "DEVICE DRIVER LOADED"
 
 
 ; ============================================================================
