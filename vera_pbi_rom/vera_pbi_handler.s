@@ -164,8 +164,6 @@ CopyChar:
 Done:
 .endmacro
 
-    .export PBI_INIT, PBI_INIT_VERA_SCREEN, PBI_CLEAR_SCREEN
-
     .segment "CODE"
 
     .word $0000
