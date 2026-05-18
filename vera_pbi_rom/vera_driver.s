@@ -152,7 +152,7 @@ _vera_warm_reinit:
     rts
 
 ; ============================================================================
-; vera_load_font — copy the 1 KB X16 font into VRAM at the charset address.
+; vera_load_font — copy the 2 KB X16 font into VRAM at the charset address.
 ; Disables Layer 1 output during upload to avoid flashing garbage tiles.
 ; ============================================================================
 
@@ -163,27 +163,40 @@ vera_load_font:
     pha
     and #$CF
     sta VERA_DC_VIDEO
+
+    ; Initialize the source address for the copy loop.
+    ; This avoids persistent self-modification issues on warm start.
+    ; We use a local .word slot because the relocator doesn't support
+    ; immediate HI/LO patches (lda #< / lda #>).
+    lda font_ptr
+    sta @src_ptr+1
+    lda font_ptr+1
+    sta @src_ptr+2
+
     lda #CHARSET_VRAM_L
     sta VERA_ADDR_L
     lda #CHARSET_VRAM_M
     sta VERA_ADDR_M
     lda #CHARSET_VRAM_H
     sta VERA_ADDR_H
+
+    ldx #8                      ; 8 pages = 2048 bytes (128 chars * 16 lines)
     ldy #$00
-    ldx #$00
+@src_ptr:
 @copy_loop:
-    lda _vera_x16_font,y
+    lda _vera_x16_font,y        ; Address is patched at runtime by the code above
     sta VERA_DATA0
-    inx
     iny
     bne @copy_loop
-    inc @copy_loop+2
-    lda @copy_loop+2
-    cmp #>_vera_x16_font + 8
+    inc @src_ptr+2              ; Increment the high byte of the source address
+    dex
     bne @copy_loop
+
     pla
     sta VERA_DC_VIDEO
     rts
+
+font_ptr:       .word _vera_x16_font
 
 
 ReadyText:
