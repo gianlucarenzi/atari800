@@ -11,6 +11,7 @@
     .import _vera_cursor_invalidate, cursor_draw
 
     .include "vera_common.inc"
+    .include "atari.inc"
 
 LOGO1_ADDR      = SCREEN_ADDR + (0 * MAP_COLS * 2) + (0 * 2)
 LOGO2_ADDR      = SCREEN_ADDR + (1 * MAP_COLS * 2) + (0 * 2)
@@ -53,15 +54,6 @@ ATASCII_INSERT_CHAR = $FF
 
 VERA_INVERSE_COLOR  = $16           ; swap nibbles of $61: BG=1 white, FG=6 blue
 
-; ============================================================================
-; OS equates (only what the warm-reinit banner needs — putc is self-contained)
-; ============================================================================
-
-CRITIC      = $42
-SETVBV      = $E45C
-XITVBV      = $E462
-LMARGIN     = $52
-
     .segment "LOWBSS"
 
 ; Scratch byte used by routines that need a loop counter outside Y/X.
@@ -79,15 +71,6 @@ first_init:         .res 1
 
 _VeraApiService:
     rts
-
-
-; ============================================================================
-; _vera_warm_reinit — uploads the font, draws the boot banner. Called by the
-; bootstrap at install and by the warm-start hook on every reset.
-; ============================================================================
-RTCLOK = $14
-ROWCRS = $54
-COLCRS = $55
 
 _vera_warm_reinit:
     jsr vera_load_font
@@ -129,13 +112,13 @@ _vera_warm_reinit:
 
     jsr do_clear
 
-    ; Inizializzazione cursore a (LMARGIN,0)
-    lda LMARGIN
+    ; Cursor init @ (LMARGN,0)
+    lda LMARGN
     sta _vera_ctl_block + VERACTL_CURSOR_X
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_Y
     sta ROWCRS
-    lda LMARGIN
+    lda LMARGN
     sta COLCRS
     rts
 
@@ -373,11 +356,11 @@ print_literal:
 
 
 ; ----------------------------------------------------------------------------
-; cr_lf — newline: x=LMARGIN, y++, scroll if past last row.
+; cr_lf — newline: x=LMARGN, y++, scroll if past last row.
 ; ----------------------------------------------------------------------------
 
 cr_lf:
-    lda LMARGIN
+    lda LMARGN
     sta _vera_ctl_block + VERACTL_CURSOR_X
     inc _vera_ctl_block + VERACTL_CURSOR_Y
     lda _vera_ctl_block + VERACTL_CURSOR_Y
@@ -399,7 +382,6 @@ cr_lf:
 ; Optimized by disabling interrupts and ANTIC DMA.
 ; ----------------------------------------------------------------------------
 
-DMACTL      = $022F
 
 scroll_up:
     jsr _vera_cursor_invalidate
@@ -522,7 +504,7 @@ do_clear:
     cmp #64                     ; Clear all 64 rows of the 128x64 map
     bne @row_loop
 
-    lda LMARGIN
+    lda LMARGN
     sta _vera_ctl_block + VERACTL_CURSOR_X
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_Y
@@ -536,7 +518,7 @@ do_clear:
 
 do_backspace:
     lda _vera_ctl_block + VERACTL_CURSOR_X
-    cmp LMARGIN
+    cmp LMARGN
     beq @done
     dec _vera_ctl_block + VERACTL_CURSOR_X
     lda #$00
@@ -590,7 +572,7 @@ do_cursor_down:
 
 do_cursor_left:
     lda _vera_ctl_block + VERACTL_CURSOR_X
-    cmp LMARGIN
+    cmp LMARGN
     beq @done
     dec _vera_ctl_block + VERACTL_CURSOR_X
 @done:
