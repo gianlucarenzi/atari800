@@ -73,6 +73,9 @@ _VeraApiService:
     rts
 
 _vera_warm_reinit:
+    lda #1
+    sta CRITIC          ; block deferred VBI cursor during init
+
     jsr vera_load_font
 
     lda first_init
@@ -101,14 +104,17 @@ _vera_warm_reinit:
     sta first_init
 
 @skip_banner:
-    ; Wait 
-    lda #250
-    ldx RTCLOK
-@wait:
-    cpx RTCLOK
-    beq @wait
-    dex
-    bne @wait
+    ; Wait ~2 seconds (120 VBI ticks at 60 Hz).
+    ; RTCLOK+2 ($14) is the fast byte: increments every frame.
+    lda #120
+@wait_outer:
+    ldx RTCLOK+2
+@wait_tick:
+    cpx RTCLOK+2
+    beq @wait_tick      ; spin until this tick completes
+    sec
+    sbc #1              ; decrement A without touching X (plain 6502)
+    bne @wait_outer
 
     jsr do_clear
 
@@ -120,6 +126,9 @@ _vera_warm_reinit:
     sta ROWCRS
     lda LMARGN
     sta COLCRS
+
+    lda #0
+    sta CRITIC          ; re-enable deferred VBI cursor
     rts
 
 ; ============================================================================

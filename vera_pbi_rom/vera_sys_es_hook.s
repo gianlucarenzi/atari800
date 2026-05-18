@@ -282,7 +282,7 @@ vera_editor_get:
 
 @need_input:
     ; Save cursor column at input start for BACKSPACE clamping.
-    lda VERACTL_CURSOR_X
+    lda _vera_ctl_block + VERACTL_CURSOR_X
     sta input_col0
     lda #0
     sta input_wr
@@ -358,7 +358,7 @@ vera_editor_get:
     lda input_wr
     beq @key_loop           ; nothing to erase
     ; Prevent backspacing before start of input area.
-    lda VERACTL_CURSOR_X
+    lda _vera_ctl_block + VERACTL_CURSOR_X
     cmp input_col0
     beq @key_loop
     dec input_wr
