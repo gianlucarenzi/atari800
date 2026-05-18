@@ -363,7 +363,12 @@ bootstrap_entry:
     adc PATCH_BODY_TOTAL_SIZE+1
     sta MEMLO+1
 
-    ; --- 9. Call relocated _vera_warm_reinit (banner + font upload). ---
+    ; --- 9. Black out ANTIC border before banner (decrunch leaves a stale colour). ---
+    lda #$00
+    sta COLOR4
+    sta COLBK
+
+    ; --- 9b. Call relocated _vera_warm_reinit (banner + font upload). ---
     ldy #EXP_WARM_REINIT
     lda (exp_lo),y
     sta jmp_vec
