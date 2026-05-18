@@ -366,9 +366,6 @@ cr_lf:
 
 scroll_up:
     jsr _vera_cursor_invalidate
-    sei
-    lda #1                      ; Set Critical Section
-    sta CRITIC
     lda DMACTL                  ; Save ANTIC DMA state
     pha
     lda #0                      ; Disable ANTIC DMA
@@ -434,9 +431,6 @@ scroll_up:
 
     pla                         ; Restore ANTIC DMA state
     sta DMACTL
-    lda #0                      ; Clear Critical Section
-    sta CRITIC
-    cli
     rts
 
 
