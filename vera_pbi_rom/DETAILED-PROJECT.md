@@ -14,7 +14,8 @@ Il progetto è composto da due componenti principali, entrambi nella directory `
     *   Implementa l'header ROM PBI Atari standard (checksum, device ID, vettori JMP).
     *   Gestisce l'inizializzazione PBI (handler `INIT`) ai cold/warm start.
     *   Fornisce routine stub per le operazioni CIO, permettendo all'OS di riconoscere la scheda come periferica attiva.
-    *   Inizializza i registri hardware VERA (IRQ, impostazioni DC, ecc.) per una modalità VGA-compatibile 640×480 con Layer 1 e tilemap.
+    *   Inizializza i registri hardware VERA per una modalità VGA-compatibile 640×480, configurando il Layer 1 in modalità **80×60 caratteri** (tile 8×8).
+    *   Carica un font di boot minimale (solo i caratteri necessari per il banner) nella VRAM.
 
 ### 2. Driver OS rilocabile (`AUTORUN.SYS`)
 *   **Ruolo:** Agisce come driver di sistema primario, installato automaticamente al boot.
@@ -129,6 +130,17 @@ Lo stesso bug latente colpisce qualsiasi variabile di stato in `LOWBSS` (state d
 ### Ottimizzazione screen clear con disabilitazione DMA ANTIC (`vera_driver.s`, `vera_pbi_handler.s`)
 
 Le routine di pulizia schermo (`do_clear`, `_pbi_clear_screen` in `vera_driver.s` e `CLEAR_SCREEN`/`PBI_CLEAR_SCREEN` in `vera_pbi_handler.s`) ora salvano il registro `DMACTL` ($D400), disabilitano il DMA di ANTIC per tutta la durata dell'operazione, quindi ripristinano il valore originale. Questo è lo stesso pattern già usato in `scroll_up` e impedisce che ANTIC contenda il bus di memoria con la CPU durante le scritture intensive in VRAM.
+
+---
+
+### Passaggio a 80x60 Nativo e Pulizia ROM (`vera_pbi_handler.s`)
+
+Per uniformare l'esperienza visiva fin dal boot e ottimizzare lo spazio in ROM, sono state apportate le seguenti modifiche all'inizializzazione hardware:
+
+1.  **Inizializzazione 80x60:** La ROM PBI ora configura il Layer 1 di VERA per utilizzare tile 8×8 invece di 8×16. Questo imposta una risoluzione di testo nativa di 80 colonne per 60 righe già durante la visualizzazione del banner di boot.
+2.  **Rimozione Logo Butterfly:** Le tile grafiche del logo "butterfly" sono state rimosse dai dati del font di boot e dalla routine di visualizzazione. Il banner ora mostra esclusivamente le informazioni testuali (versione FW e modello host), rendendo il codice più snello e focalizzato.
+3.  **Ottimizzazione Font Loading:** La routine `LOAD_BOOT_FONT` è stata aggiornata per supportare l'allineamento a 8 byte delle tile 8×8 in VRAM. Carica solo i 27 caratteri strettamente necessari per le scritte di boot.
+4.  **Ottimizzazione Simboli ZP:** Le definizioni dei simboli Zero Page (`TMP0-2`, `TMP_PTR`) sono state spostate all'inizio del file sorgente. Questo permette all'assemblatore `ca65` di utilizzare istruzioni con indirizzamento Zero Page (più corte e veloci) invece di quello assoluto, garantendo che l'intera ROM rientri nel limite fisico di 2048 byte nonostante le evoluzioni del driver.
 
 ---
 
