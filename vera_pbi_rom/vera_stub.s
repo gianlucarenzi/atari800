@@ -40,4 +40,4 @@ __VERA_EXPORTS__:
 
     .segment "VCTL"
 _vera_ctl_block:
-    .res 16
+    .res 32

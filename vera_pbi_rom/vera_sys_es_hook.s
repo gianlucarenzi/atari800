@@ -23,6 +23,7 @@
     .import _CallVeraApiService
     .import _vera_ctl_block
     .import _InitVbi
+    .import _vera_trigger_click
     .import __VERA_EXPORTS__
 
 
@@ -331,11 +332,11 @@ vera_editor_get:
     cmp #$FF
     beq @poll
 
-    ; Key available: consume it, then translate raw KBCODE -> ATASCII via kbcode_table.
-    ; CH holds kbcode | (SHIFT << 6) | (CTRL << 7) — not ATASCII.
+    ; Key available: consume it immediately to minimize missed inputs.
     tay                     ; Y = raw code
     lda #$FF
     sta CH                  ; consume keypress
+    
     lda kbcode_table, y     ; A = ATASCII translation of raw key code
 
     ; Handle CAPS toggle

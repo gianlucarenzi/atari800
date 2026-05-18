@@ -3,6 +3,7 @@
     .export _InitVbi, _vera_vbi_end, _vbi_handler
     .export _vera_save_c_sp, _vera_warm_start
     .export _vera_cursor_invalidate
+    .export _vera_trigger_click
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
 
@@ -141,6 +142,7 @@ _vbi_handler:
     pha
 
     jsr cursor_tick
+    jsr click_tick
 
     pla
     tay
@@ -150,6 +152,41 @@ _vbi_handler:
     jmp XITVBV
 
 _vera_vbi_end:
+
+; ============================================================================
+; _vera_trigger_click — start a brief POKEY click on channel 4.
+; Called from the keyboard GET handler immediately after consuming a keypress.
+; Safe to call from foreground (no VRAM access, no CRITIC dependency).
+; ============================================================================
+
+_vera_trigger_click:
+    lda #VBI_FREQ
+    sta AUDF4
+    lda #VBI_VOLUME
+    sta AUDC4
+    lda #CLICK_DURATION
+    sta frames_until_click
+    lda #1
+    sta click_active
+    rts
+
+
+; ============================================================================
+; click_tick — called each VBI frame. Counts down and silences POKEY ch 4
+; when the click duration expires.
+; ============================================================================
+
+click_tick:
+    lda click_active
+    beq @done
+    dec frames_until_click
+    bne @done
+    lda #$00
+    sta AUDC4
+    sta click_active
+@done:
+    rts
+
 
 ; ============================================================================
 ; cursor_tick — blink driver. Snapshots VERA state, then toggles between

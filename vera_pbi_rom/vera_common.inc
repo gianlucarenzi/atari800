@@ -117,8 +117,9 @@ DC_VSTOP_VAL            = $F0               ; VSTOP:  active area ends   at line
 mSETVBV                 = $E45C             ; OS ROM SETVBV entry point
 VBI_RATE                = 10                ; metronome tick period  (frames)
 VBI_CURSOR_RATE         = 20                ; cursor blink period    (frames)
-VBI_FREQ                = $08               ; PSG audio tick rate
-VBI_VOLUME              = $AF               ; startup audio volume
+VBI_FREQ                = $08               ; POKEY click frequency  (AUDF4)
+VBI_VOLUME              = $AF               ; POKEY click volume+distortion (AUDC4: poly+noise, vol=max)
+CLICK_DURATION          = 1                 ; click length in VBI frames (~16 ms at 60 Hz)
 
 ; ============================================================================
 ; VCTL block offsets — must stay in sync with vera_stub.s and vera_sys_loader.s
