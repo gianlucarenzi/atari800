@@ -181,7 +181,12 @@ cursor_tick:
     bne @do_update
     lda _vera_ctl_block + VERACTL_CURSOR_X
     cmp cursor_at_x
-    beq @done
+    bne @do_update
+    ; Same position — redraw if erased (e.g. by _vera_cursor_invalidate in scroll_up).
+    lda cursor_drawn
+    bne @done
+    jsr cursor_draw
+    rts
 
 @do_update:
     lda cursor_drawn
@@ -207,7 +212,7 @@ cursor_draw:
     cmp #SCREEN_COLS
     bcs @oob
     lda cursor_at_y
-    cmp #SCREEN_ROWS
+    cmp #SCREEN_ROWS_VIEW
     bcs @oob
 
     jsr point_vera_at_latched
@@ -261,7 +266,7 @@ point_vera_at_latched:
     sta VERA_ADDR_L
     lda #SCREEN_ADDR_M
     clc
-    adc cursor_at_y                 ; $B0 + Y (Y < 25 ⇒ no carry into bank)
+    adc cursor_at_y                 ; $B0 + Y (Y < 64 ⇒ no carry into bank)
     sta VERA_ADDR_M
     lda #VERA_ADDR_H_BASE
     sta VERA_ADDR_H
