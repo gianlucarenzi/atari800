@@ -12,6 +12,8 @@ VERA_ADDR_H     = PBI_ADDR + $02    ; bit[0]=A16  bits[7:4]=INCR
 VERA_DATA0      = PBI_ADDR + $03    ; VRAM data port 0
 VERA_DATA1      = PBI_ADDR + $04    ; VRAM data port 1
 VERA_CTRL_REG   = PBI_ADDR + $05    ; CTRL: ADDRSEL(0) DCSEL(1) RESET(7)
+VERA_CTRL       = VERA_CTRL_REG
+VERA_ADDRSEL_CLEAR = $FE
 VERA_IEN        = PBI_ADDR + $06    ; Interrupt enable
 VERA_ISR        = PBI_ADDR + $07    ; Interrupt status (write 1 to clear)
 
@@ -66,3 +68,49 @@ DC_VSTART_VAL   = $00               ; Vertical start register value
 DC_VSTOP_VAL    = $F0               ; Vertical stop register value
 
 PBI_LATCH       = $D1FF             ; PBI latch address
+
+; VBI/Screen Timing and Constants
+VBI_RATE            = 10            ; frames between metronome ticks
+VBI_CURSOR_RATE     = 20            ; frames between cursor blink toggles
+SCREEN_COLS_VIEW    = 80            ; Viewport columns
+SCREEN_ROWS_VIEW    = 60            ; Viewport rows
+
+; ============================================================================
+; Screen layout — must stay in sync with vera_pbi_handler.s
+;   SCREEN_ADDR  = $01B000    (bank 1, mid byte $B0)
+;   MAP_COLS     = 128        → per-row stride = 256 bytes
+;   visible 80x25 inside a 128x64 tilemap
+; ============================================================================
+
+SCREEN_ADDR_M       = $B0
+SCREEN_ADDR_BANK    = $01
+VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
+
+; OS Editor cursor shadow — driven by both PUT BYTE *and* arrow-key handling.
+; The VBI snapshots these into VCTL so the VERA cursor follows arrow-key moves
+; that never invoke CIO.
+ROWCRS_OS           = $54
+COLCRS_OS           = $55           ; LO byte only (HI is for graphics modes)
+
+; ============================================================================
+; VeraCtl block offsets
+; ============================================================================
+
+VERACTL_FLAGS       = 4
+VERACTL_CURSOR_X    = 8
+VERACTL_CURSOR_Y    = 9
+VERA_CTL_FLAG_METRONOME = $01
+VERA_CTL_FLAG_API_READY = $80
+
+; ============================================================================
+; Timing / audio
+; ============================================================================
+
+VBI_FREQ            = $08
+VBI_VOLUME          = $AF
+
+; ==================================
+; OS Equate as a workaround for VBI
+; ==================================
+
+mSETVBV = $E45C

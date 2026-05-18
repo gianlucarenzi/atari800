@@ -6,65 +6,9 @@
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
 
+    .include "vera_common.inc"
     .include "atari.inc"
 
-; ============================================================================
-; VERA hardware registers
-; ============================================================================
-
-VERA_ADDR_L         = $D100
-VERA_ADDR_M         = $D101
-VERA_ADDR_H         = $D102
-VERA_DATA0          = $D103
-VERA_CTRL           = $D105
-
-VERA_INC1           = $10           ; ADDR_H[7:4] = 1 → auto-increment by 1
-VERA_ADDRSEL_CLEAR  = $FE           ; mask to clear CTRL bit0 (select ADDR0)
-
-; ============================================================================
-; Screen layout — must stay in sync with vera_pbi_handler.s
-;   SCREEN_ADDR  = $01B000    (bank 1, mid byte $B0)
-;   MAP_COLS     = 128        → per-row stride = 256 bytes
-;   visible 80x25 inside a 128x64 tilemap
-; ============================================================================
-
-SCREEN_ADDR_M       = $B0
-SCREEN_ADDR_BANK    = $01
-VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
-
-SCREEN_COLS         = 80
-SCREEN_ROWS         = 60
-
-; The 80x60 mirror viewport used by putc — must agree with vera_driver.s.
-SCREEN_COLS_VIEW    =80
-SCREEN_ROWS_VIEW    = 60
-
-; OS Editor cursor shadow — driven by both PUT BYTE *and* arrow-key handling.
-; The VBI snapshots these into VCTL so the VERA cursor follows arrow-key moves
-; that never invoke CIO.
-ROWCRS_OS           = $54
-COLCRS_OS           = $55           ; LO byte only (HI is for graphics modes)
-
-; ============================================================================
-; VeraCtl block offsets
-; ============================================================================
-
-VERACTL_FLAGS       = 4
-VERACTL_CURSOR_X    = 8
-VERACTL_CURSOR_Y    = 9
-VERA_CTL_FLAG_METRONOME = $01
-VERA_CTL_FLAG_API_READY = $80
-
-; ============================================================================
-; Timing / audio
-; ============================================================================
-
-VBI_RATE            = 10            ; frames between metronome ticks
-VBI_FREQ            = $08
-VBI_VOLUME          = $AF
-VBI_CURSOR_RATE     = 20            ; frames between cursor blink toggles
-
-SETVBV              = $E45C
 
 ; ============================================================================
 ; Resident state (LOWBSS survives warm start)
@@ -107,7 +51,7 @@ _InitVbi:
     ldy __VERA_EXPORTS__+EXP_VBI_HANDLER
     ldx __VERA_EXPORTS__+EXP_VBI_HANDLER+1
     lda #7                          ; immediate+deferred (cf. SETVBV docs)
-    jsr SETVBV
+    jsr mSETVBV
     lda #VBI_RATE
     sta frames_until_click
     lda #0
