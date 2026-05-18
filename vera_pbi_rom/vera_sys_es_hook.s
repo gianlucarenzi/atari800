@@ -22,9 +22,15 @@
 
     .import _CallVeraApiService
     .import _vera_ctl_block
+    .import _InitVbi
+    .import __VERA_EXPORTS__
+
 
     .include "vera_common.inc"
     .include "atari.inc"
+
+; Offset of _vbi_handler address within __VERA_EXPORTS__ — must match vera_sys_vbi.s.
+EXP_VBI_HANDLER = 10
     
 ; ============================================================================
 ; VCTL routing
@@ -179,6 +185,34 @@ kbcode_table:
 .endproc
 
 ; ============================================================================
+; ensure_vbi — called at the start of every PUT BYTE handler.
+; Compares VVBLKD against our relocated handler address in the EXPORTS table.
+; If they differ (e.g. DOS replaced the vector and exited via DOSVEC without
+; going through DOSINI/CASINI), reinstalls the deferred VBI handler.
+; Clobbers A; preserves X.
+; ============================================================================
+
+ensure_vbi:
+    lda VVBLKD
+    cmp __VERA_EXPORTS__+EXP_VBI_HANDLER
+    bne @reinstall
+    lda VVBLKD+1
+    cmp __VERA_EXPORTS__+EXP_VBI_HANDLER+1
+    beq @ok
+@reinstall:
+    sei
+    lda NMIEN
+    pha
+    and #$BF                ; disable NMI VBI (bit 6)
+    sta NMIEN
+    jsr _InitVbi            ; reinstalls VVBLKD; does cli at end
+    pla
+    sta NMIEN               ; restore NMI enables
+@ok:
+    rts
+
+
+; ============================================================================
 ; vera_editor_put — E: PUT BYTE. VERA is the primary display; the OS handler
 ; is NOT called.
 ; Entry: A = char, X = IOCB index * 16.
@@ -187,6 +221,7 @@ kbcode_table:
 
 vera_editor_put:
     sta VERA_CTL_PARAM0
+    jsr ensure_vbi
     lda #VERA_REQ_PUTC
     sta VERA_CTL_REQUEST
     jsr _CallVeraApiService
@@ -201,6 +236,7 @@ vera_editor_put:
 
 vera_screen_put:
     sta VERA_CTL_PARAM0
+    jsr ensure_vbi
     lda #VERA_REQ_PUTC
     sta VERA_CTL_REQUEST
     jsr _CallVeraApiService
@@ -216,6 +252,14 @@ vera_screen_put:
 ; ============================================================================
 
 vera_editor_open:
+    sei
+    lda NMIEN
+    pha                         ; save current NMI enables
+    and #$BF                    ; disable NMI VBI (bit 6)
+    sta NMIEN
+    jsr _InitVbi                ; reinstalls deferred VBI; also does cli
+    pla
+    sta NMIEN                   ; restore NMI enables
     lda #0
     sta LMARGN
     lda #79

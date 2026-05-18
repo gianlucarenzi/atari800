@@ -1,62 +1,126 @@
-# Detailed Project Description: Atari800 Fork with VERA PBI Device
+# Descrizione dettagliata del progetto: Fork di Atari800 con dispositivo VERA PBI
 
-## Overview
-This project is a specialized fork of the Atari800 emulator, extended to support a custom Parallel Bus Interface (PBI) peripheral based on the VERA chipset (commonly found in the Commander X16). The goal is to provide a modern, high-resolution, VERA-based video subsystem for Atari 8-bit computers, acting as the primary display device while bypassing the limitations of the original ANTIC/GTIA graphics.
+## Panoramica
+Questo progetto è un fork specializzato dell'emulatore Atari800, esteso per supportare una periferica custom su Parallel Bus Interface (PBI) basata sul chipset VERA (comunemente presente nel Commander X16). L'obiettivo è fornire un sottosistema video moderno ad alta risoluzione basato su VERA per i computer Atari 8-bit, che agisce come dispositivo di visualizzazione primario bypassando i limiti della grafica ANTIC/GTIA originale.
 
-## Project Architecture
+## Architettura del progetto
 
-The project consists of two primary components, both residing in the `vera_pbi_rom` directory and tightly integrated with the Atari OS:
+Il progetto è composto da due componenti principali, entrambi nella directory `vera_pbi_rom` e strettamente integrati con l'OS Atari:
 
-### 1. PBI OS Handler (`vera_pbi_handler.rom`)
-*   **Role:** Initializes the card and exposes a standard PBI OS interface.
-*   **Location:** Mapped to `$D800-$DFFF` when selected via the `$D1FF` PBI latch.
-*   **Functionality:**
-    *   Implements the standard Atari PBI ROM header (checksum, device ID, JMP vectors).
-    *   Handles PBI Initialization (`INIT` handler) at cold/warm starts.
-    *   Provides stub routines for CIO operations, enabling the OS to recognize the card as an active peripheral.
-    *   Initializes the VERA hardware registers (IRQ, DC settings, etc.) for a 640x480 VGA-compatible mode using Layer 1, tiled map.
+### 1. Handler OS PBI (`vera_pbi_handler.rom`)
+*   **Ruolo:** Inizializza la scheda ed espone un'interfaccia OS PBI standard.
+*   **Posizione:** Mappato a `$D800-$DFFF` quando selezionato tramite il latch PBI `$D1FF`.
+*   **Funzionalità:**
+    *   Implementa l'header ROM PBI Atari standard (checksum, device ID, vettori JMP).
+    *   Gestisce l'inizializzazione PBI (handler `INIT`) ai cold/warm start.
+    *   Fornisce routine stub per le operazioni CIO, permettendo all'OS di riconoscere la scheda come periferica attiva.
+    *   Inizializza i registri hardware VERA (IRQ, impostazioni DC, ecc.) per una modalità VGA-compatibile 640×480 con Layer 1 e tilemap.
 
-### 2. Relocatable OS Driver (`AUTORUN.SYS`)
-*   **Role:** Acts as the primary system driver, installed automatically upon boot.
-*   **Functionality:**
-    *   **Installation:** Hooks into the HATABS (Handler Address Table) to replace the standard Editor (`E:`) and Screen (`S:`) device handlers with VERA-enabled versions.
-    *   **PUTC Management:** Replaces the standard CIO PUT BYTE routines with a custom state machine that renders ATASCII text directly to VERA VRAM (80x60 viewport), bypassing original ANTIC/GTIA screen memory.
-    *   **VBI Hooks:** Installs Vertical Blank Interrupt routines to manage the cursor blinking and metronome features.
-    *   **Warmstart Resilience:** Hooks into the system reset vectors (`DOSINI`/`CASINI` chain) to ensure the driver remains active and the VERA card is re-initialized after a system reset.
+### 2. Driver OS rilocabile (`AUTORUN.SYS`)
+*   **Ruolo:** Agisce come driver di sistema primario, installato automaticamente al boot.
+*   **Funzionalità:**
+    *   **Installazione:** Si aggancia alla HATABS (Handler Address Table) per sostituire gli handler standard dei dispositivi Editor (`E:`) e Screen (`S:`) con versioni abilitate per VERA.
+    *   **Gestione PUTC:** Sostituisce le routine CIO PUT BYTE standard con una state machine custom che renderizza testo ATASCII direttamente nella VRAM di VERA (viewport 80×60), bypassando la memoria video ANTIC/GTIA originale.
+    *   **Hook VBI:** Installa routine di Vertical Blank Interrupt per gestire il lampeggio del cursore e le funzioni metronomo.
+    *   **Resilienza al warm start:** Si aggancia ai vettori di reset di sistema (catena `DOSINI`/`CASINI`) per garantire che il driver rimanga attivo e la scheda VERA venga re-inizializzata dopo un reset di sistema.
 
-## Key Implementation Modules (vera_pbi_rom/*.s)
+## Moduli di implementazione principali (vera_pbi_rom/*.s)
 
-The following assembly modules form the core of the implementation:
+I seguenti moduli assembly costituiscono il nucleo dell'implementazione:
 
-*   **`vera_pbi_handler.s`**: Handles the low-level PBI protocol, ROM header definition, and initial hardware setup during the cold boot sequence.
-*   **`vera_driver.s`**: The core PUT BYTE state machine. Implements a 40x24/80x60 ATASCII viewport, handling control characters (EOL, CLEAR, TAB, etc.) and direct VRAM rendering.
-*   **`vera_sys_es_hook.s`**: Installs the replacement handlers for E: and S: devices by patching the HATABS and updating cached IOCB PUT BYTE pointers for open devices. Also manages input buffering and raw POKEY keyboard code translation to ATASCII.
-*   **`vera_sys_vbi.s`**: Manages the VBI-driven cursor blinker (snapshotting the cursor position and inverting the background/foreground color nibbles) and ensures background tasks do not conflict with foreground VRAM writes.
+*   **`vera_pbi_handler.s`**: Gestisce il protocollo PBI a basso livello, la definizione dell'header ROM e la configurazione hardware iniziale durante la sequenza di cold boot.
+*   **`vera_driver.s`**: La state machine PUT BYTE principale. Implementa un viewport ATASCII 40×24/80×60, gestendo i caratteri di controllo (EOL, CLEAR, TAB, ecc.) e il rendering diretto in VRAM.
+*   **`vera_sys_es_hook.s`**: Installa gli handler sostitutivi per i dispositivi E: e S: agganciando la HATABS e aggiornando i puntatori PUT BYTE degli IOCB aperti. Gestisce anche il buffering dell'input e la traduzione dei codici tastiera POKEY grezzi in ATASCII.
+*   **`vera_sys_vbi.s`**: Gestisce il lampeggio del cursore pilotato dal VBI (salvando la posizione del cursore e invertendo le nibble di colore foreground/background) e garantisce che i task in background non confliggano con le scritture VRAM in foreground.
 
-## Emulator-Side Implementation (Atari800)
+## Implementazione lato emulatore (Atari800)
 
-The `atari800` emulator core has been extended to support the VERA PBI peripheral. The emulator-side implementation (`src/pbi_verax16.c`, `src/pbi_verax16.h`) handles the hardware emulation of the VERA chip and its integration into the Atari PBI bus.
+Il nucleo dell'emulatore `atari800` è stato esteso per supportare la periferica VERA PBI. L'implementazione lato emulatore (`src/pbi_verax16.c`, `src/pbi_verax16.h`) gestisce l'emulazione hardware del chip VERA e la sua integrazione nel bus PBI Atari.
 
-### Core Emulation Features:
-*   **Memory Mapping:** Intercepts access to the `$D100-$D11F` range to handle VERA register read/writes, and manages the mapping of the handler ROM to `$D800-$DFFF` via the PBI device latch (`$D1FF`).
-*   **Hardware Emulation:**
-    *   **VERA Registers:** Full emulation of VERA registers (Address Ports, Data Ports, CTRL, IEN, ISR) and DC-muxed registers.
-    *   **VRAM:** Emulates the 128KB VRAM memory space.
-    *   **FX Coprocessor:** Partial emulation of the VERA FX coprocessor for operations like line drawing, polygon filling, and affine transformations.
-    *   **Audio/SPI:** Emulation of VERA PSG/PCM audio channels and SPI interface for SD card emulation.
-*   **Bus Integration:**
-    *   **IRQ Management:** Handles interrupt requests from VERA to the Atari CPU based on IEN/ISR settings.
-    *   **Configuration:** Supports CLI arguments to enable the card (`-verax16`), specify the ROM handler image (`-verax16-rom`), and attach an SD card image for the SPI interface (`-verax16-sdcard`).
-*   **Lifecycle Management:** Handles power-on/reset states, ensuring that VRAM is initialized and the card is properly enabled/disabled on the bus.
+### Funzionalità di emulazione principali:
+*   **Memory Mapping:** Intercetta gli accessi al range `$D100-$D11F` per gestire le letture/scritture dei registri VERA, e gestisce il mapping della ROM handler su `$D800-$DFFF` tramite il latch del dispositivo PBI (`$D1FF`).
+*   **Emulazione hardware:**
+    *   **Registri VERA:** Emulazione completa dei registri VERA (porte indirizzo, porte dati, CTRL, IEN, ISR) e dei registri DC multiplexati.
+    *   **VRAM:** Emula lo spazio di memoria VRAM da 128KB.
+    *   **Coprocessore FX:** Emulazione parziale del coprocessore VERA FX per operazioni come tracciamento di linee, riempimento di poligoni e trasformazioni affini.
+    *   **Audio/SPI:** Emulazione dei canali audio PSG/PCM di VERA e dell'interfaccia SPI per l'emulazione della scheda SD.
+*   **Integrazione bus:**
+    *   **Gestione IRQ:** Gestisce le richieste di interrupt da VERA alla CPU Atari in base alle impostazioni IEN/ISR.
+    *   **Configurazione:** Supporta argomenti CLI per abilitare la scheda (`-verax16`), specificare l'immagine ROM handler (`-verax16-rom`) e collegare un'immagine scheda SD per l'interfaccia SPI (`-verax16-sdcard`).
+*   **Gestione del ciclo di vita:** Gestisce gli stati di accensione/reset, garantendo che la VRAM sia inizializzata e la scheda sia correttamente abilitata/disabilitata sul bus.
 
-## Known Issues and Fixes
+## Problemi noti e correzioni
 
-### Cursor Instability and Visual Corruption
-During development, a race condition between the VBI interrupt (managing cursor blinking) and screen manipulation routines (`scroll_up`, `do_delete_line`, `do_insert_line`, `do_delete_char`, `do_insert_char`) caused cursor disappearance and intermittent visual corruption.
+### Instabilità del cursore e corruzione visiva (fase iniziale)
+Durante lo sviluppo, una race condition tra l'interrupt VBI (che gestisce il lampeggio del cursore) e le routine di manipolazione dello schermo (`scroll_up`, `do_delete_line`, `do_insert_line`, `do_delete_char`, `do_insert_char`) causava la scomparsa del cursore e corruzione visiva intermittente.
 
-**Fix:**
-1.  **Cursor Invalidation:** Explicitly added calls to `_vera_cursor_invalidate` at the start of all screen manipulation routines to ensure the cursor is erased before VRAM modifications.
-2.  **Register Preservation:** Refactored `_vera_cursor_invalidate` to save and restore all CPU registers (`A`, `X`, `Y`) and the `VERA_CTRL` register, ensuring calling routines maintain their state integrity and VERA controller settings.
+**Correzione:**
+1.  **Invalidazione del cursore:** Aggiunte chiamate esplicite a `_vera_cursor_invalidate` all'inizio di tutte le routine di manipolazione dello schermo, per garantire che il cursore venga cancellato prima delle modifiche alla VRAM.
+2.  **Preservazione dei registri:** Refactoring di `_vera_cursor_invalidate` per salvare e ripristinare tutti i registri CPU (`A`, `X`, `Y`) e il registro `VERA_CTRL`, garantendo che le routine chiamanti mantengano l'integrità del loro stato e delle impostazioni del controller VERA.
 
-## Integration Strategy
-The driver effectively makes the VERA card the *primary* display device. The original OS PUT BYTE routines are *not* called; instead, the custom driver redirects all text output directly to the VERA's VRAM. By setting the system margins (`LMARGIN`, `RMARGIN`) to 0/79 during OPEN, the driver ensures that Atari OS software sees a standard 80-column device.
+---
+
+### Corruzione durante lo scroll ("  AB" inserito durante scroll lunghi)
+
+**Sintomo:** Eseguendo `1 PRINT "AB" : 2 GOTO 1` e lasciando scorrere, apparivano occasionalmente righe `"  AB"` — la stringa "AB" era spostata di due colonne a destra.
+
+**Causa radice:** `scroll_up` era racchiusa da `sei / lda #1; sta CRITIC / ... / lda #0; sta CRITIC / cli`. Questo azzerava `CRITIC` prematuramente, prima che `@done_putc` di `_VeraPutByte` avesse sincronizzato `COLCRS_OS`/`ROWCRS_OS` alla nuova posizione del cursore. Il VBI differito scattava nella finestra, leggeva il valore stantio `COLCRS_OS=2`, scriveva `CURSOR_X=2` nel blocco di controllo, e il carattere successivo veniva renderizzato alla colonna 2.
+
+**Correzione (`vera_driver.s` — `scroll_up`):** Rimossi completamente `sei`, set/clear di `CRITIC` e `cli` da `scroll_up`. Il salvataggio/ripristino di DMACTL rimane; il contesto di protezione CRITIC è fornito da `_CallVeraApiService` (che racchiude l'intera chiamata PUT BYTE, incluso qualsiasi scroll innescato al suo interno).
+
+---
+
+### Cursore che scompare dopo BREAK / jmp $A000
+
+Tre bug separati contribuivano al problema.
+
+#### Bug 1 — `cursor_tick` saltava il ridisegno quando la posizione non cambiava ma il cursore era stato cancellato
+
+**Sintomo:** Dopo che `scroll_up` chiamava `_vera_cursor_invalidate` (che imposta `cursor_drawn=0`), se la posizione del cursore non cambiava tra un tick e l'altro, `cursor_tick` eseguiva il percorso rapido `beq @done` e non ridisegnava mai il cursore.
+
+**Correzione (`vera_sys_vbi.s` — `cursor_tick`):** Sostituito il percorso rapido `beq @done` (salta tutto quando la posizione corrisponde) con un controllo esplicito di `cursor_drawn`: se `cursor_drawn=0` alla stessa posizione, chiama `cursor_draw` per ripristinare il cursore visibile. Gestisce il caso in cui `_vera_cursor_invalidate` (chiamata da `scroll_up`) cancella il cursore senza spostarlo.
+
+#### Bug 2 — `cursor_draw` rifiutava posizioni di riga valide 25–59
+
+**Sintomo:** Il cursore era invisibile su qualsiasi riga oltre la riga 24. Il viewport 80×60 usa le righe 0–59, ma il controllo OOB confrontava con `SCREEN_ROWS` (25) invece di `SCREEN_ROWS_VIEW` (60).
+
+**Correzione (`vera_sys_vbi.s` — `cursor_draw`):** Cambiato `cmp #SCREEN_ROWS` in `cmp #SCREEN_ROWS_VIEW` (60).
+
+#### Bug 3 — L'hook CASINI eseguiva un salto attraverso il puntatore null `_vera_saved_casini`
+
+**Sintomo:** Dopo un `jmp $A000` (cold start da cartridge), il sistema andava in crash prima che `common_reinit` potesse reinstallare il VBI. Il cursore non riappariva nemmeno dopo il recupero dal crash.
+
+**Causa radice:** `_vera_saved_casini` vale `$0000` quando non era installato nessun handler CASINI precedente. La correzione originale (errata) chiamava `jmp (_vera_saved_casini)` incondizionatamente, saltando nelle variabili RAM di pagina zero Atari.
+
+**Correzione (`vera_sys_dosini.s` — `_vera_casini_asm_hook`):** Aggiunto un controllo null: `lda _vera_saved_casini; ora _vera_saved_casini+1; beq @done` — la tail-call viene saltata completamente se il puntatore salvato è zero.
+
+---
+
+### Cursore che scompare uscendo dal DOS verso il BASIC ("B" da DUP.SYS)
+
+**Sintomo:** Entrando nel DOS (DUP.SYS) e tornando al BASIC con l'opzione "B", il cursore risultava invisibile. BREAK (warm start) funzionava correttamente dopo le correzioni precedenti.
+
+**Causa radice:** Atari DOS (DUP.SYS) installa il proprio handler VBI differito (`VVBLKD`), sovrascrivendo il nostro. Quando l'utente seleziona "B", DOS esegue `JMP (DOSVEC)` — un salto diretto al BASIC senza warm/cold start OS. Né gli hook `DOSINI` né `CASINI` scattano. L'IOCB 0 è già aperto, quindi `vera_editor_open` non viene mai chiamata. Il prompt "READY" del BASIC è il primo output dopo la transizione.
+
+Due correzioni parziali sono state applicate in sequenza:
+
+**Correzione parziale — `vera_editor_open` (`vera_sys_es_hook.s`):** Aggiunto `jsr _InitVbi` (con `sei` + disabilitazione/ripristino del bit 6 di NMIEN) a `vera_editor_open`. Reinstalla il VBI quando l'OS apre E: durante qualsiasi warm o cold start OS, coprendo il percorso BREAK. Non copre il percorso diretto `JMP (DOSVEC)` perché IOCB 0 è già aperto.
+
+**Correzione completa — `ensure_vbi` in `vera_editor_put` / `vera_screen_put` (`vera_sys_es_hook.s`):** Aggiunto un controllo VBI lazy all'ingresso di entrambi gli handler PUT BYTE. Ad ogni chiamata, `ensure_vbi` confronta `VVBLKD` con l'indirizzo dell'handler rilocato letto da `__VERA_EXPORTS__+EXP_VBI_HANDLER`. Se differiscono, reinstalla l'handler VBI con la stessa protezione SEI/NMIEN usata in `vera_editor_open`. Il primo output del BASIC dopo qualsiasi transizione è il prompt "READY", quindi il VBI viene reinstallato prima che l'utente possa interagire.
+
+Questo pattern è robusto contro qualsiasi percorso di rientro futuro che bypassa la sequenza di init OS.
+
+---
+
+### Consolidamento delle equate (`vera_common.inc`)
+
+Tutti gli indirizzi dei registri hardware, le costanti di layout dello schermo, i codici di controllo ATASCII, gli offset del blocco VCTL e le equate OS precedentemente dispersi nei singoli file `.s` sono stati consolidati in `vera_common.inc`. Tutti i moduli includono questo file; i duplicati per-modulo sono stati rimossi.
+
+Aggiunte rilevanti:
+- `SCREEN_ROWS_VIEW = 60` (distinto da `SCREEN_ROWS = 25`)
+- `ROWCRS_OS = $54`, `COLCRS_OS = $55` (shadow cursore OS per la sincronizzazione VBI)
+- Tabella completa dei codici di controllo ATASCII
+- Offset `VERACTL_*` e bitmask `VCTL_FLAG_*`
+
+## Strategia di integrazione
+Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.

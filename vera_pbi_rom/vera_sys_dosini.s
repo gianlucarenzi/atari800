@@ -52,12 +52,14 @@ _vera_dosini_asm_hook:
     jmp (_vera_saved_dosini)
 
 ; DOS "cartridge mode" path.
-; Call the saved CASINI first — it may be the OS cold-start routine which resets
-; VBI vectors and HATABS to defaults.  We then reinstall on top so our hooks
-; always win regardless of what the original handler does.
+; Run common_reinit first (patches HATABS, installs VBI), then call saved CASINI
+; only if it is non-null — a null ($0000) saved pointer means no previous handler
+; was installed and jumping through it would execute garbage in page 0.
 _vera_casini_asm_hook:
-    jsr @call_saved
     jsr common_reinit
-    rts
-@call_saved:
+    lda _vera_saved_casini
+    ora _vera_saved_casini+1
+    beq @done                   ; skip if null
     jmp (_vera_saved_casini)
+@done:
+    rts
