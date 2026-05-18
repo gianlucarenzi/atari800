@@ -59,7 +59,7 @@ SCREEN_TILEBASE = <(CHARSET_ADDR >> 9); L1_TILEBASE: VRAM addr / 512
 SCREEN_COLS     = 80                ; Viewport columns
 MAP_COLS        = 128               ; VRAM map width
 MAP_ROWS        = 64                ; VRAM map height
-SCREEN_ROWS     = 25                ; Viewport rows
+SCREEN_ROWS     = 60                ; Viewport rows
 TEXT_COLOR      = $61               ; Default text color
 
 DC_HSTART_VAL   = $00               ; Horizontal start register value
@@ -79,7 +79,7 @@ SCREEN_ROWS_VIEW    = 60            ; Viewport rows
 ; Screen layout — must stay in sync with vera_pbi_handler.s
 ;   SCREEN_ADDR  = $01B000    (bank 1, mid byte $B0)
 ;   MAP_COLS     = 128        → per-row stride = 256 bytes
-;   visible 80x25 inside a 128x64 tilemap
+;   visible 80x60 inside a 128x64 tilemap
 ; ============================================================================
 
 SCREEN_ADDR_M       = >SCREEN_ADDR          ; mid byte of VRAM screen address
