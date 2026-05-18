@@ -53,8 +53,8 @@ VERA_MAP_128x64 = $60               ; 128-tile wide, 64-tile tall map
 SCREEN_ADDR     = $01B000           ; VRAM tilemap start
 CHARSET_ADDR    = $01F000           ; VRAM character glyphs start
 
-SCREEN_MAPBASE  = $D8               ; L1_MAPBASE derived from SCREEN_ADDR
-SCREEN_TILEBASE = $F8               ; L1_TILEBASE derived from CHARSET_ADDR
+SCREEN_MAPBASE  = <(SCREEN_ADDR >> 9) ; L1_MAPBASE: VRAM addr / 512
+SCREEN_TILEBASE = <(CHARSET_ADDR >> 9); L1_TILEBASE: VRAM addr / 512
 
 SCREEN_COLS     = 80                ; Viewport columns
 MAP_COLS        = 128               ; VRAM map width
@@ -82,8 +82,12 @@ SCREEN_ROWS_VIEW    = 60            ; Viewport rows
 ;   visible 80x25 inside a 128x64 tilemap
 ; ============================================================================
 
-SCREEN_ADDR_M       = $B0
-SCREEN_ADDR_BANK    = $01
+SCREEN_ADDR_M       = >SCREEN_ADDR          ; mid byte of VRAM screen address
+SCREEN_ADDR_BANK    = ^SCREEN_ADDR          ; bank byte of VRAM screen address
+VERA_SCREEN_BASE_M  = SCREEN_ADDR_M         ; alias used by vera_driver.s
+CHARSET_VRAM_L      = <CHARSET_ADDR
+CHARSET_VRAM_M      = >CHARSET_ADDR
+CHARSET_VRAM_H      = (VERA_INC1 | ^CHARSET_ADDR)
 ; VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
 VERA_ADDR_H_BASE    = (VERA_INC1 | ^SCREEN_ADDR)
 
@@ -92,6 +96,25 @@ VERA_ADDR_H_BASE    = (VERA_INC1 | ^SCREEN_ADDR)
 ; that never invoke CIO.
 ROWCRS_OS           = $54
 COLCRS_OS           = $55           ; LO byte only (HI is for graphics modes)
+
+; ============================================================================
+; ATASCII control codes
+; ============================================================================
+
+ATASCII_ESC         = $1B
+ATASCII_CURSOR_UP   = $1C
+ATASCII_CURSOR_DOWN = $1D
+ATASCII_CURSOR_LEFT = $1E
+ATASCII_CURSOR_RIGHT= $1F
+ATASCII_CLEAR       = $7D
+ATASCII_BACKSPACE   = $7E
+ATASCII_TAB         = $7F
+ATASCII_EOL         = $9B
+ATASCII_DELETE_LINE = $9C
+ATASCII_INSERT_LINE = $9D
+ATASCII_BELL        = $FD
+ATASCII_DELETE_CHAR = $FE
+ATASCII_INSERT_CHAR = $FF
 
 ; ============================================================================
 ; VeraCtl block offsets

@@ -23,35 +23,7 @@ LOGO7_ADDR      = SCREEN_ADDR + (6 * MAP_COLS * 2) + (0 * 2)
 VER_LINE_ADDR   = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
 HOST_LINE_ADDR  = SCREEN_ADDR + (3 * MAP_COLS * 2) + (8 * 2)
 
-; Internal driver shims for legacy code
-VERA_SCREEN_BASE_M  = >SCREEN_ADDR
 VERA_TEXT_COLOR     = TEXT_COLOR
-
-CHARSET_VRAM_L      = <CHARSET_ADDR
-CHARSET_VRAM_M      = >CHARSET_ADDR
-CHARSET_VRAM_H      = (VERA_INC1 | ^CHARSET_ADDR)
-
-; ============================================================================
-; ATASCII control set we recognise. Anything else is treated as printable.
-; Inverse-video bit ($80) is stripped before tile lookup; the cell color is
-; left at VERA_TEXT_COLOR (no inverse rendering yet — see Phase 1A scope).
-; ============================================================================
-
-ATASCII_EOL         = $9B
-ATASCII_CLEAR       = $7D
-ATASCII_BACKSPACE   = $7E
-ATASCII_TAB         = $7F
-ATASCII_BELL        = $FD
-ATASCII_ESC         = $1B
-ATASCII_CURSOR_UP   = $1C
-ATASCII_CURSOR_DOWN = $1D
-ATASCII_CURSOR_LEFT = $1E
-ATASCII_CURSOR_RIGHT = $1F
-ATASCII_DELETE_LINE = $9C
-ATASCII_INSERT_LINE = $9D
-ATASCII_DELETE_CHAR = $FE
-ATASCII_INSERT_CHAR = $FF
-
 VERA_INVERSE_COLOR  = $16           ; swap nibbles of $61: BG=1 white, FG=6 blue
 
     .segment "LOWBSS"

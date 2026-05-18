@@ -47,14 +47,6 @@ PUT_BYTE_OFFSET  = 6                ; offset of PUT BYTE vector in handler table
 ;CH               = $02FC            ; raw key code from keyboard IRQ ($FF = none)
 ;BRKKEY           = $0011            ; break key: $00 = pressed, else not pressed
 
-; ATASCII cursor / edit codes produced by CTRL key combos (not in kbcode_table).
-ATASCII_CURSOR_UP    = $1C
-ATASCII_CURSOR_DOWN  = $1D
-ATASCII_CURSOR_LEFT  = $1E
-ATASCII_CURSOR_RIGHT = $1F
-ATASCII_DELETE_CHAR  = $FE
-ATASCII_INSERT_CHAR  = $FF
-
 ; AKEY_ CTRL combos that map to cursor / edit ATASCII codes (bit 7 = CTRL set).
 AKEY_UP          = $8E              ; CTRL+MINUS  → cursor up    ($1C)
 AKEY_DOWN        = $8F              ; CTRL+EQUAL  → cursor down  ($1D)
@@ -62,9 +54,6 @@ AKEY_LEFT        = $86              ; CTRL+PLUS   → cursor left  ($1E)
 AKEY_RIGHT       = $87              ; CTRL+ASTER  → cursor right ($1F)
 AKEY_DELETE_CHAR = $B4              ; CTRL+BACKSP → delete char  ($FE)
 AKEY_INSERT_CHAR = $B7              ; CTRL+>      → insert char  ($FF)
-
-ATASCII_EOL       = $9B
-ATASCII_BACKSPACE = $7E
 
 ; ============================================================================
 ; IOCB layout — 8 IOCBs at $0340-$03BF, 16 bytes each. CIO caches the device's
