@@ -23,35 +23,29 @@
     .import _CallVeraApiService
     .import _vera_ctl_block
 
+    .include "vera_common.inc"
+    .include "atari.inc"
+    
 ; ============================================================================
 ; VCTL routing
 ; ============================================================================
 
 VERA_CTL_REQUEST  = _vera_ctl_block + 5
 VERA_CTL_PARAM0   = _vera_ctl_block + 6
-VERACTL_CURSOR_X  = _vera_ctl_block + 8
-VERA_REQ_PUTC     = $03
-
-CRITIC           = $42
 
 ; ============================================================================
 ; HATABS layout (33 entries × 3 bytes)
 ; ============================================================================
 
-HATABS           = $031A
-HATABS_SIZE      = 99
 OPEN_BYTE_OFFSET = 0                ; offset of OPEN vector in handler table
 GET_BYTE_OFFSET  = 4                ; offset of GET BYTE vector in handler table
 PUT_BYTE_OFFSET  = 6                ; offset of PUT BYTE vector in handler table
 
-LMARGIN          = $52              ; Atari OS left margin
-RMARGIN          = $53              ; Atari OS right margin
-
 ; Keyboard / system OS equates used by the GET handler.
 ; NOTE: CH ($02FC) holds the raw POKEY KBCODE: bits 0-5 = key matrix pos,
 ; bit 6 = SHIFT, bit 7 = CTRL. NOT ATASCII. Translation is done by kbcode_table.
-CH               = $02FC            ; raw key code from keyboard IRQ ($FF = none)
-BRKKEY           = $0011            ; break key: $00 = pressed, else not pressed
+;CH               = $02FC            ; raw key code from keyboard IRQ ($FF = none)
+;BRKKEY           = $0011            ; break key: $00 = pressed, else not pressed
 
 ; ATASCII cursor / edit codes produced by CTRL key combos (not in kbcode_table).
 ATASCII_CURSOR_UP    = $1C
@@ -234,9 +228,9 @@ vera_screen_put:
 
 vera_editor_open:
     lda #0
-    sta LMARGIN
+    sta LMARGN
     lda #79
-    sta RMARGIN
+    sta RMARGN
     ldy #1
     rts
 
@@ -246,9 +240,9 @@ vera_editor_open:
 
 vera_screen_open:
     lda #0
-    sta LMARGIN
+    sta LMARGN
     lda #79
-    sta RMARGIN
+    sta RMARGN
     ldy #1
     rts
 

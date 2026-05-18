@@ -136,3 +136,8 @@ VERA_REQ_PUTC       = $03
 ; ============================================================================
 
 READY_ROW           = 8             ; row used by warm_reinit's banner
+
+; ========================
+; This needs to be checked
+; ========================
+HATABS_SIZE = 99
