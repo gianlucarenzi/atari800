@@ -162,7 +162,7 @@ INIT_VERA_SCREEN:
     sta VERA_L1_CONFIG
     lda #SCREEN_MAPBASE
     sta VERA_L1_MAPBASE
-    lda #SCREEN_TILEBASE
+    lda #(SCREEN_TILEBASE | 2)
     sta VERA_L1_TILEBASE
 
     lda #$00

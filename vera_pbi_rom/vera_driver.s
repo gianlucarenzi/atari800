@@ -58,7 +58,7 @@ vera_init_hw:
     sta VERA_L1_CONFIG
     lda #SCREEN_MAPBASE
     sta VERA_L1_MAPBASE
-    lda #SCREEN_TILEBASE
+    lda #(SCREEN_TILEBASE | 2)
     sta VERA_L1_TILEBASE
     lda #$00
     sta VERA_L1_HSCR_L
@@ -169,30 +169,18 @@ vera_load_font:
     sta VERA_ADDR_M
     lda #CHARSET_VRAM_H
     sta VERA_ADDR_H
+    ldy #$00
     ldx #$00
-@copy_page0:
-    lda _vera_x16_font,x
+@copy_loop:
+    lda _vera_x16_font,y
     sta VERA_DATA0
     inx
-    bne @copy_page0
-    ldx #$00
-@copy_page1:
-    lda _vera_x16_font + $100,x
-    sta VERA_DATA0
-    inx
-    bne @copy_page1
-    ldx #$00
-@copy_page2:
-    lda _vera_x16_font + $200,x
-    sta VERA_DATA0
-    inx
-    bne @copy_page2
-    ldx #$00
-@copy_page3:
-    lda _vera_x16_font + $300,x
-    sta VERA_DATA0
-    inx
-    bne @copy_page3
+    iny
+    bne @copy_loop
+    inc @copy_loop+2
+    lda @copy_loop+2
+    cmp #>_vera_x16_font + 8
+    bne @copy_loop
     pla
     sta VERA_DC_VIDEO
     rts
