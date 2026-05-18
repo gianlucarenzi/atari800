@@ -49,5 +49,14 @@ The `atari800` emulator core has been extended to support the VERA PBI periphera
     *   **Configuration:** Supports CLI arguments to enable the card (`-verax16`), specify the ROM handler image (`-verax16-rom`), and attach an SD card image for the SPI interface (`-verax16-sdcard`).
 *   **Lifecycle Management:** Handles power-on/reset states, ensuring that VRAM is initialized and the card is properly enabled/disabled on the bus.
 
+## Known Issues and Fixes
+
+### Cursor Instability and Visual Corruption
+During development, a race condition between the VBI interrupt (managing cursor blinking) and screen manipulation routines (`scroll_up`, `do_delete_line`, `do_insert_line`, `do_delete_char`, `do_insert_char`) caused cursor disappearance and intermittent visual corruption.
+
+**Fix:**
+1.  **Cursor Invalidation:** Explicitly added calls to `_vera_cursor_invalidate` at the start of all screen manipulation routines to ensure the cursor is erased before VRAM modifications.
+2.  **Register Preservation:** Refactored `_vera_cursor_invalidate` to save and restore all CPU registers (`A`, `X`, `Y`) and the `VERA_CTRL` register, ensuring calling routines maintain their state integrity and VERA controller settings.
+
 ## Integration Strategy
 The driver effectively makes the VERA card the *primary* display device. The original OS PUT BYTE routines are *not* called; instead, the custom driver redirects all text output directly to the VERA's VRAM. By setting the system margins (`LMARGIN`, `RMARGIN`) to 0/79 during OPEN, the driver ensures that Atari OS software sees a standard 80-column device.
