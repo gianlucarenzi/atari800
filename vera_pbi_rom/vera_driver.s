@@ -478,6 +478,7 @@ cr_lf:
 DMACTL      = $022F
 
 scroll_up:
+    jsr _vera_cursor_invalidate
     sei
     lda #1                      ; Set Critical Section
     sta CRITIC
@@ -566,6 +567,7 @@ do_eol:
 ; ----------------------------------------------------------------------------
 
 do_clear:
+    jsr _vera_cursor_invalidate
     sei
     lda #0                      ; Ensure ADDRSEL=0
     sta VERA_CTRL
@@ -709,6 +711,7 @@ do_tab:
 ; ----------------------------------------------------------------------------
 
 do_delete_line:
+    jsr _vera_cursor_invalidate
     lda _vera_ctl_block + VERACTL_CURSOR_Y
     sta putc_tmp                        ; first dest row = cursor_y
 @dl_row:
@@ -781,6 +784,7 @@ do_delete_line:
 ; ----------------------------------------------------------------------------
 
 do_insert_line:
+    jsr _vera_cursor_invalidate
     ; Start from row 22 (second-to-last) and move down to cursor_y.
     lda #(SCREEN_ROWS_VIEW - 2)
     sta putc_tmp
@@ -857,6 +861,7 @@ do_insert_line:
 ; ----------------------------------------------------------------------------
 
 do_delete_char:
+    jsr _vera_cursor_invalidate
     lda #$00
     sta VERA_CTRL
     ; DATA1 → dest: cursor_x cell.
@@ -932,6 +937,7 @@ do_delete_char:
 ; ----------------------------------------------------------------------------
 
 do_insert_char:
+    jsr _vera_cursor_invalidate
     lda #(SCREEN_COLS_VIEW - 2)
     sta putc_tmp
 @ic_shift:

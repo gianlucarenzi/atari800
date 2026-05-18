@@ -137,6 +137,13 @@ _vera_save_c_sp:
 ; ============================================================================
 
 _vera_cursor_invalidate:
+    pha
+    txa
+    pha
+    tya
+    pha
+    lda VERA_CTRL
+    pha
     lda cursor_drawn
     beq @done
     lda VERA_CTRL
@@ -144,6 +151,13 @@ _vera_cursor_invalidate:
     sta VERA_CTRL
     jsr cursor_erase                ; restores saved char/color, sets drawn=0
 @done:
+    pla
+    sta VERA_CTRL
+    pla
+    tay
+    pla
+    tax
+    pla
     rts
 
 
