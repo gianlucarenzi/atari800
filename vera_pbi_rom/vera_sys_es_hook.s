@@ -333,7 +333,18 @@ vera_editor_get:
     jmp @poll               ; wait for next key
 
 @not_special:
-
+    ; Cursor-movement codes $1C-$1F: move VERA cursor only, don't buffer.
+    cmp #ATASCII_CURSOR_UP
+    bcc @store_char
+    cmp #ATASCII_CURSOR_RIGHT+1
+    bcs @store_char
+    jsr echo_to_vera
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta input_col0          ; clamp backspace to new position
+    lda #0
+    sta input_wr            ; no newly-typed chars to backspace over
+    jmp @key_loop
+@store_char:
     ; Printable / control char: store in buffer if not full, echo to VERA.
     ldx input_wr
     cpx #80
@@ -345,28 +356,68 @@ vera_editor_get:
 
 @got_backspace:
     lda input_wr
-    beq @key_loop           ; nothing to erase
+    beq @bs_done            ; nothing to erase
     ; Prevent backspacing before start of input area.
     lda _vera_ctl_block + VERACTL_CURSOR_X
     cmp input_col0
-    beq @key_loop
+    beq @bs_done
     dec input_wr
     lda #ATASCII_BACKSPACE
     jsr echo_to_vera
+@bs_done:
     jmp @key_loop
 
 @got_return:
-    ; Terminate buffer with EOL, echo newline to VERA.
-    ldx input_wr
+    ; Atari screen-editor model: read the entire visible row from VRAM so
+    ; BASIC receives what is ON SCREEN, not just what was typed since GET.
+    lda #1
+    sta CRITIC
+    lda #$00
+    sta VERA_CTRL
+    lda #0
+    sta VERA_ADDR_L
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    clc
+    adc #VERA_SCREEN_BASE_M
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+    ; Each VRAM cell = [char, color], inc=1: read char, discard color, repeat.
+    ldx #0
+@vram_read:
+    lda VERA_DATA0          ; char tile byte
+    sta input_buf, x
+    lda VERA_DATA0          ; color byte (discard)
+    inx
+    cpx #SCREEN_COLS
+    bcc @vram_read
+    lda #0
+    sta CRITIC
+    ; Strip trailing spaces and null tiles from the right.
+    dex                     ; X = SCREEN_COLS-1
+@strip_trail:
+    lda input_buf, x
+    beq @strip_more
+    cmp #' '
+    bne @found_end
+@strip_more:
+    dex
+    bpl @strip_trail
+    inx                     ; X underflowed ($FF) → wrap to $00: empty line
+    jmp @write_eol
+@found_end:
+    inx
+@write_eol:
     lda #ATASCII_EOL
     sta input_buf, x
-    jsr echo_to_vera        ; A = ATASCII_EOL
-    ; Mark buffer ready and re-enter to return first char.
+    ; Echo RETURN to advance cursor to next row on screen.
+    jsr echo_to_vera
+    ; Mark buffer ready and return first char.
     lda #$FF
     sta input_ready
     lda #0
     sta input_rd
-    jmp vera_editor_get     ; tail-call
+    jmp vera_editor_get
 
 
 
