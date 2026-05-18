@@ -226,6 +226,10 @@ WAIT_VERA:
 
 PBI_CLEAR_SCREEN:
 CLEAR_SCREEN:
+    lda DMACTL                  ; Save ANTIC DMA state
+    pha
+    lda #0
+    sta DMACTL                  ; Disable ANTIC DMA
     lda #<SCREEN_ADDR
     sta VERA_ADDR_L
     lda #>SCREEN_ADDR
@@ -244,6 +248,8 @@ CLEAR_SCREEN:
     bne @Col
     dey
     bne @Row
+    pla                         ; Restore ANTIC DMA state
+    sta DMACTL
     rts
 
 LOAD_BOOT_FONT:

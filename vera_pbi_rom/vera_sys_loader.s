@@ -170,6 +170,29 @@ bootstrap_entry:
     jsr copy_block
     ; src_hi/dest_hi are now trashed; use exp_lo/hi from here on.
 
+    ; --- 2b. Zero LOWBSS + VCTL (BSS area above the file image).
+    ;        LOWBSS is type=bss so it produces no file bytes; the RAM at that
+    ;        address contains whatever was left from a previous session.  If
+    ;        PATCH_BODY_FILE_SIZE grew (e.g. new code was added), first_init
+    ;        and other state variables shift to a new address that may hold
+    ;        stale non-zero values — causing the banner to be skipped and
+    ;        cursor state to start corrupt.  Zeroing here fixes this. ---
+    clc
+    lda exp_lo
+    adc PATCH_BODY_FILE_SIZE
+    sta dest_lo
+    lda exp_hi
+    adc PATCH_BODY_FILE_SIZE+1
+    sta dest_hi
+    sec
+    lda PATCH_BODY_TOTAL_SIZE
+    sbc PATCH_BODY_FILE_SIZE
+    sta count_lo
+    lda PATCH_BODY_TOTAL_SIZE+1
+    sbc PATCH_BODY_FILE_SIZE+1
+    sta count_hi
+    jsr zero_block
+
     ; --- 3. Compute delta = exp_base - NOMINAL_BASE ---
     sec
     lda exp_lo
@@ -403,6 +426,36 @@ trampoline:
 
 jmp_vec:
     .word $0000
+
+; ============================================================================
+; zero_block — zero (count_lo,count_hi) bytes at (dest_lo,dest_hi).
+; Trashes A, X, Y.
+; ============================================================================
+
+zero_block:
+    lda #0
+    ldx count_hi
+    beq @tail
+@page:
+    ldy #0
+@inner:
+    sta (dest_lo),y
+    iny
+    bne @inner
+    inc dest_hi
+    dex
+    bne @page
+@tail:
+    ldy count_lo
+    beq @done
+    ldy #0
+@tail_loop:
+    sta (dest_lo),y
+    iny
+    cpy count_lo
+    bne @tail_loop
+@done:
+    rts
 
 ; ============================================================================
 ; copy_block — copy (count_lo,count_hi) bytes from (src_lo,src_hi) to

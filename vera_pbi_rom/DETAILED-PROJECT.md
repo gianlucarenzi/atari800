@@ -112,6 +112,61 @@ Questo pattern è robusto contro qualsiasi percorso di rientro futuro che bypass
 
 ---
 
+### Banner di avvio scomparso dopo aggiunta di codice al driver (`vera_sys_loader.s`)
+
+**Sintomo:** Dopo aver aggiunto la funzione `ensure_vbi` in `vera_sys_es_hook.s` (~30 byte in più nel segmento CODE), il banner "DEVICE DRIVER INSTALLED" non appariva più all'avvio — la pausa da 2 secondi era ancora presente, ma lo schermo rimaneva vuoto durante l'attesa.
+
+**Causa radice:** Il segmento `LOWBSS` è di tipo `bss` nel linker config (`vera_sys.cfg`) e non produce byte nel file binario — il loader copia solo i segmenti EXPORTS+CODE+RODATA+DATA tramite `copy_block`, e poi avanza MEMLO di `PATCH_BODY_TOTAL_SIZE` (che include la BSS). I byte del segmento `LOWBSS` in RAM non vengono mai azzerati dal loader.
+
+La variabile `first_init` si trova nel segmento `LOWBSS` di `vera_driver.s`. Il suo offset rispetto a `MEMLO` è uguale alla dimensione del file binario (`PATCH_BODY_FILE_SIZE`). Ogni volta che il codice del driver cresce, `first_init` si sposta a un indirizzo RAM più alto. Se quell'indirizzo conteneva già il valore `1` (scritto da una sessione precedente con una versione del driver più piccola), `_vera_warm_reinit` trovava `first_init=1` e saltava la visualizzazione del banner.
+
+Lo stesso bug latente colpisce qualsiasi variabile di stato in `LOWBSS` (state del cursore, vettori salvati, ecc.) nel momento in cui il codice cresce e la BSS si sposta su memoria già usata.
+
+**Correzione (`vera_sys_loader.s`):** Aggiunta la routine `zero_block` e una chiamata ad essa immediatamente dopo `copy_block` (step 2b). Calcola la dimensione della BSS come `PATCH_BODY_TOTAL_SIZE − PATCH_BODY_FILE_SIZE` e azzera tutti i byte da `exp_base + PATCH_BODY_FILE_SIZE` in avanti. Questo garantisce che `first_init` e tutte le altre variabili `LOWBSS` partano sempre da zero ad ogni caricamento di `VERA.SYS`, indipendentemente dalle dimensioni del codice.
+
+---
+
+### Ottimizzazione screen clear con disabilitazione DMA ANTIC (`vera_driver.s`, `vera_pbi_handler.s`)
+
+Le routine di pulizia schermo (`do_clear`, `_pbi_clear_screen` in `vera_driver.s` e `CLEAR_SCREEN`/`PBI_CLEAR_SCREEN` in `vera_pbi_handler.s`) ora salvano il registro `DMACTL` ($D400), disabilitano il DMA di ANTIC per tutta la durata dell'operazione, quindi ripristinano il valore originale. Questo è lo stesso pattern già usato in `scroll_up` e impedisce che ANTIC contenda il bus di memoria con la CPU durante le scritture intensive in VRAM.
+
+---
+
+### Bug 6502 page-crossing in `jmp (abs)` — `vera_sys_dosini.s`
+
+**Sintomo (errore di build):** Dopo l'aggiunta del codice DMACTL alle routine di pulizia (~24 byte in più nel segmento CODE), ca65 emetteva:
+
+```
+vera_sys_dosini.s:52: Error: Assertion failed: "jmp (abs)" across page border
+```
+
+**Causa radice:** L'hardware 6502 ha un bug noto: `jmp ($xxFF)` legge il byte alto dall'indirizzo `$xx00` invece di `$(xx+1)00`. ca65 rileva staticamente questa condizione in fase di assemblaggio. Ogni volta che il codice cresce, l'indirizzo nominale (base `$A000`) di `_vera_saved_dosini` può cadere esattamente a `$xxFF`, scatenando l'errore.
+
+Approcci scartati:
+- **ZP-indiretto `jmp ($CB)`**: $CB è libero dopo `common_reinit`, ma non garantisce l'uso esclusivo — un IRQ potrebbe corrompere quei byte nella finestra tra `sta $CC` e `jmp ($CB)`.
+- **Aggiunta di byte di padding**: spostare l'offset del vettore con codice artificiale è fragile; la prossima modifica al codice riproduce il problema.
+
+**Correzione (`vera_sys_dosini.s`):** Sostituito `jmp (_vera_saved_dosini)` e `jmp (_vera_saved_casini)` con **self-modifying code**: l'indirizzo del vettore viene scritto a runtime nei due byte operando di una istruzione `jmp $0000` assoluta che si trova nel segmento CODE:
+
+```asm
+_vera_dosini_asm_hook:
+    jsr common_reinit
+    lda _vera_saved_dosini
+    sta @jmp+1
+    lda _vera_saved_dosini+1
+    sta @jmp+2
+@jmp:
+    jmp $0000       ; operand patchato a runtime — JMP assoluto, non indiretto
+```
+
+Perché questa soluzione è robusta:
+- `jmp $0000` è opcode `$4C` (JMP assoluto diretto), **non** `$6C` (indiretto) — il bug page-crossing non si applica.
+- `@jmp` è un'etichetta locale nel segmento CODE; il suo offset dal base è fisso a link-time e non dipende dalla dimensione del codice.
+- Non usa ZP, eliminando qualsiasi problema di ownership o race con gli IRQ.
+- Il relocator non tocca il `$0000` nel binario (non è un riferimento a simbolo) — viene patchato esclusivamente dal codice sopra riportato.
+
+---
+
 ### Consolidamento delle equate (`vera_common.inc`)
 
 Tutti gli indirizzi dei registri hardware, le costanti di layout dello schermo, i codici di controllo ATASCII, gli offset del blocco VCTL e le equate OS precedentemente dispersi nei singoli file `.s` sono stati consolidati in `vera_common.inc`. Tutti i moduli includono questo file; i duplicati per-modulo sono stati rimossi.

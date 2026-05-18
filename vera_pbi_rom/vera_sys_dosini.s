@@ -49,17 +49,27 @@ common_reinit:
 ; Standard DOS warm-start path.
 _vera_dosini_asm_hook:
     jsr common_reinit
-    jmp (_vera_saved_dosini)
+    lda _vera_saved_dosini
+    sta @jmp+1
+    lda _vera_saved_dosini+1
+    sta @jmp+2
+@jmp:
+    jmp $0000                   ; operand patched at runtime; direct JMP avoids
+                                ; 6502 page-crossing bug of jmp (abs) at $xxFF
 
 ; DOS "cartridge mode" path.
-; Run common_reinit first (patches HATABS, installs VBI), then call saved CASINI
-; only if it is non-null — a null ($0000) saved pointer means no previous handler
-; was installed and jumping through it would execute garbage in page 0.
+; Run common_reinit first (patches HATABS, installs VBI), then tail-call saved
+; CASINI only if non-null — a null ($0000) pointer means no previous handler.
 _vera_casini_asm_hook:
     jsr common_reinit
     lda _vera_saved_casini
     ora _vera_saved_casini+1
     beq @done                   ; skip if null
-    jmp (_vera_saved_casini)
+    lda _vera_saved_casini
+    sta @jmp+1
+    lda _vera_saved_casini+1
+    sta @jmp+2
+@jmp:
+    jmp $0000                   ; operand patched at runtime
 @done:
     rts

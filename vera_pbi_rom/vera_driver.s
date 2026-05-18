@@ -449,10 +449,13 @@ do_eol:
 
 do_clear:
     jsr _vera_cursor_invalidate
-    sei
+    lda DMACTL                  ; Save ANTIC DMA state
+    pha
+    lda #0
+    sta DMACTL                  ; Disable ANTIC DMA
     lda #0                      ; Ensure ADDRSEL=0
     sta VERA_CTRL
-    
+
     lda #0
     sta putc_tmp                ; row counter
 @row_loop:
@@ -483,7 +486,8 @@ do_clear:
     sta _vera_ctl_block + VERACTL_CURSOR_X
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_Y
-    cli
+    pla                         ; Restore ANTIC DMA state
+    sta DMACTL
     rts
 
 
@@ -883,6 +887,10 @@ do_insert_char:
     rts
 
 _pbi_clear_screen:
+    lda DMACTL                  ; Save ANTIC DMA state
+    pha
+    lda #0
+    sta DMACTL                  ; Disable ANTIC DMA
     lda #<SCREEN_ADDR
     sta VERA_ADDR_L
     lda #>SCREEN_ADDR
@@ -901,4 +909,6 @@ _pbi_clear_screen:
     bne @Col
     dey
     bne @Row
+    pla                         ; Restore ANTIC DMA state
+    sta DMACTL
     rts
