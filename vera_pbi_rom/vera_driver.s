@@ -44,10 +44,58 @@ first_init:         .res 1
 _VeraApiService:
     rts
 
+; ============================================================================
+; vera_init_hw — configure VERA Layer 1 and display composer registers.
+; Safe to call even when the PBI ROM already ran: all writes are idempotent.
+; Must be called before vera_load_font (which reads and preserves DC_VIDEO).
+; ============================================================================
+
+vera_init_hw:
+    ; Layer 1: 128×64 tilemap, mapbase at SCREEN_ADDR, tilebase at CHARSET_ADDR.
+    lda #VERA_DCSEL0
+    sta VERA_CTRL
+    lda #VERA_MAP_128x64
+    sta VERA_L1_CONFIG
+    lda #SCREEN_MAPBASE
+    sta VERA_L1_MAPBASE
+    lda #SCREEN_TILEBASE
+    sta VERA_L1_TILEBASE
+    lda #$00
+    sta VERA_L1_HSCR_L
+    sta VERA_L1_HSCR_H
+    sta VERA_L1_VSCR_L
+    sta VERA_L1_VSCR_H
+
+    ; Display composer bank 1: active area clipping for 640×480 VGA.
+    lda #VERA_DCSEL1
+    sta VERA_CTRL
+    lda #DC_HSTART_VAL
+    sta VERA_DC_HSTART
+    lda #DC_HSTOP_VAL
+    sta VERA_DC_HSTOP
+    lda #DC_VSTART_VAL
+    sta VERA_DC_VSTART
+    lda #DC_VSTOP_VAL
+    sta VERA_DC_VSTOP
+
+    ; Display composer bank 0: enable VGA output + Layer 1, 1:1 scale.
+    lda #VERA_DCSEL0
+    sta VERA_CTRL
+    lda #(VERA_VIDEO_VGA | VERA_LAYER1_EN)
+    sta VERA_DC_VIDEO
+    lda #$80
+    sta VERA_DC_HSCALE
+    lda #$80
+    sta VERA_DC_VSCALE
+    lda #$06
+    sta VERA_DC_BORDER
+    rts
+
 _vera_warm_reinit:
     lda #1
     sta CRITIC          ; block deferred VBI cursor during init
 
+    jsr vera_init_hw
     jsr vera_load_font
 
     lda first_init
