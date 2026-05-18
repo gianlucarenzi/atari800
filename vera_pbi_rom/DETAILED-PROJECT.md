@@ -167,6 +167,29 @@ Perché questa soluzione è robusta:
 
 ---
 
+### Funzionamento standalone di VERA.SYS senza ROM PBI (`vera_driver.s`)
+
+**Sintomo:** Avviando VERA.SYS senza la ROM PBI handler (`vera_pbi_handler.rom`), lo sfondo risultava blu ma i caratteri erano invisibili. I comandi venivano comunque eseguiti (al buio).
+
+**Causa radice:** `_vera_warm_reinit` nel driver non configura i registri hardware di VERA: Layer 1 e il display composer vengono inizializzati esclusivamente da `INIT_VERA_SCREEN` nella ROM PBI. In assenza di quella ROM, VERA rimane nello stato di reset:
+
+- `VERA_DC_VIDEO = $00`: nessun output VGA attivo, nessun layer abilitato
+- `VERA_L1_MAPBASE` / `VERA_L1_TILEBASE`: puntano a `$0000` anziché a `SCREEN_ADDR` / `CHARSET_ADDR`
+- `VERA_L1_CONFIG`: non configurato per la tilemap 128×64
+- `VERA_DC_HSCALE` / `VERA_DC_VSCALE`: `$00` (scaling disattivato)
+
+Il blue di sfondo era dovuto al valore di reset di `VERA_DC_BORDER`. Il font veniva caricato correttamente in VRAM da `vera_load_font`, ma poiché questa routine legge `VERA_DC_VIDEO`, lo salva, e lo ripristina invariato (`$00`), il Layer 1 restava disabilitato dopo il caricamento.
+
+**Correzione (`vera_driver.s`):** Aggiunta la routine `vera_init_hw` chiamata all'inizio di `_vera_warm_reinit`, prima di `vera_load_font`. La routine configura tutti i registri VERA necessari — identico a ciò che fa `INIT_VERA_SCREEN` nella ROM PBI:
+
+- Layer 1: `CONFIG = VERA_MAP_128x64`, `MAPBASE = SCREEN_MAPBASE`, `TILEBASE = SCREEN_TILEBASE`, scroll azzerati
+- DC bank 1 (DCSEL=1): `HSTART/HSTOP/VSTART/VSTOP` per l'area attiva 640×480
+- DC bank 0 (DCSEL=0): `DC_VIDEO = VGA | LAYER1_EN`, `HSCALE = VSCALE = $80`, `BORDER = $06`
+
+Le scritture sono idempotenti: se la ROM PBI è presente e ha già configurato VERA, riscrivere gli stessi valori non produce effetti collaterali.
+
+---
+
 ### Consolidamento delle equate (`vera_common.inc`)
 
 Tutti gli indirizzi dei registri hardware, le costanti di layout dello schermo, i codici di controllo ATASCII, gli offset del blocco VCTL e le equate OS precedentemente dispersi nei singoli file `.s` sono stati consolidati in `vera_common.inc`. Tutti i moduli includono questo file; i duplicati per-modulo sono stati rimossi.
