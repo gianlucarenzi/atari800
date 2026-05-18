@@ -84,7 +84,8 @@ SCREEN_ROWS_VIEW    = 60            ; Viewport rows
 
 SCREEN_ADDR_M       = $B0
 SCREEN_ADDR_BANK    = $01
-VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
+; VERA_ADDR_H_BASE    = VERA_INC1 | SCREEN_ADDR_BANK  ; $11
+VERA_ADDR_H_BASE    = (VERA_INC1 | ^SCREEN_ADDR)
 
 ; OS Editor cursor shadow — driven by both PUT BYTE *and* arrow-key handling.
 ; The VBI snapshots these into VCTL so the VERA cursor follows arrow-key moves
@@ -114,3 +115,24 @@ VBI_VOLUME          = $AF
 ; ==================================
 
 mSETVBV = $E45C
+
+; ============================================================================
+; VCTL block offsets — must stay in sync with vera_stub.s + the bootstrap.
+; ============================================================================
+
+VERACTL_REQUEST     = 5
+VERACTL_PARAM0      = 6
+VERACTL_PARAM1      = 7
+
+VCTL_FLAG_METRONOME = $01
+VCTL_FLAG_ESCAPE    = $02           ; next byte is treated as literal
+VCTL_FLAG_API_READY = $80
+
+VERA_REQ_PUTC       = $03
+
+; ============================================================================
+; Viewport — 80x24 primary display, top-left aligned in the 128x64 VERA
+; tilemap. VERA is the authoritative screen; Atari screen RAM is not used.
+; ============================================================================
+
+READY_ROW           = 8             ; row used by warm_reinit's banner
