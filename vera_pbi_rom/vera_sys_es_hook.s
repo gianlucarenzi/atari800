@@ -105,9 +105,7 @@ iocb_match_id:          .res 1
 ; GET BYTE line-input state.
 input_buf:              .res 81     ; 80 chars + $9B terminator
 input_rd:               .res 1      ; read index (returned to caller)
-input_wr:               .res 1      ; write index (built during keyboard input)
 input_ready:            .res 1      ; $FF = buffer has data, $00 = need input
-input_col0:             .res 1      ; cursor X at start of input (BS clamp)
 caps_lock_state:        .res 1      ; $FF = CAPS active, $00 = inactive
 
     .segment "DATA"
@@ -315,11 +313,7 @@ vera_editor_get:
     rts
 
 @need_input:
-    ; Save cursor column at input start for BACKSPACE clamping.
-    lda _vera_ctl_block + VERACTL_CURSOR_X
-    sta input_col0
     lda #0
-    sta input_wr
     sta input_rd
 
 @key_loop:
@@ -378,38 +372,24 @@ vera_editor_get:
     jmp @poll               ; wait for next key
 
 @not_special:
-    ; Cursor-movement codes $1C-$1F: move VERA cursor only, don't buffer.
+    ; Cursor-movement codes $1C-$1F: move VERA cursor only.
     cmp #ATASCII_CURSOR_UP
     bcc @store_char
     cmp #ATASCII_CURSOR_RIGHT+1
     bcs @store_char
     jsr echo_to_vera
-    lda _vera_ctl_block + VERACTL_CURSOR_X
-    sta input_col0          ; clamp backspace to new position
-    lda #0
-    sta input_wr            ; no newly-typed chars to backspace over
     jmp @key_loop
 @store_char:
-    ; Printable / control char: store in buffer if not full, echo to VERA.
-    ldx input_wr
-    cpx #80
-    bcs @key_loop
-    sta input_buf, x
-    inc input_wr
+    ; Printable / control char: echo to VERA.
+    ; (Note: input_buf is overwritten by screen scan at @got_return)
     jsr echo_to_vera        ; A = char
     jmp @key_loop
 
 @got_backspace:
-    lda input_wr
-    beq @bs_done            ; nothing to erase
-    ; Prevent backspacing before start of input area.
-    lda _vera_ctl_block + VERACTL_CURSOR_X
-    cmp input_col0
-    beq @bs_done
-    dec input_wr
+    ; Just echo backspace to VERA. do_backspace in vera_driver.s
+    ; already handles the LMARGN clamp.
     lda #ATASCII_BACKSPACE
     jsr echo_to_vera
-@bs_done:
     jmp @key_loop
 
 @got_return:
@@ -490,7 +470,6 @@ _install_es_hooks:
     lda #0
     sta input_ready
     sta input_rd
-    sta input_wr
     lda #$FF
     sta caps_lock_state
 

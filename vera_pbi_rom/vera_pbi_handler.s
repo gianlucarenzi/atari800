@@ -339,11 +339,12 @@ PRINT_DECIMAL:
 PRINT_VERSION_LINE:
     lda #TEXT_COLOR
     sta TMP0
-    lda #<VER_LINE_ADDR
+    lda LMARGN
+    asl a
     sta VERA_ADDR_L
-    lda #>VER_LINE_ADDR
+    lda #>(SCREEN_ADDR + (1 * MAP_COLS * 2))
     sta VERA_ADDR_M
-    lda #(VERA_INC1 | ^VER_LINE_ADDR)
+    lda #(VERA_INC1 | ^(SCREEN_ADDR + (1 * MAP_COLS * 2)))
     sta VERA_ADDR_H
     lda #<VersionPrefix
     sta TMP_PTR_LO
@@ -370,11 +371,12 @@ PRINT_VERSION_LINE:
 PRINT_HOST_LINE:
     lda #TEXT_COLOR
     sta TMP0
-    lda #<HOST_LINE_ADDR
+    lda LMARGN
+    asl a
     sta VERA_ADDR_L
-    lda #>HOST_LINE_ADDR
+    lda #>(SCREEN_ADDR + (3 * MAP_COLS * 2))
     sta VERA_ADDR_M
-    lda #(VERA_INC1 | ^HOST_LINE_ADDR)
+    lda #(VERA_INC1 | ^(SCREEN_ADDR + (3 * MAP_COLS * 2)))
     sta VERA_ADDR_H
     lda RAMTOP
     cmp #$80

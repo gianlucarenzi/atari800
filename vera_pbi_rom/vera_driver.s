@@ -13,13 +13,6 @@
     .include "vera_common.inc"
     .include "atari.inc"
 
-LOGO1_ADDR      = SCREEN_ADDR + (0 * MAP_COLS * 2) + (0 * 2)
-LOGO2_ADDR      = SCREEN_ADDR + (1 * MAP_COLS * 2) + (0 * 2)
-LOGO3_ADDR      = SCREEN_ADDR + (2 * MAP_COLS * 2) + (0 * 2)
-LOGO4_ADDR      = SCREEN_ADDR + (3 * MAP_COLS * 2) + (0 * 2)
-LOGO5_ADDR      = SCREEN_ADDR + (4 * MAP_COLS * 2) + (0 * 2)
-LOGO6_ADDR      = SCREEN_ADDR + (5 * MAP_COLS * 2) + (0 * 2)
-LOGO7_ADDR      = SCREEN_ADDR + (6 * MAP_COLS * 2) + (0 * 2)
 VER_LINE_ADDR   = SCREEN_ADDR + (1 * MAP_COLS * 2) + (8 * 2)
 HOST_LINE_ADDR  = SCREEN_ADDR + (3 * MAP_COLS * 2) + (8 * 2)
 
@@ -104,7 +97,8 @@ _vera_warm_reinit:
     ; Print Banner (Cold Start only)
     lda #$00
     sta VERA_CTRL
-    lda #0
+    lda LMARGN
+    asl a                               ; x*2 (each cell = char + color byte)
     sta VERA_ADDR_L
     lda #(VERA_SCREEN_BASE_M + READY_ROW)
     sta VERA_ADDR_M
@@ -228,8 +222,8 @@ _CallVeraApiService:
 
 
 ; ============================================================================
-; _VeraPutByte — write one ATASCII byte (in VCTL_PARAM0) to the 40x24 VERA
-; viewport. Updates cursor X/Y in VCTL, scrolls when EOL pushes past row 23,
+; _VeraPutByte — write one ATASCII byte (in VCTL_PARAM0) to the 80x30 VERA
+; viewport. Updates cursor X/Y in VCTL, scrolls when EOL pushes past row 29,
 ; and invalidates the VBI blinker so the new cursor position is honoured on
 ; the next tick.
 ; ============================================================================
@@ -446,7 +440,7 @@ scroll_up:
     lda #VERA_ADDR_H_BASE
     sta VERA_ADDR_H
 
-    ldy #(SCREEN_COLS_VIEW * 2)         ; 80 bytes per row (40 char + 40 color)
+    ldy #(SCREEN_COLS_VIEW * 2)         ; 160 bytes per row (80 char + 80 color)
 @byte_loop:
     lda VERA_DATA0
     sta VERA_DATA1
