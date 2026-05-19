@@ -330,7 +330,12 @@ vera_editor_get:
     tay                     ; Y = raw code
     lda #$FF
     sta CH                  ; consume keypress
-    
+
+    lda NOCLIK
+    bne @no_click
+    jsr _vera_trigger_click
+@no_click:
+
     lda kbcode_table, y     ; A = ATASCII translation of raw key code
 
     ; Handle CAPS toggle

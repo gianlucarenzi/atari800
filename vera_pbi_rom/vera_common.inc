@@ -168,6 +168,13 @@ COLCRS_OS               = $55                       ; OS cursor column (ZP shado
 HATABS_SIZE             = 99                        ; size in bytes of the HATABS table
 READY_ROW               = 5                         ; screen row where warm_reinit prints banner
 
+; Keyboard repeat timing — written by the driver at init; user can POKE to override.
+; KRPDEL ($02D9) and KEYREP ($02DA) are XL/XE OS RAM variables (defined in atari.inc).
+; At 60 Hz: KBD_KRPDEL_FAST = 24 frames ≈ 0.4 s, KBD_KEYREP_FAST = 3 frames ≈ 0.05 s (20 cps)
+; OS defaults:                 $30 = 48 frames ≈ 0.8 s,              $06 = 6 frames ≈ 0.1 s
+KBD_KRPDEL_FAST         = $18                       ; initial delay before autorepeat starts
+KBD_KEYREP_FAST         = $03                       ; interval between repeated keystrokes
+
 ; ============================================================================
 ; ATASCII control codes
 ; ============================================================================

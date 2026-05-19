@@ -91,6 +91,11 @@ _vera_warm_reinit:
     jsr vera_init_hw
     jsr vera_load_font
 
+    lda #KBD_KRPDEL_FAST
+    sta KRPDEL
+    lda #KBD_KEYREP_FAST
+    sta KEYREP
+
     lda first_init
     bne @skip_banner
 
