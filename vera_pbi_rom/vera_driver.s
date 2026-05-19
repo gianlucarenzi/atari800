@@ -51,7 +51,7 @@ vera_init_hw:
     sta VERA_L1_CONFIG
     lda #SCREEN_MAPBASE
     sta VERA_L1_MAPBASE
-    lda #(SCREEN_TILEBASE | 2)
+    lda #SCREEN_TILEBASE_REG
     sta VERA_L1_TILEBASE
     lda #$00
     sta VERA_L1_HSCR_L
@@ -174,7 +174,7 @@ vera_load_font:
     lda #CHARSET_VRAM_H
     sta VERA_ADDR_H
 
-    ldx #8                      ; 8 pages = 2048 bytes (128 chars * 16 lines)
+    ldx #FONT_PAGES             ; pages × 256 bytes = 128 chars × TILE_HEIGHT bytes
     ldy #$00
 @src_ptr:
 @copy_loop:

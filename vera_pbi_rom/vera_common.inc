@@ -90,13 +90,31 @@ CHARSET_VRAM_M          = >CHARSET_ADDR             ; glyph VRAM address byte 1
 CHARSET_VRAM_H          = (VERA_INC1|^CHARSET_ADDR) ; glyph ADDR_H with increment
 
 ; ============================================================================
+; Font / viewport configuration — select at build time:
+;   make FONT_SIZE=8x8   →  80×60 viewport (8-pixel-tall tiles)
+;   make FONT_SIZE=8x16  →  80×30 viewport (16-pixel-tall tiles, default)
+; Pass -D FONT_8X8=1 to ca65 to activate the 8×8 path.
+; ============================================================================
+
+.ifdef FONT_8X8
+TILE_HEIGHT             = 8                         ; tile height in pixels
+FONT_PAGES              = 4                         ; 128 chars ×  8 bytes = 1024 = 4 × 256
+SCREEN_ROWS             = 60                        ; visible rows  (480 ÷  8)
+SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9)        ; L1_TILEBASE: bit1=0 → 8px tile height
+.else
+TILE_HEIGHT             = 16                        ; tile height in pixels
+FONT_PAGES              = 8                         ; 128 chars × 16 bytes = 2048 = 8 × 256
+SCREEN_ROWS             = 30                        ; visible rows  (480 ÷ 16)
+SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2   ; L1_TILEBASE: bit1=1 → 16px tile height
+.endif
+
+; ============================================================================
 ; Viewport and tilemap dimensions
 ; ============================================================================
 
 MAP_COLS                = 128                       ; tilemap width  in cells (256 bytes/row stride)
 MAP_ROWS                = 64                        ; tilemap height in cells
 SCREEN_COLS             = 80                        ; visible columns (viewport width)
-SCREEN_ROWS             = 30                        ; visible rows    (viewport height)
 SCREEN_COLS_VIEW        = SCREEN_COLS               ; alias (retained for source compatibility)
 SCREEN_ROWS_VIEW        = SCREEN_ROWS               ; alias (retained for source compatibility)
 TEXT_COLOR              = $61                       ; default text colour byte (fg/bg nibbles)

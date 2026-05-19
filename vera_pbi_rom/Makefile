@@ -16,6 +16,13 @@ PYTHON   ?= python3
 ASFLAGS    = --cpu 6502 --feature labels_without_colons
 SYSASFLAGS = $(ASFLAGS) -D __ATARIXL__ -D SHRAM_HANDLERS
 
+# Font/viewport selection: 8x8 → 80×60, 8x16 → 80×30 (default)
+# Usage: make FONT_SIZE=8x8   or   make FONT_SIZE=8x16
+FONT_SIZE  ?= 8x16
+ifeq ($(FONT_SIZE),8x8)
+  SYSASFLAGS += -D FONT_8X8=1
+endif
+
 # --- PBI ROM (unchanged) -----------------------------------------------------
 
 TARGET   = vera_pbi_handler.rom
@@ -71,7 +78,7 @@ all: $(TARGET) $(SYS)
 # === PBI ROM ================================================================
 
 $(OBJ): $(SRC)
-	$(CA65) $(ASFLAGS) -o $(OBJ) $(SRC)
+	$(CA65) $(ASFLAGS) -D FONT_8X8=1 -o $(OBJ) $(SRC)
 
 $(TARGET): $(OBJ) $(CFG)
 	$(LD65) -C $(CFG) --mapfile $(MAPFILE_ROM) -vm -o $(TARGET) $(OBJ)
