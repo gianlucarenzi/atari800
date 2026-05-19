@@ -249,6 +249,12 @@ _VeraPutByte:
     and #($FF - VCTL_FLAG_ESCAPE)
     sta _vera_ctl_block + VERACTL_FLAGS
     pla
+    ; Honour bit 7 (inverse video) exactly like the default printable path.
+    pha
+    and #$80
+    sta putc_inverse
+    pla
+    and #$7F
     jsr print_literal
     jmp @done_putc
 @not_escaped:
