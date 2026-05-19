@@ -296,5 +296,38 @@ jsr _vera_trigger_click
 
 Il click scatta ad ogni pressione fisica di tasto (incluse le CAPS toggle), esattamente come nel driver OS `emuos`. L'utente può disabilitarlo con `POKE 731,1`, ripristinarlo con `POKE 731,0`.
 
+---
+
+### Correzione bug percorso ESC: caratteri ≥ 128 e reverse video (`vera_driver.s`)
+
+**Sintomo:** il programma di test `10 FOR I=0 TO 255:PRINT CHR$(27);CHR$(I);:NEXT I` mostrava:
+- Caratteri 128–255: pixel casuali invece del glifo in reverse video.
+- Caratteri 0–31: non visualizzati (problema di contenuto font, vedi sotto).
+
+**Causa:** il percorso ESC in `_VeraPutByte` chiamava `jsr print_literal` con il byte grezzo, senza estrarre il bit 7. Per indici ≥ 128, VERA cercava il glifo a posizioni 128–255 della tabella font, che contiene solo 128 glifi (0–127): l'accesso cadeva fuori area, leggendo VRAM non inizializzata → pixel casuali. Inoltre, `putc_inverse` non veniva impostato, rendendo impossibile il reverse video anche per i caratteri validi.
+
+**Fix (stessa logica del percorso stampabile standard):**
+
+```asm
+; Percorso ESC — prima del fix:
+pla
+jsr print_literal
+jmp @done_putc
+
+; Dopo il fix:
+pla
+pha
+and #$80
+sta putc_inverse        ; $80 = inverse, $00 = normale
+pla
+and #$7F                ; riconduce l'indice nel range 0–127
+jsr print_literal
+jmp @done_putc
+```
+
+**Font e caratteri 0–31:** i font di partenza derivati da PC (VGA/Unicode) hanno i caratteri 0–31 tutti a zero, perché in ASCII/Unicode quelle posizioni sono codici di controllo privi di glifo. In ATASCII, invece, 0–31 sono caratteri semigrafici stampabili (bordi, frecce, ecc.). La soluzione è popolare quelle posizioni nel font editor (`vera_font_editor.py`) prima di ricompilare il driver.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
