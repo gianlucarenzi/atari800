@@ -82,27 +82,16 @@ _vera_save_c_sp:
 ; ============================================================================
 
 _vera_cursor_invalidate:
-    pha
-    txa
-    pha
-    tya
-    pha
-    lda VERA_CTRL
-    pha
     lda cursor_drawn
     beq @done
+    pha
     lda VERA_CTRL
-    and #VERA_ADDRSEL_CLEAR
-    sta VERA_CTRL
+    pha
     jsr cursor_erase                ; restores saved char/color, sets drawn=0
-@done:
     pla
     sta VERA_CTRL
     pla
-    tay
-    pla
-    tax
-    pla
+@done:
     rts
 
 
@@ -130,6 +119,8 @@ _vera_warm_start:
 ; so foreground VRAM writes are never interrupted.
 ; ============================================================================
 
+vbi_counter:      .res 1        ; counter to skip some VBI ticks
+
 _vbi_handler:
     lda CRITIC
     beq @ok
@@ -141,8 +132,16 @@ _vbi_handler:
     tya
     pha
 
-    jsr cursor_tick
+    ; Click tick runs every VBI (60Hz) for responsiveness
     jsr click_tick
+
+    ; Cursor tick runs every 4th VBI (approx 15Hz)
+    inc vbi_counter
+    lda vbi_counter
+    and #3
+    bne @skip_cursor
+    jsr cursor_tick
+@skip_cursor:
 
     pla
     tay
