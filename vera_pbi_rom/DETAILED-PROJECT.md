@@ -235,5 +235,66 @@ Aggiunte rilevanti:
 - Tabella completa dei codici di controllo ATASCII
 - Offset `VERACTL_*` e bitmask `VCTL_FLAG_*`
 
+---
+
+### Parametrizzazione build: font 8×16 (80×30) o 8×8 (80×60)
+
+Il driver supporta due modalità di visualizzazione selezionabili a tempo di build tramite la variabile `FONT_SIZE` del Makefile:
+
+| `FONT_SIZE` | Tile | Viewport | Comando |
+|---|---|---|---|
+| `8x16` (default) | 8×16 px | 80 × 30 righe | `make` oppure `make FONT_SIZE=8x16` |
+| `8x8` | 8×8 px | 80 × 60 righe | `make FONT_SIZE=8x8` |
+
+**Implementazione:**
+
+La selezione è centralizzata in un unico blocco condizionale all'inizio di `vera_common.inc`, prima della sezione delle dimensioni viewport. Quando il Makefile passa `-D FONT_8X8=1` a ca65, il blocco `.ifdef FONT_8X8` definisce:
+- `TILE_HEIGHT = 8`, `FONT_PAGES = 4`, `SCREEN_ROWS = 60`
+- `SCREEN_TILEBASE_REG = <(CHARSET_ADDR>>9)` — registro L1_TILEBASE senza il bit 1 (tile height = 8 px)
+
+Il ramo `.else` (default 8×16) definisce:
+- `TILE_HEIGHT = 16`, `FONT_PAGES = 8`, `SCREEN_ROWS = 30`
+- `SCREEN_TILEBASE_REG = <(CHARSET_ADDR>>9) | 2` — bit 1 = 1 (tile height = 16 px)
+
+Le costanti `SCREEN_ROWS_VIEW = SCREEN_ROWS` e `SCREEN_COLS_VIEW = SCREEN_COLS` (invariato a 80) propagano automaticamente la scelta a tutti i bounds check di scroll, cursore e margini in `vera_driver.s`, `vera_sys_vbi.s` e `vera_sys_es_hook.s` senza ulteriori modifiche.
+
+Le due sole righe modificate nel driver sono:
+- `vera_driver.s` — `vera_init_hw`: `lda #SCREEN_TILEBASE_REG` (sostituisce `lda #(SCREEN_TILEBASE | 2)`)
+- `vera_driver.s` — `vera_load_font`: `ldx #FONT_PAGES` (sostituisce `ldx #8`)
+
+In `vera_sys_font.s` il `.incbin` è condizionale: include `font8x8.bin` (1024 B) o `font8x16.bin` (2048 B) in base alla stessa define.
+
+**Isolamento del ROM handler:**
+
+L'handler OS ROM (`vera_pbi_handler.s`) è sempre compilato con `-D FONT_8X8=1` forzato nella sua regola Makefile, indipendentemente da `FONT_SIZE`. Questo garantisce che il ROM operi sempre nel contesto 8×8 / 80×60 — che è il suo comportamento hardware fisso — e non venga mai influenzato dalla scelta del driver. Il driver `vera_init_hw` sovrascrive poi i registri VERA con la configurazione corretta per la modalità compilata (le scritture sono idempotenti se le due modalità coincidono).
+
+---
+
+### Velocità tastiera e click audio (`vera_driver.s`, `vera_sys_es_hook.s`, `vera_common.inc`)
+
+**Velocità di ripetizione tasti:**
+
+Il driver imposta all'avvio valori più reattivi nelle variabili RAM XL/XE che governano la ripetizione tasti (`KRPDEL`/$02D9 e `KEYREP`/$02DA), già definite in `atari.inc`. Le costanti configurabili in `vera_common.inc` sono:
+
+| Costante | Valore | Frame a 60Hz | Tempo | Default OS |
+|---|---|---|---|---|
+| `KBD_KRPDEL_FAST` | `$18` | 24 | ≈ 0.4 s | `$30` = 0.8 s |
+| `KBD_KEYREP_FAST` | `$03` |  3 | ≈ 0.05 s (20 cps) | `$06` = 0.1 s |
+
+Le scritture avvengono in `_vera_warm_reinit` subito dopo `vera_load_font`, prima di qualsiasi output sullo schermo. Essendo variabili RAM ordinarie, l'utente può sovrascriverle in qualsiasi momento da BASIC (`POKE 729,X` / `POKE 730,X`) senza reboot.
+
+**Click audio:**
+
+L'infrastruttura POKEY per il click (`_vera_trigger_click` / `click_tick` nel VBI) era già presente e funzionante, ma non veniva mai invocata. Nel loop di polling della tastiera (`vera_sys_es_hook.s`), subito dopo il consumo di `CH`, è stato aggiunto il controllo del flag OS `NOCLIK` ($02DB) e la chiamata al click:
+
+```asm
+lda NOCLIK
+bne @no_click
+jsr _vera_trigger_click
+@no_click:
+```
+
+Il click scatta ad ogni pressione fisica di tasto (incluse le CAPS toggle), esattamente come nel driver OS `emuos`. L'utente può disabilitarlo con `POKE 731,1`, ripristinarlo con `POKE 731,0`.
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
