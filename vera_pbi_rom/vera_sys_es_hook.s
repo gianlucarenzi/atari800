@@ -261,7 +261,7 @@ vera_editor_open:
     sta NMIEN                   ; restore NMI enables
     lda #0
     sta LMARGN
-    lda #79
+    lda #SCREEN_COLS_VIEW - 1
     sta RMARGN
     ldy #1
     rts
@@ -273,7 +273,7 @@ vera_editor_open:
 vera_screen_open:
     lda #0
     sta LMARGN
-    lda #79
+    lda #SCREEN_COLS_VIEW - 1
     sta RMARGN
     ldy #1
     rts
@@ -539,7 +539,7 @@ install_e:
     lda vera_editor_get_minus1 + 1
     sta _vera_editrv + GET_BYTE_OFFSET + 1
 
-    ; Install our OPEN handler (sets LMARGIN/RMARGIN = 0/79).
+    ; Install our OPEN handler (sets LMARGIN/RMARGIN = 0/SCREEN_COLS_VIEW).
     lda vera_editor_open_minus1
     sta _vera_editrv + OPEN_BYTE_OFFSET
     lda vera_editor_open_minus1 + 1

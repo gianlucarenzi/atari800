@@ -618,7 +618,8 @@ do_bell:
 
 
 ; ----------------------------------------------------------------------------
-; do_tab — ATASCII TAB ($7F): advance X to next multiple of 8, clamp at 79.
+; do_tab — ATASCII TAB ($7F): advance X to next multiple of 8, and
+; clamp at SCREEN_COLS_VIEW.
 ; ----------------------------------------------------------------------------
 
 do_tab:
@@ -783,9 +784,10 @@ do_insert_line:
 
 
 ; ----------------------------------------------------------------------------
-; do_delete_char — ATASCII $FE: shift cells cursor_x+1..79 left, blank col 79.
-; Uses DATA0/DATA1 with sequential read/write: set DATA0 one cell ahead of
-; DATA1, read from DATA0 then write to DATA1 in each iteration.
+; do_delete_char — ATASCII $FE: shift cells cursor_x+1..SCREEN_COLS_VIEW left,
+; blank col SCREEN_COLS_VIEW. Uses DATA0/DATA1 with sequential read/write:
+; set DATA0 one cell ahead of DATA1, read from DATA0 then write to DATA1
+; in each iteration.
 ; ----------------------------------------------------------------------------
 
 do_delete_char:
@@ -825,7 +827,7 @@ do_delete_char:
     sec
     sbc _vera_ctl_block + VERACTL_CURSOR_X
     asl a
-    beq @dc_blank                       ; cursor already at col 79
+    beq @dc_blank                       ; cursor already at col SCREEN_COLS_VIEW
     tay
 @dc_copy:
     lda #$00
@@ -840,7 +842,7 @@ do_delete_char:
     bne @dc_copy
 
 @dc_blank:
-    ; Blank column 79.
+    ; Blank column SCREEN_COLS_VIEW.
     lda #$00
     sta VERA_CTRL
     lda #((SCREEN_COLS_VIEW - 1) * 2)
