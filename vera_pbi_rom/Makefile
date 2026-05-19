@@ -134,13 +134,20 @@ $(AUTORUN): $(SYS)
 DOS20DIR     = .dos20
 DOS20EXTRACT = extract_dos20.py
 
+TEST_SRC = ../test_font.c
+TEST_EXE = TEST.COM
+
+$(TEST_EXE): $(TEST_SRC)
+	cl65 -t atari -o $(TEST_EXE) $(TEST_SRC)
+
 $(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
 	$(PYTHON) $(DOS20EXTRACT)
 
-atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS
+atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS $(TEST_EXE)
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
 	cp $(AUTORUN) $(ATRBUILD)/$(AUTORUN)
+	cp $(TEST_EXE) $(ATRBUILD)/
 	cp $(DOS20DIR)/DOS.SYS $(DOS20DIR)/DUP.SYS $(ATRBUILD)/
 	$(DIR2ATR) -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
