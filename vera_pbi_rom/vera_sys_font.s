@@ -5,4 +5,4 @@
     .segment "RODATA"
 
 _vera_x16_font:
-    .incbin "x16_font16.bin"
+    .incbin "font8x16.bin"
