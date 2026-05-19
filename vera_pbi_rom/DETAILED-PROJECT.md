@@ -179,7 +179,30 @@ Perché questa soluzione è robusta:
 
 ---
 
-### Funzionamento standalone di VERA.SYS senza ROM PBI (`vera_driver.s`)
+### Bug del Backspace limitato nell'Editor (`vera_sys_es_hook.s`)
+
+**Sintomo:** Durante l'editing di una riga, il tasto Backspace smetteva di cancellare non appena si raggiungeva il punto in cui il cursore era stato riposizionato manualmente (ad esempio dopo essersi spostati con le frecce). L'utente era costretto a usare le frecce per tornare indietro, rompendo il flusso naturale dello "Screen Editor".
+
+**Causa radice:** L'handler `E:` manteneva variabili locali (`input_col0`, `input_wr`) per tracciare l'inizio della sessione di input corrente e imponeva un blocco artificiale al Backspace basato su queste. Poiché le frecce cursore resettavano queste variabili alla nuova posizione X, il driver "dimenticava" che la riga logica continuava a sinistra.
+
+**Correzione:** Rimosse le variabili `input_col0` e `input_wr` e la relativa logica di clamping. Il driver ora permette al Backspace di retrocedere liberamente fino al margine sinistro (`LMARGN`). La coerenza dei dati è garantita dal fatto che, alla pressione di RETURN, l'intero contenuto della riga viene comunque scansionato direttamente dalla VRAM di VERA.
+
+---
+
+### Allineamento dinamico dei banner di boot (`vera_driver.s`, `vera_pbi_handler.s`)
+
+**Sintomo:** Le scritte del banner apparivano disallineate o troppo a sinistra (colonna 0) a causa dell'uso di valori non inizializzati o hardcoded.
+
+**Correzione:**
+1.  **Driver (`vera_driver.s`):** La scritta "DEVICE DRIVER INSTALLED" ora preleva la colonna di inizio dalla locazione OS `LMARGN` ($52), garantendo l'allineamento con il resto del sistema.
+2.  **ROM PBI (`vera_pbi_handler.s`):** Le routine `PRINT_VERSION_LINE` e `PRINT_HOST_LINE` sono state aggiornate per leggere `LMARGN` a runtime invece di usare il valore fisso colonna 2.
+3.  **Posizionamento:** La riga del banner del driver è stata spostata alla riga **5** (tramite `READY_ROW` in `vera_common.inc`) per posizionarsi correttamente sotto le informazioni della ROM.
+
+---
+
+### Consolidamento e pulizia
+*   **`vera_common.inc`:** Riallineamento estetico rigoroso (simboli a 24 caratteri, '=' a colonna 25) per migliorare la manutenibilità.
+*   **Refactoring:** Rimossi i residui di codice inutilizzato dopo la semplificazione della routine di input.
 
 **Sintomo:** Avviando VERA.SYS senza la ROM PBI handler (`vera_pbi_handler.rom`), lo sfondo risultava blu ma i caratteri erano invisibili. I comandi venivano comunque eseguiti (al buio).
 
