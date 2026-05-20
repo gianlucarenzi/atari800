@@ -6,6 +6,7 @@
     .export _vera_trigger_click
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
+    .import _vera_kbd_repeat_tick
 
     .include "vera_common.inc"
     .include "atari.inc"
@@ -134,6 +135,9 @@ _vbi_handler:
 
     ; Click tick runs every VBI (60Hz) for responsiveness
     jsr click_tick
+
+    ; Keyboard repeat tick runs every VBI; pushes held-key events to ring buffer.
+    jsr _vera_kbd_repeat_tick
 
     ; Cursor tick runs every 4th VBI (approx 15Hz)
     inc vbi_counter

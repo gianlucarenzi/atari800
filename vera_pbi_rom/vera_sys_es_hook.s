@@ -19,6 +19,8 @@
     .export _VeraPutByte
     .export _vera_saved_dosini, _vera_saved_casini
     .export _install_es_hooks
+    .export _vera_kbd_irq_handler
+    .export _vera_kbd_repeat_tick
 
     .import _CallVeraApiService
     .import _vera_ctl_block
@@ -108,6 +110,16 @@ input_rd:               .res 1      ; read index (returned to caller)
 input_ready:            .res 1      ; $FF = buffer has data, $00 = need input
 caps_lock_state:        .res 1      ; $FF = CAPS active, $00 = inactive
 
+; POKEY keyboard IRQ ring buffer — holds translated ATASCII chars, 16 slots.
+; Indices wrap modulo 16 (and #$0F). Full: (wr+1)&$0F == rd. Empty: wr == rd.
+kbd_ring_buf:           .res 16
+kbd_ring_wr:            .res 1      ; write index — updated only by IRQ handler
+kbd_ring_rd:            .res 1      ; read index  — updated only by GET handler
+
+; Key-repeat state — maintained by _vera_kbd_irq_handler / _vera_kbd_repeat_tick.
+kbd_repeat_raw:         .res 1      ; raw KBCODE of last pressed key ($FF = none)
+kbd_repeat_cnt:         .res 1      ; countdown to next repeat event
+
     .segment "DATA"
 
 ; Pre-computed handler addresses (addr - 1) stored as .word so the relocator
@@ -166,6 +178,190 @@ kbcode_table:
     .byte $06, $08, $04, $80, $84, $07, $13, $01
 
     .segment "CODE"
+
+; ============================================================================
+; _vera_kbd_irq_handler — POKEY keyboard IRQ (VKEYBD vector).
+;
+; Called by the OS IRQ dispatcher on every new (debounced) keypress.
+; Reads raw KBCODE, translates via kbcode_table, applies CAPS LOCK, then
+; pushes the resulting ATASCII char into kbd_ring_buf (if not full).
+; Also resets the key-repeat countdown.
+; Does NOT call the original VKEYBD handler — we own the keyboard pipeline.
+; Interrupts are disabled by the CPU for the duration (standard 6502 IRQ).
+; ============================================================================
+
+_vera_kbd_irq_handler:
+    ; OS IRQ handler did: pha (save A), then jmp (vkeybd).
+    ; Stack on entry: [A_saved, P_irq, PC_lo, PC_hi, ...]
+    ; X and Y are NOT saved by the OS — we save them here.
+    txa
+    pha                     ; save X
+    tya
+    pha                     ; save Y
+
+    lda KBCODE              ; raw: bits 5-0=scan, bit6=SHIFT, bit7=CTRL
+    tay                     ; Y = raw code kept for repeat tracking
+
+    lda kbcode_table, y     ; A = ATASCII translation
+
+    ; CAPS toggle keys ($82/$83/$84): flip state, push nothing.
+    cmp #$82
+    beq @caps_tog
+    cmp #$83
+    beq @caps_tog
+    cmp #$84
+    beq @caps_tog
+    jmp @apply_caps
+
+@caps_tog:
+    lda caps_lock_state
+    eor #$FF
+    sta caps_lock_state
+    jmp @rts_exit
+
+@apply_caps:
+    ; Flip case for a-z / A-Z when CAPS is active.
+    pha
+    and #$DF                ; convert to uppercase for range check
+    cmp #'A'
+    bcc @no_flip
+    cmp #'Z' + 1
+    bcs @no_flip
+    bit caps_lock_state
+    bpl @no_flip
+    pla
+    eor #$20                ; swap case
+    jmp @push_char
+@no_flip:
+    pla
+
+@push_char:
+    ; A = final char, Y = raw KBCODE. X free (saved on stack at entry).
+    tax                         ; X = char — preserve before full-check clobbers A
+    lda kbd_ring_wr
+    clc
+    adc #1
+    and #$0F                    ; A = (wr+1)&$0F
+    cmp kbd_ring_rd
+    beq @rts_exit               ; buffer full — drop key
+
+    pha                         ; save new wr
+    txa                         ; A = char
+    ldx kbd_ring_wr
+    sta kbd_ring_buf, x         ; store char at current slot
+    pla                         ; A = new wr
+    sta kbd_ring_wr             ; advance wr
+
+    ; Prime repeat: save raw code and load initial delay.
+    sty kbd_repeat_raw
+    lda KRPDEL
+    sta kbd_repeat_cnt
+
+@rts_exit:
+    pla
+    tay                     ; restore Y
+    pla
+    tax                     ; restore X
+    pla                     ; restore A (the one OS pushed before jmp (vkeybd))
+    rti
+
+
+; ============================================================================
+; _install_kbd_irq — point VKEYBD at our handler using the EXPORTS table
+; (direct label refs would generate 2-byte immediates that the relocator
+; cannot patch; EXPORTS uses 3-byte absolute addressing).
+; Safe to call multiple times (idempotent).
+; ============================================================================
+
+_install_kbd_irq:
+    lda __VERA_EXPORTS__ + EXP_KBD_HANDLER
+    sta VKEYBD
+    lda __VERA_EXPORTS__ + EXP_KBD_HANDLER + 1
+    sta VKEYBD + 1
+    rts
+
+
+; ============================================================================
+; _vera_kbd_repeat_tick — called from the deferred VBI every frame.
+;
+; If kbd_repeat_raw is not KEY_NONE and SKSTAT bit 2 shows a key still
+; pressed with the same raw code, decrements kbd_repeat_cnt. When the
+; counter reaches zero, pushes a repeat event to kbd_ring_buf and resets
+; to KEYREP interval.
+;
+; Uses SEI/CLI around the ring push because the deferred VBI runs with
+; interrupts enabled — the keyboard IRQ could otherwise race on kbd_ring_wr.
+; Clobbers A, X, Y (caller — the VBI handler — already saves them).
+; ============================================================================
+
+_vera_kbd_repeat_tick:
+    lda kbd_repeat_raw
+    cmp #KEY_NONE           ; $FF means no key tracked
+    beq @done
+
+    ; Is a key currently pressed? SKSTAT bit 2 = 0 → yes (active low).
+    lda SKSTAT
+    and #$04
+    bne @key_gone           ; bit 2 set → no key held → cancel repeat
+
+    ; Still the same physical key?
+    lda KBCODE
+    cmp kbd_repeat_raw
+    bne @key_gone
+
+    ; Decrement repeat counter.
+    dec kbd_repeat_cnt
+    bne @done
+
+    ; Counter expired — push a repeat char.
+    tay                     ; Y = current raw KBCODE
+    lda kbcode_table, y
+
+    ; Apply CAPS LOCK for repeat char too.
+    pha
+    and #$DF
+    cmp #'A'
+    bcc @no_caps_rep
+    cmp #'Z' + 1
+    bcs @no_caps_rep
+    bit caps_lock_state
+    bpl @no_caps_rep
+    pla
+    eor #$20
+    jmp @push_rep
+@no_caps_rep:
+    pla
+
+@push_rep:
+    ; A = repeat char. Protect ring write against concurrent keyboard IRQ.
+    sei
+    tax                         ; X = char — preserve before full-check clobbers A
+    lda kbd_ring_wr
+    clc
+    adc #1
+    and #$0F                    ; A = (wr+1)&$0F
+    cmp kbd_ring_rd
+    beq @full_rep               ; buffer full — skip push but still reset counter
+    pha                         ; save new wr
+    txa                         ; A = char
+    ldx kbd_ring_wr
+    sta kbd_ring_buf, x         ; store char at current slot
+    pla                         ; A = new wr
+    sta kbd_ring_wr             ; advance wr
+@full_rep:
+    cli
+
+    ; Reset to inter-key repeat interval.
+    lda KEYREP
+    sta kbd_repeat_cnt
+    rts
+
+@key_gone:
+    lda #KEY_NONE
+    sta kbd_repeat_raw
+@done:
+    rts
+
 
 ; ============================================================================
 ; _VeraPutByte — direct entry kept for callers that bypass HATABS.
@@ -317,63 +513,33 @@ vera_editor_get:
     sta input_rd
 
 @key_loop:
-    ; Allow deferred VBI (cursor blink) while waiting for keystroke.
+    ; Allow deferred VBI (cursor blink + key repeat) while waiting.
     lda #0
     sta CRITIC
 
 @poll:
-    lda CH                  ; $02FC: $FF = no key
-    cmp #$FF
-    beq @poll
+    ; Spin until the POKEY IRQ handler deposits a char in the ring buffer.
+    lda kbd_ring_rd
+    cmp kbd_ring_wr
+    beq @poll               ; ring empty — wait
 
-    ; Key available: consume it immediately to minimize missed inputs.
-    tay                     ; Y = raw code
-    lda #$FF
-    sta CH                  ; consume keypress
+    ; Drain one char from the ring buffer.
+    tax                     ; X = read index
+    lda kbd_ring_buf, x     ; A = char
+    tay                     ; Y = char (save before advancing rd)
+    inx
+    txa
+    and #$0F
+    sta kbd_ring_rd         ; advance read index
+    tya                     ; A = char (restore)
 
- @no_click:
-
-    lda kbcode_table, y     ; A = ATASCII translation of raw key code
-
-    ; Handle CAPS toggle
-    cmp #$82                ; CAPS
-    beq @toggle_caps
-    cmp #$83                ; SHIFT + CAPS
-    beq @toggle_caps
-    cmp #$84                ; CTRL + CAPS
-    beq @toggle_caps
-
-    ; Apply CAPS LOCK only for letters 'a'-'z' and 'A'-'Z'
-    pha
-    and #$DF                ; convert to uppercase for range check
-    cmp #'A'
-    bcc @no_caps_swap
-    cmp #'Z'+1
-    bcs @no_caps_swap
-    ; It's a letter! Check CAPS state.
-    bit caps_lock_state
-    bpl @no_caps_swap       ; CAPS is off
-    ; CAPS is on: swap case (bit 5)
-    pla
-    eor #$20
-    jmp @done_caps
-@no_caps_swap:
-    pla
-@done_caps:
-
+    ; A = final ATASCII char — dispatch on special codes.
     cmp #ATASCII_EOL
     beq @got_return
     cmp #ATASCII_BACKSPACE
     beq @got_backspace
-    jmp @not_special        ; avoid falling into toggle_caps
 
-@toggle_caps:
-    lda caps_lock_state
-    eor #$FF
-    sta caps_lock_state
-    jmp @poll               ; wait for next key
-
-@not_special:
+    ; All other chars (printable and cursor-movement): fall through.
     ; Cursor-movement codes $1C-$1F: move VERA cursor only.
     cmp #ATASCII_CURSOR_UP
     bcc @store_char
@@ -468,10 +634,14 @@ echo_to_vera:
 ; ============================================================================
 
 _install_es_hooks:
-    ; Reset GET line-buffer state so we never read stale LOWBSS on first call.
+    ; Reset GET line-buffer and ring-buffer state.
     lda #0
     sta input_ready
     sta input_rd
+    sta kbd_ring_wr
+    sta kbd_ring_rd
+    lda #KEY_NONE
+    sta kbd_repeat_raw
     lda #$FF
     sta caps_lock_state
 
@@ -504,6 +674,9 @@ _install_es_hooks:
     sta HATABS_PTR
     lda save_zp_cc
     sta HATABS_PTR+1
+
+    ; Install POKEY keyboard IRQ handler (replaces VKEYBD).
+    jsr _install_kbd_irq
     rts
 
 ; ----------------------------------------------------------------------------

@@ -168,6 +168,9 @@ COLCRS_OS               = $55                       ; OS cursor column (ZP shado
 HATABS_SIZE             = 99                        ; size in bytes of the HATABS table
 READY_ROW               = 5                         ; screen row where warm_reinit prints banner
 
+; EXPORTS table offset for kbd IRQ handler — must stay in sync with vera_stub.s.
+EXP_KBD_HANDLER         = 22                        ; _vera_kbd_irq_handler address in EXPORTS
+
 ; Keyboard repeat timing — written by the driver at init; user can POKE to override.
 ; KRPDEL ($02D9) and KEYREP ($02DA) are XL/XE OS RAM variables (defined in atari.inc).
 ; At 60 Hz: KBD_KRPDEL_FAST = 24 frames ≈ 0.4 s, KBD_KEYREP_FAST = 3 frames ≈ 0.05 s (20 cps)

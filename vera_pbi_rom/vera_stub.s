@@ -23,6 +23,7 @@
     .import _vera_warm_start
     .import _InitVbi
     .import _install_es_hooks
+    .import _vera_kbd_irq_handler
 
     .segment "EXPORTS"
 __VERA_EXPORTS__:
@@ -37,6 +38,7 @@ __VERA_EXPORTS__:
     .word _vera_ctl_block         ; +$10
     .word _InitVbi                ; +$12
     .word _install_es_hooks       ; +$14
+    .word _vera_kbd_irq_handler   ; +$16  EXP_KBD_HANDLER
 
     .segment "VCTL"
 _vera_ctl_block:

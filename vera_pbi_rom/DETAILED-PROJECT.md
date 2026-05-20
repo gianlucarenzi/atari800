@@ -325,7 +325,7 @@ jsr print_literal
 jmp @done_putc
 ```
 
-**Font e caratteri 0–31:** i font di partenza derivati da PC (VGA/Unicode) hanno i caratteri 0–31 tutti a zero, perché in ASCII/Unicode quelle posizioni sono codici di controllo privi di glifo. In ATASCII, invece, 0–31 sono caratteri semigrafici stampabili (bordi, frecce, ecc.). La soluzione è popolare quelle posizioni nel font editor (`vera_font_editor.py`) prima di ricompilare il driver.
+**Font e caratteri 0–31:** entrambi i font (`font8x8.bin` e `font8x16.bin`) sono stati aggiornati con `vera_font_editor.py` per includere i semigrafici ATASCII alle posizioni 0–31 (cornici, frecce, simboli). `ESC + CHR$(X)` funziona correttamente per tutti e 256 i caratteri ATASCII (128 normali + 128 inverse video).
 
 ---
 
@@ -345,6 +345,32 @@ jmp @done_putc
 
 1. **Rimozione Click:** Eliminata la chiamata a `_vera_trigger_click` dal polling loop della tastiera in `vera_sys_es_hook.s`.
 2. **Implementazione BELL (`vera_driver.s`):** La routine `do_bell` (associata al carattere ATASCII `$FD` / 253) ora invoca direttamente `_vera_trigger_click`. Questo permette ai programmi di generare un feedback sonoro esplicito tramite `PRINT CHR$(253);` pur mantenendo silenziosa la normale digitazione.
+
+---
+
+### Pipeline tastiera POKEY via IRQ diretto (`vera_sys_es_hook.s`, `vera_sys_vbi.s`)
+
+**Motivazione:** Il vecchio GET handler di `E:` interrogava la shadow OS `CH` ($02FC), che viene aggiornata dal VBI di sistema. Questo comportava un ritardo di un frame e dipendeva dall'handler VBI OS per il debouncing. Per rendere il driver completamente autonomo, la pipeline tastiera è stata riscritta sull'IRQ hardware POKEY diretto.
+
+**Architettura:**
+
+- **`_vera_kbd_irq_handler`** (VKEYBD = $0208): sostituisce l'handler OS `KeyboardIRQ`. Viene invocato dall'IRQ dispatcher OS (`irq816.s`) con la convenzione `pha; jmp (vkeybd)` — il dispatcher salva solo A sullo stack; il nostro handler salva e ripristina X e Y, esce con `pla; rti`. Legge il registro hardware `KBCODE` ($D209), traduce tramite `kbcode_table` (256 entry: 4 blocchi × 64 = unshifted / SHIFT / CTRL / CTRL+SHIFT), applica CAPS LOCK, e deposita il carattere ATASCII nel ring buffer.
+
+- **Ring buffer** (`kbd_ring_buf`, 16 slot, power-of-2): `kbd_ring_wr` aggiornato solo dall'IRQ, `kbd_ring_rd` aggiornato solo dal GET handler; pieno quando `(wr+1)&$0F == rd`. Nessuna contesa: il 6502 esegue gli IRQ con I=1, e il GET handler (foreground) usa SEI/CLI solo nel tick VBI.
+
+- **`_vera_kbd_repeat_tick`** (chiamato dal VBI differito ogni frame): se `SKSTAT` bit 2 = 0 (tasto tenuto) e `KBCODE` coincide con `kbd_repeat_raw`, decrementa `kbd_repeat_cnt`. A zero, emette un carattere di ripetizione e ricarica `KEYREP`. Usa SEI/CLI perché il VBI differito gira con interrupt abilitati e il ring può essere scritto concorrentemente dall'IRQ tastiera.
+
+- **GET handler (`vera_editor_get @poll`)**: semplice busy-wait su `kbd_ring_rd != kbd_ring_wr`; legge il carattere già tradotto e con CAPS applicato, avanza `kbd_ring_rd`.
+
+- **`_install_kbd_irq`**: scrive l'indirizzo rilocato di `_vera_kbd_irq_handler` (letto dalla EXPORTS table, che è già stata patchata dal relocator) in VKEYBD. Chiamata da `_install_es_hooks` al primo boot e ad ogni warm start.
+
+**Bug risolti durante lo sviluppo:**
+
+1. **Crash al primo tasto (schermo verde):** il dispatcher OS fa `pha; jmp (vkeybd)` — NON una JSR. Il primo tentativo usava `rts` come uscita; il 6502 saltava al valore di A salvato sull'stack (garbage). Correzione: uscita con `pla; rti`, salvando X e Y a mano all'entrata.
+
+2. **Ring buffer scriveva l'indice invece del carattere:** in `@push_char`, la sequenza `lda wr; adc #1; and #$0F` per il controllo "pieno" sovrascriveva A (che conteneva il carattere) prima di `sta kbd_ring_buf,x`. Correzione: `tax` (salva char in X) prima del calcolo di `new_wr`; `pha/pla` per proteggere `new_wr` durante la scrittura.
+
+3. **Stesso carattere garbage per ogni tasto (bug nel GET handler):** in `@poll`, dopo `lda kbd_ring_buf,x` (A = char), la sequenza `inx; txa; and #$0F; sta kbd_ring_rd` riscriveva A con il nuovo indice di lettura. Il dispatch successivo (`cmp #ATASCII_EOL` ecc.) operava sul valore dell'indice (1, 2, 3…) invece che sul carattere. Correzione: `tay` subito dopo `lda kbd_ring_buf,x` per salvare il carattere, `tya` dopo `sta kbd_ring_rd` per ripristinarlo in A.
 
 ---
 
