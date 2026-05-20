@@ -8,7 +8,7 @@
 
     .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
-    .import _vera_cursor_invalidate, cursor_draw
+    .import _vera_cursor_invalidate, cursor_draw, _vera_trigger_click
 
     .include "vera_common.inc"
     .include "atari.inc"
@@ -208,7 +208,6 @@ ReadyText:
 ; ============================================================================
 
 _CallVeraApiService:
-    sei
     lda #1
     sta CRITIC
     lda _vera_ctl_block + VERACTL_REQUEST
@@ -216,13 +215,11 @@ _CallVeraApiService:
     beq @do_putc
     lda #0
     sta CRITIC
-    cli
     rts
 @do_putc:
     jsr _VeraPutByte
     lda #0
     sta CRITIC
-    cli
     rts
 
 
@@ -621,11 +618,11 @@ do_cursor_right:
 
 
 ; ----------------------------------------------------------------------------
-; do_bell — ATASCII BELL ($FD): visual no-op (Phase 1A doesn't touch POKEY).
+; do_bell — ATASCII BELL ($FD): trigger a brief audio click.
 ; ----------------------------------------------------------------------------
 
 do_bell:
-    rts
+    jmp _vera_trigger_click
 
 
 ; ----------------------------------------------------------------------------

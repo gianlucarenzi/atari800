@@ -329,5 +329,25 @@ jmp @done_putc
 
 ---
 
+### Eliminazione lag tastiera e perdita caratteri (`vera_driver.s`)
+
+**Sintomo:** Durante la digitazione veloce, alcuni caratteri venivano persi (es. "Vera" diventava "Vra"). Il problema si accentuava durante operazioni video onerose come lo scroll.
+
+**Causa radice:** Il dispatcher API `_CallVeraApiService` utilizzava `sei` e `cli` per racchiudere l'intera operazione di rendering (inclusi gli scroll). Questo disabilitava gli interrupt della CPU per finestre temporali troppo lunghe, impedendo all'IRQ della tastiera di catturare i tasti premuti in rapida successione. Poiché l'hardware POKEY non ha un buffer FIFO, i tasti arrivati durante la `sei` venivano sovrascritti o persi.
+
+**Correzione:** Rimossi `sei` e `cli` da `_CallVeraApiService`. La protezione dell'integrità dei registri VERA rispetto al Vertical Blank Interrupt (VBI) è garantita dal flag `CRITIC`. Poiché l'handler della tastiera non accede all'hardware VERA, è sicuro permettere l'esecuzione degli IRQ durante il rendering video.
+
+---
+
+### Configurazione feedback audio: BELL vs Keyboard Click
+
+**Modifica:** Il feedback sonoro della tastiera ("click") è stato disabilitato per default per non interferire con la velocità di digitazione e per preferenza utente. È stata invece implementata la funzione BELL.
+
+1. **Rimozione Click:** Eliminata la chiamata a `_vera_trigger_click` dal polling loop della tastiera in `vera_sys_es_hook.s`.
+2. **Implementazione BELL (`vera_driver.s`):** La routine `do_bell` (associata al carattere ATASCII `$FD` / 253) ora invoca direttamente `_vera_trigger_click`. Questo permette ai programmi di generare un feedback sonoro esplicito tramite `PRINT CHR$(253);` pur mantenendo silenziosa la normale digitazione.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
+
