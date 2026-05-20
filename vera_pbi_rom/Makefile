@@ -138,7 +138,7 @@ TEST_SRC = ../test_font.c
 TEST_EXE = TEST.COM
 
 $(TEST_EXE): $(TEST_SRC)
-	cl65 -t atari -o $(TEST_EXE) $(TEST_SRC)
+	cl65 -t atari --start-addr 0x5000 -o $(TEST_EXE) $(TEST_SRC)
 
 $(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
 	$(PYTHON) $(DOS20EXTRACT)
