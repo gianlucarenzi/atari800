@@ -469,6 +469,134 @@ Per massimizzare la fluidità delle operazioni video intensive (scroll e editing
 
 ---
 
+---
+
+### Correzione range error 6502 nel dispatcher tasti (`vera_sys_es_hook.s`)
+
+**Sintomo (errore di build):** Dopo l'aggiunta di `check_cursor_warning` e del trampoline `@store_char_jmp`, ca65 emetteva:
+
+```
+vera_sys_es_hook.s:546: Error: Range error (132 not in [-128..127])
+```
+
+**Causa radice:** Il blocco di dispatch all'inizio del `@key_loop` usava `beq @got_return`, `beq @got_backspace`, ecc. per saltare ai rispettivi handler. Le nuove istruzioni inserite tra il punto di branch e i target avevano allungato la distanza oltre i 127 byte consentiti dal 6502.
+
+**Correzione:** Sostituite le quattro `beq` dirette con branch verso trampolines locali immediatamente adiacenti:
+
+```asm
+    cmp #ATASCII_EOL
+    beq @jmp_got_return
+    ...
+    jmp @dispatch_done
+@jmp_got_return:        jmp @got_return
+@jmp_got_backspace:     jmp @got_backspace
+@jmp_got_delete_char:   jmp @got_delete_char
+@jmp_got_insert_char:   jmp @got_insert_char
+@dispatch_done:
+```
+
+Il `jmp @dispatch_done` garantisce che il flusso normale salti i trampolines senza eseguirli.
+
+---
+
+### Avviso sonoro di prossimità a fine riga logica (`vera_sys_es_hook.s`)
+
+**Funzionalità:** Viene emesso un click BELL quando il cursore attraversa la soglia della colonna 75 sulla seconda riga fisica di una riga logica (posizione logica = 80 + 75 = 155), avvisando l'utente che sta per raggiungere il limite massimo di input (160 caratteri).
+
+**Implementazione:**
+
+- Nuova variabile BSS `warning_beep_state` ($FF = soglia raggiunta, $00 = sotto soglia).
+- Nuova routine `check_cursor_warning`: chiamata dopo ogni operazione che sposta il cursore (echo di caratteri, backspace, delete, insert). Calcola la posizione logica del cursore (`(Y - input_start_row) * 80 + X`), la confronta con `INPUT_LINE_MAX - 5` (155). Emette il click via `_vera_trigger_click` solo al **cambio di stato** (crossing bidirezionale), così non suona in modo continuo.
+- Se `input_on_row2 = $00` (riga singola), la routine azzera `warning_beep_state` senza fare nulla.
+
+---
+
+### Correzione posizionamento cursore dopo RETURN su riga logica a 2 righe (`vera_sys_es_hook.s`)
+
+**Sintomo:** Premendo RETURN mentre il cursore era sulla prima riga fisica (`input_start_row`) di una riga logica che si estendeva su 2 righe fisiche, il cursore atterrava su `input_start_row + 1` — cioè sulla seconda riga fisica della stessa riga logica precedente. Il successivo inserimento di testo sovrascriveva il contenuto già presente.
+
+**Causa radice:** `echo_to_vera(ATASCII_EOL)` chiama `cr_lf`, che fa semplicemente `CURSOR_Y++` dalla posizione corrente. Con `CURSOR_Y = input_start_row`, il risultato era `input_start_row + 1`, che è ancora dentro la riga logica.
+
+**Correzione:** Prima di chiamare `echo_to_vera(EOL)`, se `input_on_row2 = $FF`, il cursore viene esplicitamente posizionato su `input_start_row + 1`. Così `cr_lf` lo porta a `input_start_row + 2`, prima riga libera dopo la riga logica. Lo scroll (se necessario) è gestito da `cr_lf` come di consueto.
+
+```asm
+    lda input_on_row2
+    beq @ret_eol
+    lda input_start_row
+    clc
+    adc #1
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS
+@ret_eol:
+    lda #ATASCII_EOL
+    jsr echo_to_vera
+```
+
+---
+
+### Navigazione su righe precedenti: RETURN legge la riga logica completa (`vera_sys_es_hook.s`)
+
+**Sintomo:** Spostando il cursore su una riga logica precedente con i tasti freccia e premendo RETURN, il driver leggeva la riga sbagliata (quella dove era partita la sessione GET originale). Per le righe a 2 righe fisiche, veniva letta solo la prima riga.
+
+**Causa radice:** `input_start_row` e `input_on_row2` venivano impostati una volta sola all'inizio di ogni sessione GET (`@need_input`) e non venivano mai aggiornati quando il cursore si spostava su un'altra riga con i tasti cursore.
+
+**Architettura della soluzione:**
+
+Introdotte le seguenti variabili BSS:
+
+| Variabile | Descrizione |
+|---|---|
+| `session_start_row` | Riga di inizio della sessione GET corrente (mai cambia) |
+| `session_on_row2` | Replica `input_on_row2` per la riga di sessione (aggiornato su `@now_on_row2`) |
+| `input_start_col` | Colonna X di inizio input (per saltare il prompt `?`) |
+| `session_start_col` | Replica `input_start_col` per la riga di sessione |
+| `row2_map[SCREEN_ROWS_VIEW]` | Per ogni riga fisica: `$FF` se è la seconda riga di una riga logica |
+| `start_col_map[SCREEN_ROWS_VIEW]` | Per ogni riga fisica: colonna X di inizio input al momento del RETURN |
+
+**Aggiornamento `row2_map` e `start_col_map`:** Ad ogni RETURN, dopo lo strip del contenuto, viene aggiornato `row2_map[input_start_row + 1]` ($FF se il contenuto eccede la capacità di riga 1, $00 altrimenti) e `start_col_map[input_start_row]` con la colonna di inizio della sessione corrente.
+
+**Shift su scroll:** `_vera_scroll_hook` è stato esteso per shiftare di 1 posizione verso l'alto sia `row2_map` che `start_col_map` (parallelo allo shift del contenuto video), e per decrementare anche `session_start_row`.
+
+**`rederive_from_cursor`:** Nuova routine che re-imposta incondizionatamente `input_start_row`, `input_on_row2`, `input_start_col`, `input_full` e `warning_beep_state` dalla posizione corrente di `CURSOR_Y` e dalla `row2_map`:
+- Se `row2_map[CURSOR_Y] = $FF`: cursore sulla seconda riga → `input_start_row = CURSOR_Y - 1`, `input_on_row2 = $FF`
+- Altrimenti: `input_start_row = CURSOR_Y`; se `row2_map[CURSOR_Y + 1] = $FF` → `input_on_row2 = $FF`, altrimenti `$00`
+- In entrambi i casi carica `input_start_col = start_col_map[input_start_row]`
+
+Questa routine è chiamata all'inizio di `@got_return`, garantendo che la lettura VRAM usi sempre le coordinate corrette indipendentemente da dove il cursore si trova.
+
+**`rederive_if_navigated`:** Chiamata dopo ogni echo di tasto cursore. Se `CURSOR_Y < session_start_row` (cursore salito su una riga precedente), chiama `rederive_from_cursor` così le operazioni di editing (backspace, insert, delete) lavorano sulla riga logica corretta. Se `CURSOR_Y >= session_start_row` (cursore tornato sulla riga di sessione), ripristina `input_start_row`, `input_on_row2` e `input_start_col` dai valori di sessione salvati.
+
+---
+
+### Correzione inclusione del prompt `?` nel buffer INPUT (`vera_sys_es_hook.s`)
+
+**Sintomo:** Eseguendo `INPUT A$` in Atari BASIC, la stringa restituita conteneva il carattere `?` come primo carattere (es. `?CIAO MONDO` invece di `CIAO MONDO`).
+
+**Causa radice:** Atari BASIC invia `?` via CIO PUT BYTE prima di chiamare GET. Il cursore avanza a colonna 1. `@got_return` leggeva la VRAM dall'indirizzo colonna 0 (primo byte della riga) e restituiva il buffer a partire da `input_rd = 0`, includendo il `?`.
+
+**Correzione:** `input_start_col` (registrato a `@need_input` come `CURSOR_X` al momento dell'inizio GET) è usato come valore iniziale di `input_rd` invece di 0:
+
+```asm
+    lda input_start_col
+    sta input_rd            ; salta i caratteri del prompt all'inizio del buffer
+```
+
+Per garantire che l'EOL sia sempre accessibile anche nel caso di input vuoto (l'utente preme RETURN senza digitare nulla), X viene clamped a `input_start_col` prima di scrivere il terminatore:
+
+```asm
+@write_eol:
+    cpx input_start_col
+    bcs @eol_col_ok
+    ldx input_start_col     ; clamp: EOL non può essere prima del punto di inizio lettura
+@eol_col_ok:
+    lda #ATASCII_EOL
+    sta input_buf, x
+```
+
+Questo fix funziona correttamente per qualsiasi prompt (single char `?`, doppio `? `, nessun prompt con `input_start_col = 0`), ed è trasparente per la navigazione su righe precedenti grazie a `start_col_map` che memorizza la colonna originale di ogni riga già sottomessa.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 
