@@ -689,7 +689,17 @@ vera_editor_get:
 @write_eol:
     lda #ATASCII_EOL
     sta input_buf, x
-    ; Echo RETURN to advance cursor to next row on screen.
+    ; Echo RETURN to advance cursor to first row AFTER this logical line.
+    ; For a 2-row logical line the cursor may be on row 1; force it to row 2
+    ; first so cr_lf lands on input_start_row+2 rather than input_start_row+1.
+    lda input_on_row2
+    beq @ret_eol
+    lda input_start_row
+    clc
+    adc #1
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS
+@ret_eol:
     lda #ATASCII_EOL
     jsr echo_to_vera
     ; Mark buffer ready and return first char.
