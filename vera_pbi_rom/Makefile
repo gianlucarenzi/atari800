@@ -134,7 +134,7 @@ $(AUTORUN): $(SYS)
 DOS20DIR     = .dos20
 DOS20EXTRACT = extract_dos20.py
 
-TEST_SRC = ../test_font.c
+TEST_SRC = vera-tests/test_font.c
 TEST_EXE = TEST.COM
 
 $(TEST_EXE): $(TEST_SRC)
