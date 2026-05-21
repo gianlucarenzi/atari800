@@ -15,7 +15,6 @@
     .setcpu "6502"
 
     .export _vera_editrv, _vera_screnv
-    .export _vera_orig_editor_put, _vera_orig_screen_put
     .export _VeraPutByte
     .export _vera_saved_dosini, _vera_saved_casini
     .export _install_es_hooks
@@ -91,8 +90,6 @@ HATABS_PTR       = $CB              ; 2 bytes ($CB/$CC), user-reserved area
 
 _vera_editrv:           .res 16     ; local copy of E: vector table
 _vera_screnv:           .res 16     ; local copy of S: vector table
-_vera_orig_editor_put:  .res 2      ; kept for potential future use (not chained)
-_vera_orig_screen_put:  .res 2      ; kept for potential future use (not chained)
 
 ; LOWBSS slots used by the DOSINI/CASINI chain (kept here historically because
 ; bootstrap and dosini.s both reference them via __VERA_EXPORTS__).
@@ -1335,12 +1332,6 @@ install_e:
     dey
     bpl @copy
 
-    ; Save original PUT BYTE pointer (kept for reference, not used for chaining).
-    lda _vera_editrv + PUT_BYTE_OFFSET
-    sta _vera_orig_editor_put
-    lda _vera_editrv + PUT_BYTE_OFFSET + 1
-    sta _vera_orig_editor_put + 1
-
     ; Install our PUT BYTE handler (replace, not chain).
     lda vera_editor_put_minus1
     sta _vera_editrv + PUT_BYTE_OFFSET
@@ -1404,11 +1395,6 @@ install_s:
     sta _vera_screnv, y
     dey
     bpl @copy
-
-    lda _vera_screnv + PUT_BYTE_OFFSET
-    sta _vera_orig_screen_put
-    lda _vera_screnv + PUT_BYTE_OFFSET + 1
-    sta _vera_orig_screen_put + 1
 
     lda vera_screen_put_minus1
     sta _vera_screnv + PUT_BYTE_OFFSET

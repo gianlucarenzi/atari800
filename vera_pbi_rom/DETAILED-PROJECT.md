@@ -448,6 +448,16 @@ Con `MAP_COLS = 128`, la prima iterazione parte da 127 (non da 255): il loop ese
 
 ---
 
+## Ottimizzazione Footprint e RAM di sistema
+
+Per massimizzare la memoria RAM disponibile per le applicazioni dell'utente, è stata intrapresa una fase di revisione del codice mirata a ridurre l'impronta (`footprint`) del driver in memoria.
+
+### Modifiche implementate:
+*   **Rimozione simboli obsoleti**: È stata eliminata la definizione e l'esportazione dei simboli `_vera_orig_editor_put` e `_vera_orig_screen_put` all'interno dell'handler `E:` (`vera_sys_es_hook.s`). Queste variabili venivano inizialmente previste come backup per un eventuale concatenamento degli handler (chaining), ma non venivano mai lette dal sistema.
+*   **Risultati**: La rimozione ha liberato **4 byte** nello spazio `LOWBSS` ed eliminato istruzioni di caricamento (`sta`) inutilizzate all'interno della routine di installazione degli hook, riducendo le dimensioni complessive del binario `VERA.SYS` e migliorando la manutenibilità del codice.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 
