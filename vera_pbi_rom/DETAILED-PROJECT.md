@@ -458,6 +458,17 @@ Per massimizzare la memoria RAM disponibile per le applicazioni dell'utente, è 
 
 ---
 
+### Ottimizzazioni micro-architetturali (Loop Unrolling)
+
+Per massimizzare la fluidità delle operazioni video intensive (scroll e editing), è stato applicato il *loop unrolling* alle routine più critiche.
+
+*   **Routine ottimizzate**: `scroll_up` (in `vera_driver.s`) e `bs_shift_and_blank` (in `vera_sys_es_hook.s`).
+*   **Dettagli**: Il loop di copia riga per riga è stato srotolato per processare 8 blocchi di dati (carattere + attributo) per iterazione, riducendo drasticamente il numero di cicli spesi per il controllo del contatore (`dey`) e il salto condizionato (`bne`).
+*   **Risultati**: La velocità di esecuzione delle operazioni di scorrimento video e di shift orizzontale durante l'editing è aumentata significativamente. 
+*   **Bilancio**: Queste modifiche hanno comportato un leggero aumento delle dimensioni del binario finale (`VERA.SYS`), un compromesso deliberato per migliorare la reattività dell'interfaccia utente a 80 colonne.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 

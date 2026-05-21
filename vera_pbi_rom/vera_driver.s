@@ -449,8 +449,22 @@ scroll_up:
     lda #VERA_ADDR_H_BASE
     sta VERA_ADDR_H
 
-    ldy #(SCREEN_COLS_VIEW * 2)         ; 160 bytes per row (80 char + 80 color)
+    ldy #(SCREEN_COLS_VIEW * 2 / 8)         ; 160 / 8 = 20 iterations
 @byte_loop:
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
     lda VERA_DATA0
     sta VERA_DATA1
     dey

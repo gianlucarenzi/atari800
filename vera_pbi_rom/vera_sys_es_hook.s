@@ -893,12 +893,40 @@ bs_shift_and_blank:
     lda #VERA_ADDR_H_BASE
     sta VERA_ADDR_H
 
-    ldy #((SCREEN_COLS_VIEW - 1) * 2)   ; 79 cells × 2 bytes
+    ldy #((SCREEN_COLS_VIEW - 1) * 2 / 8)   ; 158 / 8 = 19 iterations + 6 leftover
 @r2_shift:
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
     lda VERA_DATA0
     sta VERA_DATA1
     dey
     bne @r2_shift
+
+    ; 6 remaining bytes
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
+    lda VERA_DATA0
+    sta VERA_DATA1
 
     ; Blank row2[79].
     lda #$00
