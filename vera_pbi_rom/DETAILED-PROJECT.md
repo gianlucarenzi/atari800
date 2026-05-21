@@ -430,6 +430,24 @@ Con `MAP_COLS = 128`, la prima iterazione parte da 127 (non da 255): il loop ese
 
 ---
 
+### Correzione bug editing multi-riga e sincronizzazione scroll (`vera_sys_es_hook.s`, `vera_driver.s`)
+
+**Sintomo:** Durante l'input di una riga logica lunga (che occupa due righe fisiche), l'editing diventava incoerente se la schermata scorreva verso l'alto o se si utilizzavano i tasti `DELETE` o `INSERT`. Il Backspace poteva smettere di funzionare correttamente o puntare a righe fisiche errate.
+
+**Causa radice:**
+1.  **Perdita di sincronia fisica:** Il driver `E:` traccia la riga fisica di inizio input in `input_start_row`. Quando il sistema esegue uno scroll verso l'alto (es. premendo RETURN in fondo allo schermo o arrivando a fine riga nell'ultima riga dello schermo), tutto il contenuto video sale di una riga, ma `input_start_row` rimaneva invariato, puntando alla riga fisica precedente (ormai occupata da altro testo).
+2.  **Mancanza di logica multi-riga per DELETE/INSERT:** I tasti `DELETE CHAR` ($FE) e `INSERT CHAR` ($FF) non erano gestiti esplicitamente dal loop di input dell'editor, ricadendo nelle routine base del driver che operano su una singola riga fisica, ignorando il ponte tra riga 1 e riga 2 della riga logica.
+
+**Correzione:**
+1.  **Scroll Hook:** Aggiunta la routine `_vera_scroll_hook` nell'handler `E:`, esportata e richiamata dal driver `vera_driver.s` all'inizio di ogni operazione `scroll_up`. La routine decrementa `input_start_row` ad ogni scroll, mantenendo l'editor sempre allineato alla reale posizione fisica del testo in VRAM.
+2.  **Editing Logico:** Implementate le routine `do_logical_delete` e `do_logical_insert`. Queste routine gestiscono lo shift dei caratteri attraverso il confine tra le due righe fisiche (bridge):
+    *   In `DELETE`, se il cursore è sulla riga 1 e la riga logica prosegue sulla riga 2, il primo carattere della riga 2 viene "tirato" nella colonna 79 della riga 1.
+    *   In `INSERT`, se la riga logica occupa due righe fisiche, il carattere in colonna 79 della riga 1 viene "spinto" nella colonna 0 della riga 2.
+3.  **Ottimizzazione VRAM:** Refactoring di `bs_shift_and_blank` e `ins_shift_and_blank` per utilizzare i due data port indipendenti di VERA (`DATA0` e `DATA1`). Questo elimina la necessità di cambiare continuamente il registro `VERA_CTRL` durante lo shift di una riga, riducendo drasticamente il numero di accessi ai registri hardware e rendendo l'editing fluido anche a 80 colonne.
+4.  **Auto-decremento:** Introdotta la costante `VERA_ADDR_H_BASE_N1` in `vera_common.inc` per configurare l'auto-decremento di VERA (step -1), permettendo shift verso destra (INSERT) più efficienti senza ricalcoli manuali di indirizzo per ogni cella.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 

@@ -62,6 +62,7 @@ DEVICE_ID_MASK          = $80                       ; PBI card-ID bit (bit 7 of 
 
 VERA_INC0               = $00                       ; ADDR_H: no auto-increment
 VERA_INC1               = $10                       ; ADDR_H: auto-increment by 1
+VERA_INCN1              = $18                       ; ADDR_H: auto-decrement by 1 (step -1)
 
 VERA_DCSEL0             = $00                       ; CTRL: select display composer bank 0
 VERA_DCSEL1             = $02                       ; CTRL: select display composer bank 1
@@ -84,6 +85,7 @@ SCREEN_ADDR_M           = >SCREEN_ADDR              ; tilemap VRAM address mid  
 SCREEN_ADDR_BANK        = ^SCREEN_ADDR              ; tilemap VRAM address bank byte
 VERA_SCREEN_BASE_M      = SCREEN_ADDR_M             ; alias used in vera_driver.s
 VERA_ADDR_H_BASE        = (VERA_INC1|^SCREEN_ADDR)  ; ADDR_H preset for tilemap port
+VERA_ADDR_H_BASE_N1     = (VERA_INCN1|^SCREEN_ADDR) ; ADDR_H preset with step -1
 
 CHARSET_VRAM_L          = <CHARSET_ADDR             ; glyph VRAM address byte 0
 CHARSET_VRAM_M          = >CHARSET_ADDR             ; glyph VRAM address byte 1

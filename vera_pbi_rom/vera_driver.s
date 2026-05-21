@@ -8,7 +8,7 @@
 
     .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
-    .import _vera_cursor_invalidate, cursor_draw, _vera_trigger_click
+    .import _vera_cursor_invalidate, cursor_draw, _vera_trigger_click, _vera_scroll_hook
 
     .include "vera_common.inc"
     .include "atari.inc"
@@ -416,6 +416,7 @@ cr_lf:
 
 
 scroll_up:
+    jsr _vera_scroll_hook       ; keep E: logical-line tracking in sync
     jsr _vera_cursor_invalidate
     lda DMACTL                  ; Save ANTIC DMA state
     pha
