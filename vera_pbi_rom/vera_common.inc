@@ -107,7 +107,7 @@ SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9)        ; L1_TILEBASE: bit1=0 → 8p
 TILE_HEIGHT             = 16                        ; tile height in pixels
 FONT_PAGES              = 8                         ; 128 chars × 16 bytes = 2048 = 8 × 256
 SCREEN_ROWS             = 30                        ; visible rows  (480 ÷ 16)
-SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2   ; L1_TILEBASE: bit1=1 → 16px tile height
+SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2    ; L1_TILEBASE: bit1=1 → 16px tile height
 .endif
 
 ; ============================================================================
