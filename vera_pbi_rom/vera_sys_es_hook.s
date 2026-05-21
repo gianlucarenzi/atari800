@@ -114,7 +114,10 @@ input_full:             .res 1                  ; $FF = INPUT_LINE_MAX chars typ
 warning_beep_state:     .res 1                  ; $FF = beep triggered, $00 = silent
 session_start_row:      .res 1                  ; CURSOR_Y at @need_input (never changes mid-session)
 session_on_row2:        .res 1                  ; mirrors input_on_row2 for the active session line
+input_start_col:        .res 1                  ; CURSOR_X when input started (to skip prompt chars on read)
+session_start_col:      .res 1                  ; mirrors input_start_col for the active session
 row2_map:               .res SCREEN_ROWS_VIEW   ; $FF = this physical row is row 2 of a 2-row logical line
+start_col_map:          .res SCREEN_ROWS_VIEW   ; input_start_col per row (saved on RETURN)
 
 ; POKEY keyboard IRQ ring buffer — holds translated ATASCII chars, 16 slots.
 ; Indices wrap modulo 16 (and #$0F). Full: (wr+1)&$0F == rd. Empty: wr == rd.
@@ -520,6 +523,9 @@ vera_editor_get:
     lda _vera_ctl_block + VERACTL_CURSOR_Y
     sta input_start_row
     sta session_start_row
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta input_start_col
+    sta session_start_col
     lda #0
     sta input_on_row2
     sta session_on_row2
@@ -696,23 +702,34 @@ vera_editor_get:
 @found_end:
     inx
 @write_eol:
+    ; Clamp X to at least input_start_col so the EOL is reachable from input_rd.
+    cpx input_start_col
+    bcs @eol_col_ok
+    ldx input_start_col
+@eol_col_ok:
     lda #ATASCII_EOL
     sta input_buf, x
-    ; Update row2_map: mark/unmark the row after input_start_row based on
-    ; whether the stripped content exceeds one row (X = stripped length).
-    lda input_start_row
-    clc
-    adc #1
-    tay                         ; Y = input_start_row + 1
+    ; Save start_col_map[input_start_row] = input_start_col.
+    ldy input_start_row
+    lda input_start_col
+    sta start_col_map, y
+    ; Update row2_map[input_start_row+1]: 2-row iff stripped len > row-1 capacity.
+    lda #SCREEN_COLS_VIEW
+    sec
+    sbc input_start_col         ; A = row-1 capacity (SCREEN_COLS_VIEW - input_start_col)
+    sta input_full              ; borrow input_full as threshold
+    iny                         ; Y = input_start_row + 1
     cpy #SCREEN_ROWS_VIEW
     bcs @skip_row2_update
-    cpx #SCREEN_COLS_VIEW       ; carry set iff X >= SCREEN_COLS_VIEW → 2-row content
+    cpx input_full              ; X (EOL pos) >= threshold → 2-row content
     lda #0
     bcc @row2_map_store
     lda #$FF
 @row2_map_store:
     sta row2_map, y
 @skip_row2_update:
+    lda #0
+    sta input_full
     ; Echo RETURN to advance cursor to first row AFTER this logical line.
     ; For a 2-row logical line the cursor may be on row 1; force it to row 2
     ; first so cr_lf lands on input_start_row+2 rather than input_start_row+1.
@@ -726,10 +743,10 @@ vera_editor_get:
 @ret_eol:
     lda #ATASCII_EOL
     jsr echo_to_vera
-    ; Mark buffer ready and return first char.
+    ; Mark buffer ready; start returning from input_start_col to skip prompt chars.
     lda #$FF
     sta input_ready
-    lda #0
+    lda input_start_col
     sta input_rd
     jmp vera_editor_get
 
@@ -1101,6 +1118,16 @@ _vera_scroll_hook:
     bcc @shift_map
     lda #0
     sta row2_map + SCREEN_ROWS_VIEW - 1
+    ; Shift start_col_map up by 1.
+    ldx #0
+@shift_col_map:
+    lda start_col_map + 1, x
+    sta start_col_map, x
+    inx
+    cpx #(SCREEN_ROWS_VIEW - 1)
+    bcc @shift_col_map
+    lda #0
+    sta start_col_map + SCREEN_ROWS_VIEW - 1
     ; Decrement cursor-tracking rows (floor at 0).
     lda input_start_row
     beq @no_dec_start
@@ -1399,10 +1426,14 @@ rederive_from_cursor:
     ; This physical row is a continuation → logical start = cursor_y - 1.
     dex
     stx input_start_row
+    lda start_col_map, x
+    sta input_start_col
     lda #$FF
     jmp @rfc_store
 @rfc_row1:
     stx input_start_row
+    lda start_col_map, x
+    sta input_start_col
     inx
     cpx #SCREEN_ROWS_VIEW
     bcs @rfc_one_row
@@ -1443,6 +1474,8 @@ rederive_if_navigated:
     sta input_start_row
     lda session_on_row2
     sta input_on_row2
+    lda session_start_col
+    sta input_start_col
     lda #0
     sta input_full
     sta warning_beep_state
@@ -1479,12 +1512,15 @@ _install_es_hooks:
     sta input_full
     sta session_start_row
     sta session_on_row2
+    sta input_start_col
+    sta session_start_col
     sta kbd_ring_wr
     sta kbd_ring_rd
-    ; Clear row2_map.
+    ; Clear row2_map and start_col_map.
     ldx #(SCREEN_ROWS_VIEW - 1)
 @clear_row2_map:
     sta row2_map, x
+    sta start_col_map, x
     dex
     bpl @clear_row2_map
     lda #KEY_NONE
