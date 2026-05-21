@@ -519,7 +519,7 @@ do_clear:
     lda #VERA_ADDR_H_BASE       ; Bank 1, INC=1
     sta VERA_ADDR_H
 
-    ldy #0                      ; 256 bytes = 128 tiles
+    ldy #MAP_COLS               ; 128 tiles × 2 bytes = 256 bytes per row
 @col_loop:
     lda #' '
     sta VERA_DATA0

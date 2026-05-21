@@ -374,6 +374,62 @@ jmp @done_putc
 
 ---
 
+### Corruzione font alla prima riga: glifi 0–15 (8×16) o 0–31 (8×8) non stampabili (`vera_driver.s`)
+
+**Sintomo:** Il programma `test_font.c` — che invia `ESC + CHR$(i)` per `i=0..255` — mostrava garbage nei primi 256 byte del display invece dei glifi di test. Tutti i caratteri ASCII "normali" (32–127) apparivano correttamente; i caratteri con indice basso (0–15 per 8×16, 0–31 per 8×8) producevano pixel casuali.
+
+**Causa radice:** La routine `do_clear` in `vera_driver.s` usava il classico pattern 6502 per un loop di 256 iterazioni:
+
+```asm
+ldy #0
+@col_loop:
+    lda #' '
+    sta VERA_DATA0
+    lda #VERA_TEXT_COLOR
+    sta VERA_DATA0
+    dey
+    bne @col_loop
+```
+
+Con `ldy #0; dey` l'indice parte da −1 = 255 e scende: il loop esegue **256 iterazioni**. Ogni iterazione scrive 2 byte (char + color), producendo **512 byte per riga**.
+
+La tilemap VERA è però di soli **128 tile × 2 byte = 256 byte per riga**. I restanti 256 byte scritti da `do_clear` cadono nella riga successiva in VRAM. Per le righe 0–62 questo sovrascrive solo la parte iniziale della riga seguente (corretta poi dall'iterazione successiva del `@row_loop`). Per **la riga 63** (l'ultima, a VRAM offset `$1EF00`), i 256 byte in eccesso cadono a `$1F000–$1F0FF`, che è esattamente **`CHARSET_ADDR`**: i primi 256 byte del font in VRAM.
+
+Con font 8×16 (16 byte/glifo): 256 ÷ 16 = **16 glifi** corrotti → indici 0–15.
+Con font 8×8 (8 byte/glifo): 256 ÷ 8 = **32 glifi** corrotti → indici 0–31.
+
+La corruzione avveniva ad ogni `do_clear`, incluso il primo avvio tramite `_vera_warm_reinit` che chiama `do_clear` per ripulire lo schermo.
+
+**Evidenza:** La routine `_pbi_clear_screen` in `vera_pbi_handler.s` usava già correttamente `ldx #MAP_COLS` (128) nello stesso tipo di loop, confermando che `MAP_COLS` è il valore atteso.
+
+**Correzione (`vera_driver.s` — `do_clear`):** Sostituito `ldy #0` con `ldy #MAP_COLS`:
+
+```asm
+; Prima (bug — 256 iterazioni × 2 byte = 512 byte/riga):
+    ldy #0
+@col_loop:
+    lda #' '
+    sta VERA_DATA0
+    lda #VERA_TEXT_COLOR
+    sta VERA_DATA0
+    dey
+    bne @col_loop
+
+; Dopo (fix — 128 iterazioni × 2 byte = 256 byte/riga):
+    ldy #MAP_COLS               ; 128 tile × 2 byte = 256 byte per riga
+@col_loop:
+    lda #' '
+    sta VERA_DATA0
+    lda #VERA_TEXT_COLOR
+    sta VERA_DATA0
+    dey
+    bne @col_loop
+```
+
+Con `MAP_COLS = 128`, la prima iterazione parte da 127 (non da 255): il loop esegue esattamente 128 iterazioni per un totale di 256 byte per riga, senza mai sconfinare in `CHARSET_ADDR`. I glifi 0–31 (e le loro versioni in reverse video 128–159) sono ora stampabili correttamente via `ESC + CHR$(x)`.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 
