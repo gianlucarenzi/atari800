@@ -112,6 +112,9 @@ input_start_row:        .res 1                  ; CURSOR_Y when input started
 input_on_row2:          .res 1                  ; $FF = logical line extends to input_start_row+1
 input_full:             .res 1                  ; $FF = INPUT_LINE_MAX chars typed, only RETURN/BS allowed
 warning_beep_state:     .res 1                  ; $FF = beep triggered, $00 = silent
+session_start_row:      .res 1                  ; CURSOR_Y at @need_input (never changes mid-session)
+session_on_row2:        .res 1                  ; mirrors input_on_row2 for the active session line
+row2_map:               .res SCREEN_ROWS_VIEW   ; $FF = this physical row is row 2 of a 2-row logical line
 
 ; POKEY keyboard IRQ ring buffer — holds translated ATASCII chars, 16 slots.
 ; Indices wrap modulo 16 (and #$0F). Full: (wr+1)&$0F == rd. Empty: wr == rd.
@@ -516,8 +519,10 @@ vera_editor_get:
     sta input_rd
     lda _vera_ctl_block + VERACTL_CURSOR_Y
     sta input_start_row
+    sta session_start_row
     lda #0
     sta input_on_row2
+    sta session_on_row2
     sta input_full
 
 @key_loop:
@@ -563,6 +568,7 @@ vera_editor_get:
     cmp #ATASCII_CURSOR_RIGHT+1
     bcs @store_char_jmp
     jsr echo_to_vera
+    jsr rederive_if_navigated
     jsr check_cursor_warning
     jmp @key_loop
 
@@ -607,6 +613,7 @@ vera_editor_get:
 @now_on_row2:
     lda #$FF
     sta input_on_row2
+    sta session_on_row2
 @no_row_change:
     jmp @key_loop
 
@@ -629,6 +636,8 @@ vera_editor_get:
     jmp @key_loop
 
 @got_return:
+    ; Re-derive which logical line the cursor is on before reading VRAM.
+    jsr rederive_from_cursor
     ; Screen-editor model: read logical line from VRAM (1 or 2 physical rows).
     lda #1
     sta CRITIC
@@ -689,6 +698,21 @@ vera_editor_get:
 @write_eol:
     lda #ATASCII_EOL
     sta input_buf, x
+    ; Update row2_map: mark/unmark the row after input_start_row based on
+    ; whether the stripped content exceeds one row (X = stripped length).
+    lda input_start_row
+    clc
+    adc #1
+    tay                         ; Y = input_start_row + 1
+    cpy #SCREEN_ROWS_VIEW
+    bcs @skip_row2_update
+    cpx #SCREEN_COLS_VIEW       ; carry set iff X >= SCREEN_COLS_VIEW → 2-row content
+    lda #0
+    bcc @row2_map_store
+    lda #$FF
+@row2_map_store:
+    sta row2_map, y
+@skip_row2_update:
     ; Echo RETURN to advance cursor to first row AFTER this logical line.
     ; For a 2-row logical line the cursor may be on row 1; force it to row 2
     ; first so cr_lf lands on input_start_row+2 rather than input_start_row+1.
@@ -1067,9 +1091,24 @@ bs_shift_and_blank:
 ; ============================================================================
 
 _vera_scroll_hook:
+    ; Shift row2_map up by 1: row 0 scrolled off, bottom row is fresh.
+    ldx #0
+@shift_map:
+    lda row2_map + 1, x
+    sta row2_map, x
+    inx
+    cpx #(SCREEN_ROWS_VIEW - 1)
+    bcc @shift_map
+    lda #0
+    sta row2_map + SCREEN_ROWS_VIEW - 1
+    ; Decrement cursor-tracking rows (floor at 0).
     lda input_start_row
-    beq @done               ; already at top: cannot decrement
+    beq @no_dec_start
     dec input_start_row
+@no_dec_start:
+    lda session_start_row
+    beq @done
+    dec session_start_row
 @done:
     rts
 
@@ -1346,6 +1385,71 @@ check_cursor_warning:
     rts
 
 ; ============================================================================
+; rederive_from_cursor — unconditionally recompute input_start_row,
+; input_on_row2, input_full, warning_beep_state from the current CURSOR_Y and
+; row2_map. Called at RETURN time so navigating to any previous line and
+; pressing RETURN always reads the correct full logical line.
+; Clobbers A, X.
+; ============================================================================
+rederive_from_cursor:
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    tax
+    lda row2_map, x
+    beq @rfc_row1
+    ; This physical row is a continuation → logical start = cursor_y - 1.
+    dex
+    stx input_start_row
+    lda #$FF
+    jmp @rfc_store
+@rfc_row1:
+    stx input_start_row
+    inx
+    cpx #SCREEN_ROWS_VIEW
+    bcs @rfc_one_row
+    lda row2_map, x
+    beq @rfc_one_row
+    lda #$FF
+    jmp @rfc_store
+@rfc_one_row:
+    lda #0
+@rfc_store:
+    sta input_on_row2
+    lda #0
+    sta input_full
+    sta warning_beep_state
+    rts
+
+
+; ============================================================================
+; rederive_if_navigated — update logical-line tracking when the cursor moves
+; to a different row. Called after each cursor-key echo.
+;
+; * CURSOR_Y < session_start_row: cursor is on a previous line → re-derive
+;   input_start_row/input_on_row2 from row2_map so edit ops work correctly.
+; * CURSOR_Y >= session_start_row: cursor is back on the current session line
+;   → restore input_start_row/input_on_row2 to the saved session values.
+;
+; Clobbers A, X.
+; ============================================================================
+rederive_if_navigated:
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    cmp session_start_row
+    bcs @rin_restore_session
+    ; Above session floor: full re-derive from row2_map.
+    jmp rederive_from_cursor
+@rin_restore_session:
+    ; Back on or below the session start row: restore saved session state.
+    lda session_start_row
+    sta input_start_row
+    lda session_on_row2
+    sta input_on_row2
+    lda #0
+    sta input_full
+    sta warning_beep_state
+    rts
+
+
+; ============================================================================
 ; echo_to_vera — tail-call helper: write A through the VERA putc state machine.
 ; Uses jmp so _CallVeraApiService's rts returns directly to our caller.
 echo_to_vera:
@@ -1373,8 +1477,16 @@ _install_es_hooks:
     sta input_start_row
     sta input_on_row2
     sta input_full
+    sta session_start_row
+    sta session_on_row2
     sta kbd_ring_wr
     sta kbd_ring_rd
+    ; Clear row2_map.
+    ldx #(SCREEN_ROWS_VIEW - 1)
+@clear_row2_map:
+    sta row2_map, x
+    dex
+    bpl @clear_row2_map
     lda #KEY_NONE
     sta kbd_repeat_raw
     lda #$FF
