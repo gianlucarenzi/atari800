@@ -642,8 +642,10 @@ vera_editor_get:
     jmp @key_loop
 
 @got_return:
-    ; Re-derive which logical line the cursor is on before reading VRAM.
-    jsr rederive_from_cursor
+    ; Re-derive logical line tracking from cursor position.
+    ; rederive_if_navigated preserves session input_start_col for the normal case
+    ; (cursor on session row); calls rederive_from_cursor only when navigated up.
+    jsr rederive_if_navigated
     ; Screen-editor model: read logical line from VRAM (1 or 2 physical rows).
     lda #1
     sta CRITIC
