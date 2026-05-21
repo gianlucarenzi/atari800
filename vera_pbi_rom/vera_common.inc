@@ -112,12 +112,14 @@ SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2   ; L1_TILEBASE: bit1=1 → 16p
 ; Viewport and tilemap dimensions
 ; ============================================================================
 
-MAP_COLS                = 128                       ; tilemap width  in cells (256 bytes/row stride)
-MAP_ROWS                = 64                        ; tilemap height in cells
-SCREEN_COLS             = 80                        ; visible columns (viewport width)
-SCREEN_COLS_VIEW        = SCREEN_COLS               ; alias (retained for source compatibility)
-SCREEN_ROWS_VIEW        = SCREEN_ROWS               ; alias (retained for source compatibility)
-TEXT_COLOR              = $61                       ; default text colour byte (fg/bg nibbles)
+MAP_COLS                = 128                                  ; tilemap width  in cells (256 bytes/row stride)
+MAP_ROWS                = 64                                   ; tilemap height in cells
+SCREEN_COLS             = 80                                   ; visible columns (viewport width)
+SCREEN_COLS_VIEW        = SCREEN_COLS                          ; alias (retained for source compatibility)
+SCREEN_ROWS_VIEW        = SCREEN_ROWS                          ; alias (retained for source compatibility)
+TEXT_COLOR              = $61                                  ; default text colour byte (fg/bg nibbles)
+INPUT_LINE_ROWS         = 2                                    ; max logical line height (physical rows)
+INPUT_LINE_MAX          = SCREEN_COLS_VIEW * INPUT_LINE_ROWS   ; max chars in one logical input line
 
 ; ============================================================================
 ; Display composer initialisation values (640×480 VGA active area)

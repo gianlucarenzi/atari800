@@ -26,6 +26,7 @@
     .import _vera_ctl_block
     .import _InitVbi
     .import _vera_trigger_click
+    .import _vera_cursor_invalidate
     .import __VERA_EXPORTS__
 
 
@@ -105,10 +106,13 @@ save_zp_cc:             .res 1
 iocb_match_id:          .res 1
 
 ; GET BYTE line-input state.
-input_buf:              .res 81     ; 80 chars + $9B terminator
-input_rd:               .res 1      ; read index (returned to caller)
-input_ready:            .res 1      ; $FF = buffer has data, $00 = need input
-caps_lock_state:        .res 1      ; $FF = CAPS active, $00 = inactive
+input_buf:              .res INPUT_LINE_MAX + 1 ; max chars + $9B terminator
+input_rd:               .res 1                  ; read index (returned to caller)
+input_ready:            .res 1                  ; $FF = buffer has data, $00 = need input
+caps_lock_state:        .res 1                  ; $FF = CAPS active, $00 = inactive
+input_start_row:        .res 1                  ; CURSOR_Y when input started
+input_on_row2:          .res 1                  ; $FF = logical line extends to input_start_row+1
+input_full:             .res 1                  ; $FF = INPUT_LINE_MAX chars typed, only RETURN/BS allowed
 
 ; POKEY keyboard IRQ ring buffer — holds translated ATASCII chars, 16 slots.
 ; Indices wrap modulo 16 (and #$0F). Full: (wr+1)&$0F == rd. Empty: wr == rd.
@@ -511,6 +515,11 @@ vera_editor_get:
 @need_input:
     lda #0
     sta input_rd
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sta input_start_row
+    lda #0
+    sta input_on_row2
+    sta input_full
 
 @key_loop:
     ; Allow deferred VBI (cursor blink + key repeat) while waiting.
@@ -539,55 +548,105 @@ vera_editor_get:
     cmp #ATASCII_BACKSPACE
     beq @got_backspace
 
-    ; All other chars (printable and cursor-movement): fall through.
-    ; Cursor-movement codes $1C-$1F: move VERA cursor only.
+    ; Cursor-movement codes $1C-$1F: move VERA cursor only, no input tracking.
     cmp #ATASCII_CURSOR_UP
     bcc @store_char
     cmp #ATASCII_CURSOR_RIGHT+1
     bcs @store_char
     jsr echo_to_vera
     jmp @key_loop
+
 @store_char:
-    ; Printable / control char: echo to VERA.
-    ; (Note: input_buf is overwritten by screen scan at @got_return)
-    jsr echo_to_vera        ; A = char
+    ; If buffer full, suppress printable chars (only RETURN/BS allowed).
+    pha                     ; save char — input_full check would clobber A
+    lda input_full
+    beq @store_ok
+    pla                     ; discard suppressed char
+    jmp @key_loop
+@store_ok:
+    pla                     ; restore char
+    jsr echo_to_vera        ; A = char — writes to VERA, advances cursor
+
+    ; After echo, check if cursor wrapped onto a new row.
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sec
+    sbc input_start_row     ; A = rows advanced (0 = still on row 1)
+    beq @no_row_change      ; still on row 1, nothing more to do
+
+    cmp #1
+    beq @now_on_row2        ; wrapped normally to row 2
+
+    ; Wrapped past row 2 (cr_lf fired on row input_start_row+1).
+    ; Pin cursor to last cell of row 2 and mark buffer full.
+    lda input_start_row
+    clc
+    adc #1
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS              ; keep OS shadow in sync or VBI cursor_tick reverts us
+    lda #(SCREEN_COLS_VIEW - 1)
+    sta _vera_ctl_block + VERACTL_CURSOR_X
+    sta COLCRS
+    lda #$FF
+    sta input_full
+    jmp @key_loop
+
+@now_on_row2:
+    lda #$FF
+    sta input_on_row2
+@no_row_change:
     jmp @key_loop
 
 @got_backspace:
-    ; Just echo backspace to VERA. do_backspace in vera_driver.s
-    ; already handles the LMARGN clamp.
-    lda #ATASCII_BACKSPACE
-    jsr echo_to_vera
+    jsr _vera_cursor_invalidate     ; erase cursor tile BEFORE shifting VRAM
+    jsr do_logical_backspace
     jmp @key_loop
 
 @got_return:
-    ; Atari screen-editor model: read the entire visible row from VRAM so
-    ; BASIC receives what is ON SCREEN, not just what was typed since GET.
+    ; Screen-editor model: read logical line from VRAM (1 or 2 physical rows).
     lda #1
     sta CRITIC
     lda #$00
     sta VERA_CTRL
+    ; Read row input_start_row into input_buf[0..79].
     lda #0
     sta VERA_ADDR_L
-    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    lda input_start_row
     clc
     adc #VERA_SCREEN_BASE_M
     sta VERA_ADDR_M
     lda #VERA_ADDR_H_BASE
     sta VERA_ADDR_H
-    ; Each VRAM cell = [char, color], inc=1: read char, discard color, repeat.
     ldx #0
-@vram_read:
-    lda VERA_DATA0          ; char tile byte
+@vram_read1:
+    lda VERA_DATA0          ; char
     sta input_buf, x
-    lda VERA_DATA0          ; color byte (discard)
+    lda VERA_DATA0          ; color (discard)
     inx
-    cpx #SCREEN_COLS
-    bcc @vram_read
+    cpx #SCREEN_COLS_VIEW
+    bcc @vram_read1
+    ; If logical line spans row 2, read it into input_buf[80..159].
+    lda input_on_row2
+    beq @strip
+    lda #0
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+@vram_read2:
+    lda VERA_DATA0
+    sta input_buf, x
+    lda VERA_DATA0
+    inx
+    cpx #(SCREEN_COLS_VIEW * INPUT_LINE_ROWS)
+    bcc @vram_read2
+@strip:
     lda #0
     sta CRITIC
     ; Strip trailing spaces and null tiles from the right.
-    dex                     ; X = SCREEN_COLS-1
+    dex                     ; X = last index written
 @strip_trail:
     lda input_buf, x
     beq @strip_more
@@ -596,7 +655,7 @@ vera_editor_get:
 @strip_more:
     dex
     bpl @strip_trail
-    inx                     ; X underflowed ($FF) → wrap to $00: empty line
+    inx                     ; X underflowed → empty line → index 0
     jmp @write_eol
 @found_end:
     inx
@@ -604,6 +663,7 @@ vera_editor_get:
     lda #ATASCII_EOL
     sta input_buf, x
     ; Echo RETURN to advance cursor to next row on screen.
+    lda #ATASCII_EOL
     jsr echo_to_vera
     ; Mark buffer ready and return first char.
     lda #$FF
@@ -614,6 +674,326 @@ vera_editor_get:
 
 
 
+; ============================================================================
+; do_logical_backspace — 2-row aware destructive backspace with horizontal
+; shift. Moves the cursor one logical position back (with cross-row wrap),
+; then shifts all characters from the new cursor position+1 to the end of
+; the logical line leftward by one cell, blanking the last position.
+;
+; Clobbers A, X, Y. Preserves nothing (called only from @key_loop).
+; ============================================================================
+
+do_logical_backspace:
+    ; Determine the logical position before cursor: same row or cross-row wrap.
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    cmp LMARGN
+    bne @bs_same_row
+
+    ; cursor_x == LMARGN: can we cross to row 1?
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    cmp input_start_row
+    beq @bs_nop             ; already at very start of logical line
+
+    ; Cross-row: move cursor to (input_start_row, SCREEN_COLS_VIEW-1).
+    lda input_start_row
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS              ; keep OS shadow in sync or VBI cursor_tick reverts us
+    lda #(SCREEN_COLS_VIEW - 1)
+    sta _vera_ctl_block + VERACTL_CURSOR_X
+    sta COLCRS
+    lda #0
+    sta input_full          ; no longer full after a deletion
+    jsr bs_shift_and_blank
+    rts
+
+@bs_same_row:
+    dec _vera_ctl_block + VERACTL_CURSOR_X
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta COLCRS              ; keep OS shadow in sync
+    lda #0
+    sta input_full
+    jsr bs_shift_and_blank
+    rts
+
+@bs_nop:
+    rts
+
+
+; ============================================================================
+; bs_shift_and_blank — starting from (CURSOR_X, CURSOR_Y), shift all cells
+; of the logical line one position to the left, then blank the last cell.
+;
+; Cases:
+;   cursor on row 1 (cursor_y == input_start_row):
+;     shift row1[cursor_x+1..79] → row1[cursor_x..78]
+;     if input_on_row2:
+;       carry row2[0] → row1[79]
+;       shift row2[1..79] → row2[0..78]
+;       blank row2[79]
+;     else:
+;       blank row1[79]
+;
+;   cursor on row 2 (cursor_y == input_start_row+1):
+;     shift row2[cursor_x+1..79] → row2[cursor_x..78]
+;     blank row2[79]
+;
+; Uses DATA0 (source) and DATA1 (destination) for streaming.
+; Clobbers A, X, Y.
+; ============================================================================
+
+bs_shift_and_blank:
+    lda #1
+    sta CRITIC
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    cmp input_start_row
+    beq @bs_row1_entry
+    jmp @on_row2
+@bs_row1_entry:
+
+    ; ---- Cursor on row 1 ----
+    ; Count of cells to shift on row 1: (SCREEN_COLS_VIEW-1 - cursor_x).
+    lda #(SCREEN_COLS_VIEW - 1)
+    sec
+    sbc _vera_ctl_block + VERACTL_CURSOR_X
+    beq @row1_done          ; cursor at col 79: skip row1 shift
+
+    ; DATA1 = dest: (input_start_row, cursor_x).
+    lda #$01
+    sta VERA_CTRL
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    asl a
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #VERA_SCREEN_BASE_M
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    ; DATA0 = src: (input_start_row, cursor_x+1).
+    lda #$00
+    sta VERA_CTRL
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    clc
+    adc #1
+    asl a
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #VERA_SCREEN_BASE_M
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    ; Stream (SCREEN_COLS_VIEW-1-cursor_x) cells × 2 bytes.
+    lda #(SCREEN_COLS_VIEW - 1)
+    sec
+    sbc _vera_ctl_block + VERACTL_CURSOR_X
+    asl a
+    tay
+@r1_shift:
+    lda #$00
+    sta VERA_CTRL
+    lda VERA_DATA0
+    pha
+    lda #$01
+    sta VERA_CTRL
+    pla
+    sta VERA_DATA1
+    dey
+    bne @r1_shift
+
+@row1_done:
+    lda input_on_row2
+    bne @bs_has_row2
+    jmp @blank_row1_end
+@bs_has_row2:
+
+    ; Carry row2[0] → row1[79]: bridge the row boundary.
+    ; DATA0 = (input_start_row+1, col 0)
+    lda #$00
+    sta VERA_CTRL
+    lda #0
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    lda VERA_DATA0          ; char from row2 col0
+    pha
+    lda VERA_DATA0          ; color from row2 col0 (advances DATA0 past col0)
+    tax                     ; save color
+
+    ; DATA1 = (input_start_row, col 79)
+    lda #$01
+    sta VERA_CTRL
+    lda #((SCREEN_COLS_VIEW - 1) * 2)
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #VERA_SCREEN_BASE_M
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+    pla                     ; char
+    sta VERA_DATA1
+    txa                     ; color
+    sta VERA_DATA1
+
+    ; Shift row2[1..79] → row2[0..78].
+    ; DATA1 = (input_start_row+1, col 0)
+    lda #$01
+    sta VERA_CTRL
+    lda #0
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    ; DATA0 = (input_start_row+1, col 1)
+    lda #$00
+    sta VERA_CTRL
+    lda #2
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    ldy #((SCREEN_COLS_VIEW - 1) * 2)   ; 79 cells × 2 bytes
+@r2_shift:
+    lda #$00
+    sta VERA_CTRL
+    lda VERA_DATA0
+    pha
+    lda #$01
+    sta VERA_CTRL
+    pla
+    sta VERA_DATA1
+    dey
+    bne @r2_shift
+
+    ; Blank row2[79].
+    lda #$00
+    sta VERA_CTRL
+    lda #((SCREEN_COLS_VIEW - 1) * 2)
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+    lda #' '
+    sta VERA_DATA0
+    lda #TEXT_COLOR
+    sta VERA_DATA0
+    lda #0
+    sta CRITIC
+    rts
+
+@blank_row1_end:
+    ; Blank row1[79].
+    lda #$00
+    sta VERA_CTRL
+    lda #((SCREEN_COLS_VIEW - 1) * 2)
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #VERA_SCREEN_BASE_M
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+    lda #' '
+    sta VERA_DATA0
+    lda #TEXT_COLOR
+    sta VERA_DATA0
+    lda #0
+    sta CRITIC
+    rts
+
+@on_row2:
+    ; ---- Cursor on row 2 ----
+    ; Shift row2[cursor_x+1..79] → row2[cursor_x..78], blank row2[79].
+    lda #(SCREEN_COLS_VIEW - 1)
+    sec
+    sbc _vera_ctl_block + VERACTL_CURSOR_X
+    beq @blank_row2_end     ; cursor at col 79: just blank it
+
+    ; DATA1 = (input_start_row+1, cursor_x)
+    lda #$01
+    sta VERA_CTRL
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    asl a
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    ; DATA0 = (input_start_row+1, cursor_x+1)
+    lda #$00
+    sta VERA_CTRL
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    clc
+    adc #1
+    asl a
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+
+    lda #(SCREEN_COLS_VIEW - 1)
+    sec
+    sbc _vera_ctl_block + VERACTL_CURSOR_X
+    asl a
+    tay
+@r2_only_shift:
+    lda #$00
+    sta VERA_CTRL
+    lda VERA_DATA0
+    pha
+    lda #$01
+    sta VERA_CTRL
+    pla
+    sta VERA_DATA1
+    dey
+    bne @r2_only_shift
+
+@blank_row2_end:
+    lda #$00
+    sta VERA_CTRL
+    lda #((SCREEN_COLS_VIEW - 1) * 2)
+    sta VERA_ADDR_L
+    lda input_start_row
+    clc
+    adc #(VERA_SCREEN_BASE_M + 1)
+    sta VERA_ADDR_M
+    lda #VERA_ADDR_H_BASE
+    sta VERA_ADDR_H
+    lda #' '
+    sta VERA_DATA0
+    lda #TEXT_COLOR
+    sta VERA_DATA0
+    lda #0
+    sta CRITIC
+    rts
+
+
+; ============================================================================
 ; echo_to_vera — tail-call helper: write A through the VERA putc state machine.
 ; Uses jmp so _CallVeraApiService's rts returns directly to our caller.
 echo_to_vera:
@@ -638,6 +1018,9 @@ _install_es_hooks:
     lda #0
     sta input_ready
     sta input_rd
+    sta input_start_row
+    sta input_on_row2
+    sta input_full
     sta kbd_ring_wr
     sta kbd_ring_rd
     lda #KEY_NONE
