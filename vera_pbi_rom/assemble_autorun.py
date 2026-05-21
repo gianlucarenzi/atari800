@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 BODY_SOURCE = 0x4000
-LOADER_ADDR = 0x5800
+LOADER_ADDR = 0x6000
 RUNAD = 0x02E0
 
 
