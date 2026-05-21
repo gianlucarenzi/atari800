@@ -111,6 +111,7 @@ caps_lock_state:        .res 1                  ; $FF = CAPS active, $00 = inact
 input_start_row:        .res 1                  ; CURSOR_Y when input started
 input_on_row2:          .res 1                  ; $FF = logical line extends to input_start_row+1
 input_full:             .res 1                  ; $FF = INPUT_LINE_MAX chars typed, only RETURN/BS allowed
+warning_beep_state:     .res 1                  ; $FF = beep triggered, $00 = silent
 
 ; POKEY keyboard IRQ ring buffer — holds translated ATASCII chars, 16 slots.
 ; Indices wrap modulo 16 (and #$0F). Full: (wr+1)&$0F == rd. Empty: wr == rd.
@@ -542,21 +543,31 @@ vera_editor_get:
 
     ; A = final ATASCII char — dispatch on special codes.
     cmp #ATASCII_EOL
-    beq @got_return
+    beq @jmp_got_return
     cmp #ATASCII_BACKSPACE
-    beq @got_backspace
+    beq @jmp_got_backspace
     cmp #ATASCII_DELETE_CHAR
-    beq @got_delete_char
+    beq @jmp_got_delete_char
     cmp #ATASCII_INSERT_CHAR
-    beq @got_insert_char
+    beq @jmp_got_insert_char
+    jmp @dispatch_done
+@jmp_got_return:        jmp @got_return
+@jmp_got_backspace:     jmp @got_backspace
+@jmp_got_delete_char:   jmp @got_delete_char
+@jmp_got_insert_char:   jmp @got_insert_char
+@dispatch_done:
 
     ; Cursor-movement codes $1C-$1F: move VERA cursor only, no input tracking.
     cmp #ATASCII_CURSOR_UP
-    bcc @store_char
+    bcc @store_char_jmp
     cmp #ATASCII_CURSOR_RIGHT+1
-    bcs @store_char
+    bcs @store_char_jmp
     jsr echo_to_vera
+    jsr check_cursor_warning
     jmp @key_loop
+
+@store_char_jmp:
+    jmp @store_char
 
 @store_char:
     ; If buffer full, suppress printable chars (only RETURN/BS allowed).
@@ -568,6 +579,7 @@ vera_editor_get:
 @store_ok:
     pla                     ; restore char
     jsr echo_to_vera        ; A = char — writes to VERA, advances cursor
+    jsr check_cursor_warning
 
     ; After echo, check if cursor wrapped onto a new row.
     lda _vera_ctl_block + VERACTL_CURSOR_Y
@@ -601,16 +613,19 @@ vera_editor_get:
 @got_backspace:
     jsr _vera_cursor_invalidate     ; erase cursor tile BEFORE shifting VRAM
     jsr do_logical_backspace
+    jsr check_cursor_warning
     jmp @key_loop
 
 @got_delete_char:
     jsr _vera_cursor_invalidate
     jsr do_logical_delete
+    jsr check_cursor_warning
     jmp @key_loop
 
 @got_insert_char:
     jsr _vera_cursor_invalidate
     jsr do_logical_insert
+    jsr check_cursor_warning
     jmp @key_loop
 
 @got_return:
@@ -1273,6 +1288,52 @@ ins_shift_and_blank:
     sta CRITIC
     rts
 
+
+; ============================================================================
+; check_cursor_warning — trigger a BELL click when the cursor reaches col 75
+; on the second physical line of a logical line. Triggers on crossing the
+; 75-column threshold from either direction (74<->75).
+; ============================================================================
+
+check_cursor_warning:
+    ; Only trigger on the second row or if the logical line has wrapped.
+    lda input_on_row2
+    beq @reset_state
+
+    ; Calculate logical cursor position: (Y - input_start_row) * 80 + X
+    lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sec
+    sbc input_start_row
+    beq @row1
+    
+    ; Row 2: pos = 80 + cursor_x
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+    clc
+    adc #80
+    jmp @check_pos
+@row1:
+    lda _vera_ctl_block + VERACTL_CURSOR_X
+
+@check_pos:
+    ; A is current logical pos. Compare with INPUT_LINE_MAX - 5 (160 - 5 = 155).
+    cmp #(INPUT_LINE_MAX - 5)
+    lda #1
+    bcs @in_zone
+    lda #0
+@in_zone:
+    ; A is 1 if in warning zone, 0 if out.
+    cmp warning_beep_state
+    beq @done                   ; State didn't change.
+
+    ; Crossing threshold. Update state and trigger.
+    sta warning_beep_state
+    jmp _vera_trigger_click
+
+@reset_state:
+    lda #0
+    sta warning_beep_state
+@done:
+    rts
 
 ; ============================================================================
 ; echo_to_vera — tail-call helper: write A through the VERA putc state machine.
