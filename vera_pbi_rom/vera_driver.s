@@ -6,9 +6,9 @@
 
     .setcpu "6502"
 
-    .export _vera_warm_reinit, _vera_hw_reinit, _CallVeraApiService, _VeraApiService
+    .export _vera_warm_reinit, _vera_hw_reinit, _vera_wait_and_clear, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
-    .import _vera_cursor_invalidate, cursor_draw, cursor_at_x, cursor_at_y
+    .import _vera_cursor_invalidate, cursor_draw, cursor_at_x, cursor_at_y, cursor_enabled
     .import _vera_trigger_click, _vera_scroll_hook
 
     .include "vera_common.inc"
@@ -28,6 +28,7 @@ putc_tmp:           .res 1
 putc_inverse:       .res 1
 save_nmien:         .res 1
 first_init:         .res 1
+wait_target:        .res 1      ; RTCLOK+2 frame-count target for _vera_wait_and_clear
 
     .segment "CODE"
 
@@ -113,6 +114,30 @@ _vera_hw_reinit:
     rts
 
 ; ============================================================================
+; _vera_wait_and_clear — wait ~2 s then blank the VERA viewport.
+;
+; Uses RTCLOK+2 ($14), which is incremented on every VBI frame by the OS
+; immediate VBI handler regardless of CRITIC. Caller must ensure CRITIC=0
+; before calling so RTCLOK advances.
+; ============================================================================
+
+WAIT_FRAMES = 100       ; 2.0 s @ 50 Hz (PAL) / 1.67 s @ 60 Hz (NTSC)
+
+_vera_wait_and_clear:
+    lda #0
+    sta cursor_enabled      ; hide cursor during wait + clear
+    lda RTCLOK+2
+    clc
+    adc #WAIT_FRAMES
+    sta wait_target
+@wc_wait:
+    lda RTCLOK+2
+    sec
+    sbc wait_target
+    bmi @wc_wait
+    jmp do_clear            ; tail call; do_clear re-enables cursor on exit
+
+; ============================================================================
 
 _vera_warm_reinit:
     lda #1
@@ -127,9 +152,9 @@ _vera_warm_reinit:
     sta KEYREP
 
     lda first_init
-    bne @skip_banner
+    bne @warm_reinit_done   ; warm re-run: skip banner, wait, clear
 
-    ; Print Banner (Cold Start only)
+    ; Cold install only: print banner, wait 2 s, clear screen.
     lda #$00
     sta VERA_CTRL
     lda LMARGN
@@ -152,19 +177,12 @@ _vera_warm_reinit:
     lda #1
     sta first_init
 
-@skip_banner:
-    ; Wait ~2 seconds (standard busy-loop delay)
-    ldx #0
-    ldy #0
-@delay:
-    dex
-    bne @delay
-    dey
-    bne @delay
+    lda #0
+    sta CRITIC              ; allow VBI so RTCLOK advances
+    jsr _vera_wait_and_clear
 
-    jsr do_clear
-
-    ; Cursor init @ (LMARGN,0)
+@warm_reinit_done:
+    ; Cursor init @ (LMARGN, 0)
     lda LMARGN
     sta _vera_ctl_block + VERACTL_CURSOR_X
     lda #0
@@ -172,9 +190,8 @@ _vera_warm_reinit:
     sta ROWCRS
     lda LMARGN
     sta COLCRS
-
     lda #0
-    sta CRITIC          ; re-enable deferred VBI cursor
+    sta CRITIC
     rts
 
 ; ============================================================================
@@ -545,12 +562,10 @@ do_eol:
 ; ----------------------------------------------------------------------------
 
 do_clear:
+    lda #1
+    sta CRITIC              ; block deferred VBI so cursor blinker can't race VERA_CTRL
     jsr _vera_cursor_invalidate
-    lda DMACTL                  ; Save ANTIC DMA state
-    pha
-    lda #0
-    sta DMACTL                  ; Disable ANTIC DMA
-    lda #0                      ; Ensure ADDRSEL=0
+    lda #0                  ; Ensure ADDRSEL=0
     sta VERA_CTRL
 
     lda #0
@@ -583,8 +598,10 @@ do_clear:
     sta _vera_ctl_block + VERACTL_CURSOR_X
     lda #0
     sta _vera_ctl_block + VERACTL_CURSOR_Y
-    pla                         ; Restore ANTIC DMA state
-    sta DMACTL
+    lda #1
+    sta cursor_enabled      ; cursor visible from now on
+    lda #0
+    sta CRITIC              ; re-enable deferred VBI
     rts
 
 

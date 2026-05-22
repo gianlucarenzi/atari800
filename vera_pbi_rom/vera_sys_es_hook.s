@@ -17,6 +17,7 @@
     .export _vera_editrv, _vera_screnv
     .export _VeraPutByte
     .export _vera_saved_dosini, _vera_saved_casini
+    .export _vera_saved_orig_ramtop, _vera_saved_dest_hi
     .export _install_es_hooks
     .export _vera_kbd_irq_handler
     .export _vera_kbd_repeat_tick
@@ -95,6 +96,8 @@ _vera_screnv:           .res 16     ; local copy of S: vector table
 ; bootstrap and dosini.s both reference them via __VERA_EXPORTS__).
 _vera_saved_dosini:     .res 2
 _vera_saved_casini:     .res 2
+_vera_saved_orig_ramtop: .res 1
+_vera_saved_dest_hi:    .res 1  ; installed driver base page (exp_hi); MEMTOP = this*256 - 1
 
 ; ZP backup so we can borrow $CB/$CC while walking HATABS.
 save_zp_cb:             .res 1
@@ -464,7 +467,7 @@ vera_editor_open:
     jsr _InitVbi                ; reinstalls deferred VBI; also does cli
     pla
     sta NMIEN                   ; restore NMI enables
-    lda #0
+    lda #2
     sta LMARGN
     lda #SCREEN_COLS_VIEW - 1
     sta RMARGN
@@ -476,7 +479,7 @@ vera_editor_open:
 ; ============================================================================
 
 vera_screen_open:
-    lda #0
+    lda #2
     sta LMARGN
     lda #SCREEN_COLS_VIEW - 1
     sta RMARGN

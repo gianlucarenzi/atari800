@@ -32,31 +32,37 @@ exp_hi       = $8D
 saved_sdmctl = $8E
 tmp_dosini   = $90
 tmp_casini   = $92
+orig_ramtop  = $94
 
 ; ============================================================================
 ; Build-time constants
 ; ============================================================================
 
-BODY_SOURCE   = $4000
-NOMINAL_BASE  = $A000
-CIO_CALL      = $E456
-MIN_DEST_HI   = $34
+BODY_SOURCE          = $4000
+NOMINAL_BASE         = $A000
+CIO_CALL             = $E456
+MIN_DEST_HI          = $34
+; OS places native screen just below RAMTOP*256 (~$9C00 for $A0 RAMTOP).
+; Reserve this many pages so the driver ends safely below the screen area.
+SCREEN_RESERVE_PAGES = 4
 
 ; ============================================================================
 ; EXPORTS table offsets
 ; ============================================================================
 
-EXP_WARM_REINIT  = 0
-EXP_DOSINI_HOOK  = 2
-EXP_CASINI_HOOK  = 4
-EXP_SAVED_DOSINI = 6
-EXP_SAVED_CASINI = 8
-EXP_VBI_HANDLER  = 10
-EXP_API_SERVICE  = 12
-EXP_WARM_START   = 14
-EXP_VCTL_BLOCK   = 16
-EXP_INIT_VBI     = 18
-EXP_INSTALL_ES   = 20
+EXP_WARM_REINIT       = 0
+EXP_DOSINI_HOOK       = 2
+EXP_CASINI_HOOK       = 4
+EXP_SAVED_DOSINI      = 6
+EXP_SAVED_CASINI      = 8
+EXP_VBI_HANDLER       = 10
+EXP_API_SERVICE       = 12
+EXP_WARM_START        = 14
+EXP_VCTL_BLOCK        = 16
+EXP_INIT_VBI          = 18
+EXP_INSTALL_ES        = 20
+EXP_SAVED_ORIG_RAMTOP = 24
+EXP_SAVED_DEST_HI     = 26
 
 ; ============================================================================
 ; VCTL block layout
@@ -94,6 +100,57 @@ PATCH_FIXUP_TABLE:       .word $0000
 
 bootstrap_entry:
     ; --- 0. Save original DOSINI/CASINI vectors BEFORE hooking them. ---
+    ; On warm restart DOSINI already points to our hook (re_install_hooks put it
+    ; back there).  Read the TRUE original vectors from the existing installed
+    ; driver to avoid a chain-to-ourselves loop on the next warm restart.
+    lda WARMST
+    beq @cold_dosini
+
+    ; Warm restart: RAMTOP was restored by common_reinit before DOS re-ran us.
+    ; Peek at the existing installed driver's EXPORTS to get the real saved vectors.
+    ; Driver base = page_align_down(RAMTOP*256 - TOTAL_SIZE) - SCREEN_RESERVE_PAGES
+    ; Must match step 1 formula exactly.
+    lda RAMTOP
+    sec
+    sbc PATCH_BODY_TOTAL_SIZE+1
+    sta dest_hi
+    lda PATCH_BODY_TOTAL_SIZE
+    beq @warm_no_adj
+    dec dest_hi
+@warm_no_adj:
+    lda dest_hi
+    sec
+    sbc #SCREEN_RESERVE_PAGES
+    sta dest_hi
+    lda #0
+    sta dest_lo                     ; [dest_hi : 0] = existing driver base
+    ldy #EXP_SAVED_DOSINI
+    lda (dest_lo),y
+    sta target_lo
+    iny
+    lda (dest_lo),y
+    sta target_hi
+    ldy #0
+    lda (target_lo),y
+    sta tmp_dosini
+    iny
+    lda (target_lo),y
+    sta tmp_dosini+1
+    ldy #EXP_SAVED_CASINI           ; dest_hi still valid, dest_lo still 0
+    lda (dest_lo),y
+    sta target_lo
+    iny
+    lda (dest_lo),y
+    sta target_hi
+    ldy #0
+    lda (target_lo),y
+    sta tmp_casini
+    iny
+    lda (target_lo),y
+    sta tmp_casini+1
+    jmp @after_dosini
+
+@cold_dosini:
     lda DOSINI
     sta tmp_dosini
     lda DOSINI+1
@@ -102,9 +159,13 @@ bootstrap_entry:
     sta tmp_casini
     lda CASINI+1
     sta tmp_casini+1
+@after_dosini:
 
-    ; --- 1. Compute dest = page_align_down(RAMTOP*256 - TOTAL_SIZE). ---
+    ; --- 1. Compute dest = page_align_down(RAMTOP*256 - TOTAL_SIZE) - SCREEN_RESERVE_PAGES. ---
+    ; SCREEN_RESERVE_PAGES leaves a gap so OS ScreenInit/CIO OPEN E: (which runs
+    ; before jmp(DOSINI)) places the native screen above the driver, not inside it.
     lda RAMTOP
+    sta orig_ramtop                 ; save pre-installation RAMTOP for warm restarts
     sec
     sbc PATCH_BODY_TOTAL_SIZE+1
     pha
@@ -116,6 +177,8 @@ bootstrap_entry:
     pha
 @aligned:
     pla
+    sec
+    sbc #SCREEN_RESERVE_PAGES
     sta dest_hi
     lda #0
     sta dest_lo
@@ -316,6 +379,29 @@ bootstrap_entry:
     sta (target_lo),y
     iny
     lda tmp_casini+1
+    sta (target_lo),y
+
+    ; --- 6c. Transfer original RAMTOP to driver BSS. ---
+    ldy #EXP_SAVED_ORIG_RAMTOP
+    lda (exp_lo),y
+    sta target_lo
+    iny
+    lda (exp_lo),y
+    sta target_hi
+    ldy #0
+    lda orig_ramtop
+    sta (target_lo),y
+
+    ; --- 6d. Transfer installed driver base page (exp_hi) to driver BSS.
+    ;         Used by common_reinit to restore MEMTOP = exp_hi*256 - 1. ---
+    ldy #EXP_SAVED_DEST_HI
+    lda (exp_lo),y
+    sta target_lo
+    iny
+    lda (exp_lo),y
+    sta target_hi
+    ldy #0
+    lda exp_hi
     sta (target_lo),y
 
     ; --- 7. Install DOSINI/CASINI hooks. ---

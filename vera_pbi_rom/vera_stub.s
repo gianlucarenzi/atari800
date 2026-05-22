@@ -24,6 +24,8 @@
     .import _InitVbi
     .import _install_es_hooks
     .import _vera_kbd_irq_handler
+    .import _vera_saved_orig_ramtop
+    .import _vera_saved_dest_hi
 
     .segment "EXPORTS"
 __VERA_EXPORTS__:
@@ -39,6 +41,8 @@ __VERA_EXPORTS__:
     .word _InitVbi                ; +$12
     .word _install_es_hooks       ; +$14
     .word _vera_kbd_irq_handler   ; +$16  EXP_KBD_HANDLER
+    .word _vera_saved_orig_ramtop ; +$18  EXP_SAVED_ORIG_RAMTOP
+    .word _vera_saved_dest_hi     ; +$1A  EXP_SAVED_DEST_HI
 
     .segment "VCTL"
 _vera_ctl_block:

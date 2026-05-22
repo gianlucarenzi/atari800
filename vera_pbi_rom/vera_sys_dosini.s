@@ -1,8 +1,9 @@
     .setcpu "6502"
 
     .export _vera_dosini_asm_hook, _vera_casini_asm_hook
-    .import _vera_hw_reinit, _InitVbi
+    .import _vera_hw_reinit, _vera_wait_and_clear, _InitVbi
     .import _vera_saved_dosini, _vera_saved_casini
+    .import _vera_saved_orig_ramtop, _vera_saved_dest_hi
     .import _install_es_hooks
     .import __VERA_EXPORTS__
 
@@ -34,12 +35,34 @@ common_reinit:
     lda #0
     sta CRITIC
 
+    ; Restore RAMTOP (zeroed by OS warm-restart step D) so AUTORUN.SYS
+    ; can re-install the driver at the correct address when DOS re-runs it.
+    lda _vera_saved_orig_ramtop
+    beq @no_ramtop_restore
+    sta RAMTOP
+@no_ramtop_restore:
+
+    ; Restore MEMTOP = (driver_base - 1) so DOS doesn't allocate into the driver.
+    lda _vera_saved_dest_hi
+    beq @no_memtop_restore
+    sec
+    sbc #1
+    sta MEMTOP+1
+    lda #$FF
+    sta MEMTOP
+@no_memtop_restore:
+
     ; Reinstall deferred VBI so cursor blink and key repeat work after warm reset.
     jsr _InitVbi
 
-    ; Reconfigure VERA hw and reload full font (no delay, no screen clear).
-    ; CRITIC is managed internally by _vera_hw_reinit (set=1 during VERA writes).
+    ; Reconfigure VERA hw and reload full font (CRITIC cleared on return).
     jsr _vera_hw_reinit
+
+    ; Warm restart only: wait ~2 s then clear screen (CRITIC=0, VBI running).
+    lda WARMST
+    beq @no_wait_clear
+    jsr _vera_wait_and_clear
+@no_wait_clear:
 
     ; Keep DOSINI/CASINI pointing to our hooks — OS warm start rebuilds ZP.
     jsr re_install_hooks

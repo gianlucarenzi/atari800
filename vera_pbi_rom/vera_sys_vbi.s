@@ -4,7 +4,7 @@
     .export _vera_save_c_sp, _vera_warm_start
     .export _vera_cursor_invalidate
     .export _vera_trigger_click
-    .export cursor_draw, cursor_at_x, cursor_at_y
+    .export cursor_draw, cursor_at_x, cursor_at_y, cursor_enabled
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
     .import _vera_kbd_repeat_tick
@@ -22,6 +22,7 @@
 frames_until_click:  .res 1
 click_active:        .res 1
 
+cursor_enabled:      .res 1         ; 0 = hidden (during init/clear), 1 = active
 cursor_drawn:        .res 1         ; 0 = erased, 1 = drawn
 cursor_at_x:         .res 1         ; latched X where cursor is currently drawn
 cursor_at_y:         .res 1         ; latched Y where cursor is currently drawn
@@ -196,6 +197,8 @@ click_tick:
 ; ============================================================================
 
 cursor_tick:
+    lda cursor_enabled
+    beq @done
     lda ROWCRS_OS
     cmp _vera_ctl_block + VERACTL_CURSOR_Y
     bne @do_sync
