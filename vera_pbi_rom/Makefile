@@ -140,21 +140,28 @@ TEST_EXE    = TEST.COM
 TEST_GS_SRC = vera-tests/test_gradient_scroll.c
 TEST_GS_EXE = TESTGS.COM
 
+TEST_MAZE_SRC = vera-tests/test_maze.c
+TEST_MAZE_EXE = TESTMAZE.COM
+
 $(TEST_EXE): $(TEST_SRC)
 	cl65 -t atari --start-addr 0x5000 -o $(TEST_EXE) $(TEST_SRC)
 
 $(TEST_GS_EXE): $(TEST_GS_SRC)
 	cl65 -t atari --start-addr 0x5000 -o $(TEST_GS_EXE) $(TEST_GS_SRC)
 
+$(TEST_MAZE_EXE): $(TEST_MAZE_SRC)
+	cl65 -t atari --start-addr 0x5000 -o $(TEST_MAZE_EXE) $(TEST_MAZE_SRC)
+
 $(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
 	$(PYTHON) $(DOS20EXTRACT)
 
-atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE)
+atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE)
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
 	cp $(AUTORUN) $(ATRBUILD)/$(AUTORUN)
 	cp $(TEST_EXE) $(ATRBUILD)/
 	cp $(TEST_GS_EXE) $(ATRBUILD)/
+	cp $(TEST_MAZE_EXE) $(ATRBUILD)/
 	cp $(DOS20DIR)/DOS.SYS $(DOS20DIR)/DUP.SYS $(ATRBUILD)/
 	$(DIR2ATR) -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
@@ -166,7 +173,7 @@ clean:
 		$(BODY_OBJ) $(LOADER_OBJ) \
 		$(BODY_BIN_A) $(BODY_BIN_B) $(BODY_LBL_A) $(BODY_LBL_B) \
 		$(LOADER_BIN) $(LOADER_LBL) $(FIXUPS_BIN) \
-		$(TEST_EXE) $(TEST_GS_EXE)
+		$(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE)
 
 cleanall: clean
 	rm -rf $(MAPFILE_ROM) $(BODY_MAP_A) $(BODY_MAP_B) $(LOADER_MAP)
