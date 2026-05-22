@@ -6,7 +6,7 @@
 
     .setcpu "6502"
 
-    .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
+    .export _vera_warm_reinit, _vera_hw_reinit, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
     .import _vera_cursor_invalidate, cursor_draw, cursor_at_x, cursor_at_y
     .import _vera_trigger_click, _vera_scroll_hook
@@ -84,6 +84,35 @@ vera_init_hw:
     lda #$06
     sta VERA_DC_BORDER
     rts
+
+; ============================================================================
+; _vera_hw_reinit — lightweight warm restart: reconfigure VERA hw + reload font.
+; No busy-wait, no screen clear.  CRITIC=1 during the VERA writes so the VBI
+; cursor blinker doesn't race with register accesses.
+; Called by common_reinit on every warm reset instead of _vera_warm_reinit.
+; ============================================================================
+
+_vera_hw_reinit:
+    lda #1
+    sta CRITIC
+    jsr vera_init_hw
+    jsr vera_load_font
+    lda #KBD_KRPDEL_FAST
+    sta KRPDEL
+    lda #KBD_KEYREP_FAST
+    sta KEYREP
+    lda LMARGN
+    sta _vera_ctl_block + VERACTL_CURSOR_X
+    lda #0
+    sta _vera_ctl_block + VERACTL_CURSOR_Y
+    sta ROWCRS
+    lda LMARGN
+    sta COLCRS
+    lda #0
+    sta CRITIC
+    rts
+
+; ============================================================================
 
 _vera_warm_reinit:
     lda #1
