@@ -124,17 +124,14 @@ _vera_warm_reinit:
     sta first_init
 
 @skip_banner:
-    ; Wait ~2 seconds (120 VBI ticks at 60 Hz).
-    ; RTCLOK+2 ($14) is the fast byte: increments every frame.
-    lda #120
-@wait_outer:
-    ldx RTCLOK+2
-@wait_tick:
-    cpx RTCLOK+2
-    beq @wait_tick      ; spin until this tick completes
-    sec
-    sbc #1              ; decrement A without touching X (plain 6502)
-    bne @wait_outer
+    ; Wait ~2 seconds (standard busy-loop delay)
+    ldx #0
+    ldy #0
+@delay:
+    dex
+    bne @delay
+    dey
+    bne @delay
 
     jsr do_clear
 

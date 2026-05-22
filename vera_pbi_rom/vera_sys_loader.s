@@ -1,28 +1,37 @@
 ; vera_sys_loader.s — robust bootstrap that installs the relocatable VERA.SYS body.
-; Based on the original loader, improved for safer RAMTOP/MEMTOP management.
+;
+; AUTORUN.SYS layout produced by assemble_autorun.py:
+;   body bytes  → loaded at BODY_SOURCE  (fixed, $4000)
+;   fixup table → loaded right after body, at PATCH_FIXUP_TABLE
+;   loader code → loaded at $6000 (this file)
+;
+; Patch constants live at fixed offsets at the top of the binary;
+; assemble_autorun.py overwrites them after linking.
 
     .setcpu "6502"
     .include "atari.inc"
 
 ; ============================================================================
-; ZP scratch (safe — bootstrap runs before BASIC starts)
+; ZP scratch
 ; ============================================================================
 
-dest_lo     = $80
-dest_hi     = $81
-src_lo      = $82
-src_hi      = $83
-fixup_lo    = $84
-fixup_hi    = $85
-target_lo   = $86
-target_hi   = $87
-delta_lo    = $88
-delta_hi    = $89
-count_lo    = $8A
-count_hi    = $8B
-exp_lo      = $8C
-exp_hi      = $8D
+dest_lo      = $80
+dest_hi      = $81
+src_lo       = $82
+src_hi       = $83
+fixup_lo     = $84
+fixup_hi     = $85
+target_lo    = $86
+target_hi    = $87
+delta_lo     = $88
+delta_hi     = $89
+count_lo     = $8A
+count_hi     = $8B
+exp_lo       = $8C
+exp_hi       = $8D
 saved_sdmctl = $8E
+tmp_dosini   = $90
+tmp_casini   = $92
 
 ; ============================================================================
 ; Build-time constants
@@ -31,21 +40,10 @@ saved_sdmctl = $8E
 BODY_SOURCE   = $4000
 NOMINAL_BASE  = $A000
 CIO_CALL      = $E456
+MIN_DEST_HI   = $34
 
 ; ============================================================================
-; Patch constants (must remain at the top)
-; ============================================================================
-
-    .export PATCH_BODY_FILE_SIZE, PATCH_BODY_TOTAL_SIZE
-    .export PATCH_FIXUP_TABLE
-    .export bootstrap_entry
-
-PATCH_BODY_FILE_SIZE:    .word $0000
-PATCH_BODY_TOTAL_SIZE:   .word $0000
-PATCH_FIXUP_TABLE:       .word $0000
-
-; ============================================================================
-; EXPORTS table offsets (mirror vera_stub.s)
+; EXPORTS table offsets
 ; ============================================================================
 
 EXP_WARM_REINIT  = 0
@@ -61,7 +59,7 @@ EXP_INIT_VBI     = 18
 EXP_INSTALL_ES   = 20
 
 ; ============================================================================
-; VCTL block layout (16 bytes)
+; VCTL block layout
 ; ============================================================================
 
 VCTL_FLAGS      = 4
@@ -82,7 +80,29 @@ VCTL_FLAG_API_READY = $80
 
     .segment "CODE"
 
+    .export PATCH_BODY_FILE_SIZE, PATCH_BODY_TOTAL_SIZE
+    .export PATCH_FIXUP_TABLE
+    .export bootstrap_entry
+
+PATCH_BODY_FILE_SIZE:    .word $0000
+PATCH_BODY_TOTAL_SIZE:   .word $0000
+PATCH_FIXUP_TABLE:       .word $0000
+
+; ============================================================================
+; bootstrap_entry — installer entry point
+; ============================================================================
+
 bootstrap_entry:
+    ; --- 0. Save original DOSINI/CASINI vectors BEFORE hooking them. ---
+    lda DOSINI
+    sta tmp_dosini
+    lda DOSINI+1
+    sta tmp_dosini+1
+    lda CASINI
+    sta tmp_casini
+    lda CASINI+1
+    sta tmp_casini+1
+
     ; --- 1. Compute dest = page_align_down(RAMTOP*256 - TOTAL_SIZE). ---
     lda RAMTOP
     sec
@@ -105,14 +125,21 @@ bootstrap_entry:
     lda dest_hi
     sta exp_hi
 
-    ; --- 2. Disable ANTIC DMA for the install. ---
+    ; Safety: dest must be above MIN_DEST_HI.
+    lda exp_hi
+    cmp #MIN_DEST_HI
+    bcs @safe
+    rts
+
+@safe:
+    ; --- 2. Disable ANTIC DMA. ---
     lda SDMCTL
     sta saved_sdmctl
     lda #0
     sta SDMCTL
     sta DMACTL
 
-    ; --- 3. Copy body file bytes. ---
+    ; --- 3. Copy body file bytes from BODY_SOURCE to (exp_*). ---
     lda #<BODY_SOURCE
     sta src_lo
     lda #>BODY_SOURCE
@@ -123,7 +150,7 @@ bootstrap_entry:
     sta count_hi
     jsr copy_block
 
-    ; --- 4. Zero BSS area. ---
+    ; --- 3b. Zero LOWBSS + VCTL (BSS area). ---
     clc
     lda exp_lo
     adc PATCH_BODY_FILE_SIZE
@@ -140,7 +167,7 @@ bootstrap_entry:
     sta count_hi
     jsr zero_block
 
-    ; --- 5. Compute delta. ---
+    ; --- 4. Compute delta = exp_base - NOMINAL_BASE ---
     sec
     lda exp_lo
     sbc #<NOMINAL_BASE
@@ -149,7 +176,7 @@ bootstrap_entry:
     sbc #>NOMINAL_BASE
     sta delta_hi
 
-    ; --- 6. Fixup pass. ---
+    ; --- 5. Walk the fixup table, patching every recorded pointer. ---
     lda PATCH_FIXUP_TABLE
     sta fixup_lo
     lda PATCH_FIXUP_TABLE+1
@@ -193,13 +220,14 @@ bootstrap_entry:
     jmp @fixup_loop
 @fixups_done:
 
-    ; --- 7. Initialize VCTL block at body[EXP_VCTL_BLOCK]. ---
+    ; --- 6. Initialize VCTL block at body[EXP_VCTL_BLOCK]. ---
     ldy #EXP_VCTL_BLOCK
     lda (exp_lo),y
     sta target_lo
     iny
     lda (exp_lo),y
     sta target_hi
+    
     ldy #0
     lda #'V'
     sta (target_lo),y
@@ -212,46 +240,58 @@ bootstrap_entry:
     iny
     lda #'L'
     sta (target_lo),y
+    
     ldy #VCTL_FLAGS
     lda #(VCTL_FLAG_METRONOME | VCTL_FLAG_API_READY)
     sta (target_lo),y
+    
     ldy #VCTL_REQUEST
     lda #0
     sta (target_lo),y
+    
     ldy #VCTL_PARAM0
     sta (target_lo),y
+    
     ldy #VCTL_PARAM1
     sta (target_lo),y
+    
     ldy #VCTL_CURSOR_X
     sta (target_lo),y
+    
     ldy #VCTL_CURSOR_Y
     sta (target_lo),y
+    
     ldy #EXP_API_SERVICE
     lda (exp_lo),y
     ldy #VCTL_ENTRY_LO
     sta (target_lo),y
+    
     ldy #EXP_API_SERVICE+1
     lda (exp_lo),y
     ldy #VCTL_ENTRY_HI
     sta (target_lo),y
+    
     ldy #EXP_VBI_HANDLER
     lda (exp_lo),y
     ldy #VCTL_VBI_LO
     sta (target_lo),y
+    
     ldy #EXP_VBI_HANDLER+1
     lda (exp_lo),y
     ldy #VCTL_VBI_HI
     sta (target_lo),y
+    
     ldy #EXP_WARM_START
     lda (exp_lo),y
     ldy #VCTL_REINIT_LO
     sta (target_lo),y
+    
     ldy #EXP_WARM_START+1
     lda (exp_lo),y
     ldy #VCTL_REINIT_HI
     sta (target_lo),y
 
-    ; --- 8. Save DOSINI/CASINI hooks. ---
+    ; --- 6b. Transfer original vectors to driver BSS. ---
     ldy #EXP_SAVED_DOSINI
     lda (exp_lo),y
     sta target_lo
@@ -259,11 +299,12 @@ bootstrap_entry:
     lda (exp_lo),y
     sta target_hi
     ldy #0
-    lda DOSINI
+    lda tmp_dosini
     sta (target_lo),y
     iny
-    lda DOSINI+1
+    lda tmp_dosini+1
     sta (target_lo),y
+    
     ldy #EXP_SAVED_CASINI
     lda (exp_lo),y
     sta target_lo
@@ -271,11 +312,13 @@ bootstrap_entry:
     lda (exp_lo),y
     sta target_hi
     ldy #0
-    lda CASINI
+    lda tmp_casini
     sta (target_lo),y
     iny
-    lda CASINI+1
+    lda tmp_casini+1
     sta (target_lo),y
+
+    ; --- 7. Install DOSINI/CASINI hooks. ---
     ldy #EXP_DOSINI_HOOK
     lda (exp_lo),y
     sta DOSINI
@@ -289,7 +332,7 @@ bootstrap_entry:
     lda (exp_lo),y
     sta CASINI+1
 
-    ; --- 9. Run relocated _InitVbi. ---
+    ; --- 8. Run relocated _InitVbi. ---
     ldy #EXP_INIT_VBI
     lda (exp_lo),y
     sta jmp_vec
@@ -298,7 +341,7 @@ bootstrap_entry:
     sta jmp_vec+1
     jsr trampoline
 
-    ; --- 10. Lower RAMTOP to protect the driver. ---
+    ; --- 9. Lower RAMTOP to protect the driver. ---
     sei
     lda #1
     sta CRITIC
@@ -315,34 +358,35 @@ bootstrap_entry:
     sta CRITIC
     cli
 
-    ; --- 8b. Force CIO CLOSE #0, then OPEN E: ---
+    ; --- 10. Force CIO CLOSE #0, then OPEN E: ---
     ldx #0
-    lda #$0C                        ; CIO CLOSE command
+    lda #$0C
     sta ICCOM,x
     jsr CIO_CALL
-
     ldx #0
-    lda #$03                        ; CIO OPEN command
+    lda #$03
     sta ICCOM,x
     lda #<e_device_name
     sta ICBAL,x
     lda #>e_device_name
     sta ICBAH,x
-    lda #$0C                        ; mode: read+write, Graphics 0
+    lda #$0C
     sta ICAX1,x
     lda #0
     sta ICAX2,x
     jsr CIO_CALL
 
-    ; --- 8b2. Force OS screen re-init (Graphics 0) ---
+    ; --- 10b. Force OS screen re-init (Graphics 0) ---
     lda #0
     tax
     jsr $E453
 
-    ; --- 8c. Restore ANTIC DMA ---
+    ; --- 11. Restore ANTIC DMA ---
     lda saved_sdmctl
     sta SDMCTL
     sta DMACTL
+
+    ; --- 12. Black out ANTIC border. ---
     lda #$00
     sta COLOR4
     sta COLBK
@@ -369,7 +413,6 @@ bootstrap_entry:
     sta COLBK
     rts
 
-    .align $100
 trampoline:
     jmp (jmp_vec)
 jmp_vec:

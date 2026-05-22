@@ -12,12 +12,9 @@
 EXP_DOSINI_HOOK = 2
 EXP_CASINI_HOOK = 4
 
-; Install our DOSINI/CASINI hooks. The pointer table is read with absolute
-; addressing so the linker generates 3-byte instructions (opcode + 16-bit
-; addr) — those addresses go through the runtime relocator, unlike the
-; `#</#>` immediate-byte pattern which would corrupt the previous opcode
-; when MEMLO is not page-aligned.
-install_hooks:
+; Re-install our hooks into HATABS/VECTORS. 
+; Safe to call at both cold and warm start.
+re_install_hooks:
     lda __VERA_EXPORTS__+EXP_DOSINI_HOOK
     sta DOSINI
     lda __VERA_EXPORTS__+EXP_DOSINI_HOOK+1
@@ -35,27 +32,31 @@ common_reinit:
     ; Ensure VBI is re-installed.
     jsr _InitVbi
 
-    ; Keep the warm-start and cartridge vectors hooked across transitions.
-    jsr install_hooks
-
-    ; Re-run the resident VERA warm-start init directly in asm.
+    ; Re-run the resident VERA warm-start init.
     jsr _vera_warm_reinit
 
-    ; Re-establish E:/S: HATABS hooks — the OS rebuilds HATABS to defaults
-    ; on every warm start, so without this every reset loses VERA mirror.
+    ; Always re-install hooks to cover the vectors destroyed by reset.
+    jsr re_install_hooks
+
+    ; Re-establish E:/S: HATABS hooks.
     jsr _install_es_hooks
     rts
 
 ; Standard DOS warm-start path.
+warmst = $09
+
 _vera_dosini_asm_hook:
+    ; Always re-init (video/hooks) but avoid infinite recursion by not
+    ; chaining through saved vectors during the re-init process itself.
     jsr common_reinit
+
+@chain:
     lda _vera_saved_dosini
     sta @jmp+1
     lda _vera_saved_dosini+1
     sta @jmp+2
 @jmp:
-    jmp $0000                   ; operand patched at runtime; direct JMP avoids
-                                ; 6502 page-crossing bug of jmp (abs) at $xxFF
+    jmp $0000                   ; operand patched at runtime
 
 ; DOS "cartridge mode" path.
 ; Run common_reinit first (patches HATABS, installs VBI), then tail-call saved

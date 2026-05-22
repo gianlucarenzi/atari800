@@ -1555,8 +1555,6 @@ _install_es_hooks:
     cpx #HATABS_SIZE
     bne @scan
 
-    lda save_zp_cb
-    sta HATABS_PTR
     lda save_zp_cc
     sta HATABS_PTR+1
 
