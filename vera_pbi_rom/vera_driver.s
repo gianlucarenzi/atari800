@@ -8,7 +8,8 @@
 
     .export _vera_warm_reinit, _CallVeraApiService, _VeraApiService
     .import _vera_x16_font, _vera_ctl_block
-    .import _vera_cursor_invalidate, cursor_draw, _vera_trigger_click, _vera_scroll_hook
+    .import _vera_cursor_invalidate, cursor_draw, cursor_at_x, cursor_at_y
+    .import _vera_trigger_click, _vera_scroll_hook
 
     .include "vera_common.inc"
     .include "atari.inc"
@@ -337,11 +338,15 @@ _VeraPutByte:
     jsr print_literal
 
 @done_putc:
-    ; Sync back to OS shadow registers.
+    ; Sync position to OS shadows and latch for VBI, then draw cursor immediately
+    ; so it is never invisible after any putc/scroll/edit operation.
     lda _vera_ctl_block + VERACTL_CURSOR_X
+    sta cursor_at_x
     sta COLCRS
     lda _vera_ctl_block + VERACTL_CURSOR_Y
+    sta cursor_at_y
     sta ROWCRS
+    jsr cursor_draw
     rts
 
 

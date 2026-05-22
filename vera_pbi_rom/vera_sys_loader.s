@@ -22,17 +22,7 @@
 ; assemble_autorun.py overwrites them after linking.
 
     .setcpu "6502"
-
-; ============================================================================
-; OS equates
-; ============================================================================
-
-MEMLO       = $02E7
-DOSINI      = $000C
-CASINI      = $0002
-SETVBV      = $E45C
-COLBK       = $D01A         ; GTIA background/border colour register
-COLOR4      = $02C8         ; OS shadow of COLBK (restored each VBI)
+    .include "atari.inc"
 
 ; ============================================================================
 ; ZP scratch (safe — bootstrap runs before BASIC starts)

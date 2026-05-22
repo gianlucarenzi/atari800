@@ -4,6 +4,7 @@
     .export _vera_save_c_sp, _vera_warm_start
     .export _vera_cursor_invalidate
     .export _vera_trigger_click
+    .export cursor_draw, cursor_at_x, cursor_at_y
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
     .import _vera_kbd_repeat_tick
@@ -21,8 +22,7 @@
 frames_until_click:  .res 1
 click_active:        .res 1
 
-cursor_frames:       .res 1         ; countdown to next blink toggle
-cursor_drawn:        .res 1         ; 0 = erased, 1 = drawn (also = phase)
+cursor_drawn:        .res 1         ; 0 = erased, 1 = drawn
 cursor_at_x:         .res 1         ; latched X where cursor is currently drawn
 cursor_at_y:         .res 1         ; latched Y where cursor is currently drawn
 cursor_saved_char:   .res 1         ; original char under cursor
@@ -120,8 +120,6 @@ _vera_warm_start:
 ; so foreground VRAM writes are never interrupted.
 ; ============================================================================
 
-vbi_counter:      .res 1        ; counter to skip some VBI ticks
-
 _vbi_handler:
     lda CRITIC
     beq @ok
@@ -139,13 +137,8 @@ _vbi_handler:
     ; Keyboard repeat tick runs every VBI; pushes held-key events to ring buffer.
     jsr _vera_kbd_repeat_tick
 
-    ; Cursor tick runs every 4th VBI (approx 15Hz)
-    inc vbi_counter
-    lda vbi_counter
-    and #3
-    bne @skip_cursor
+    ; Cursor tick runs every VBI — keeps cursor always visible.
     jsr cursor_tick
-@skip_cursor:
 
     pla
     tay
