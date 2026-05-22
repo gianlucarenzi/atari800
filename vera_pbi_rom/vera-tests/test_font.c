@@ -9,5 +9,4 @@ int main(void) {
             printf("%c%c", 27, i);
         }
     }
-    return 0;
 }
