@@ -597,6 +597,53 @@ Questo fix funziona correttamente per qualsiasi prompt (single char `?`, doppio 
 
 ---
 
+---
+
+## Riorganizzazione branch e repository
+
+Al termine dello sviluppo della `feature/refactorEditor`, tutti i branch di lavoro sono stati consolidati in `master` tramite fast-forward merge:
+
+1. `feature/refactorEditor` → `fpga-47.0.2` (fast-forward, 8 commit)
+2. `fpga-47.0.2` → `master` (fast-forward, 19 commit totali)
+
+Dopo il merge, i branch locali `feature/refactorEditor` e `fpga-47.0.2` sono stati eliminati insieme ai corrispondenti branch remoti (`feature/from-detached-head`, `feature/refactorEditor`, `fpga-47.0.2`, `handle_for_system_editor`). Il repository mantiene ora un unico branch `master`. L'URL del remote è stato contestualmente convertito da HTTPS a SSH (`git@github.com:gianlucarenzi/atari800.git`).
+
+---
+
+## Directory `vera-tests` e infrastruttura di test
+
+È stata creata la directory `vera_pbi_rom/vera-tests/` per raccogliere i programmi di test compilati con il toolchain cc65 e distribuiti nell'immagine ATR. Il file `test_font.c` è stato spostato dalla radice del repository in questa directory.
+
+Il `Makefile` è stato aggiornato di conseguenza:
+
+- `TEST_SRC` punta ora a `vera-tests/test_font.c`
+- Aggiunta coppia di variabili `TEST_GS_SRC` / `TEST_GS_EXE` per il nuovo test
+- Aggiunta regola di build per `TESTGS.COM`
+- Target `atr`: aggiunta copia di `TESTGS.COM` nell'immagine disco
+- Target `clean`: aggiunta pulizia di entrambi gli eseguibili di test
+
+Il nome del file eseguibile per il nuovo test è `TESTGS.COM` (senza underscore) per rispettare il vincolo di DOS 2.0s, che accetta solo caratteri alfanumerici nei nomi file.
+
+---
+
+### Test gradiente colore + scroll animato (`vera-tests/test_gradient_scroll.c`)
+
+**Scopo:** verificare il corretto funzionamento dei registri di scroll Layer 1 di VERA (`L1_HSCR_L/H`, `L1_VSCR_L/H`) con sincronizzazione VBI e accesso diretto VRAM.
+
+**Funzionamento:**
+
+1. **Riempimento gradiente:** Scrive l'intera tilemap VERA 128×64 con celle a sfondo colorato. L'indice di colore (0–15) è calcolato come `(riga + colonna) & 0x0F`, producendo un pattern diagonale. Ogni cella usa `char=0x20` (spazio) con `colour=(idx<<4)|idx` (bg==fg), ottenendo blocchi solidi di colore puro. Il riempimento avviene con `CRITIC=1` per prevenire interferenze del driver VBI.
+
+2. **Loop di animazione:** Ad ogni ciclo, lo scroll viene animato in quattro direzioni consecutive (su → giù → destra → sinistra), coprendo 50 pixel per direzione (`SCROLL_STEP`). La sincronizzazione avviene tramite polling di `RTCLOK` ($0014), il byte meno significativo del real-time clock OS che si incrementa ad ogni VBI.
+
+3. **Profilo di velocità a onda triangolare:** La variabile `speed` (pixel/frame) segue un profilo triangolare tra `MIN_SPEED=1` e `MAX_SPEED=8`. Dopo ogni ciclo completo delle quattro direzioni, `speed` viene incrementato o decrementato di 1 in base alla direzione corrente (`delta = +1` o `-1`). Agli estremi, `delta` si inverte, producendo un'accelerazione e decelerazione continua e fluida.
+
+4. **Wrapping scroll:** Tutti i calcoli di scroll gestiscono il wrap modulo `SCROLL_WRAP=1024` (estensione pixel della tilemap a pieno carico: 128×8=1024 in orizzontale, 64×16=1024 in verticale con font 8×16). Funzioni helper dedicate (`vscroll_add`, `vscroll_sub`, `hscroll_add`, `hscroll_sub`) gestiscono il caso di sottrazione con wrap per evitare underflow su `unsigned int`.
+
+5. **Uscita:** Alla pressione di qualsiasi tasto (`kbhit()`), l'animazione si interrompe, lo scroll viene riportato a (0,0) e il programma termina.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 
