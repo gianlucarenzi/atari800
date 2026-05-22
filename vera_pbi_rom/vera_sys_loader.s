@@ -1,25 +1,5 @@
-; vera_sys_loader.s — one-shot bootstrap that installs the relocatable VERA.SYS body.
-;
-; AUTORUN.SYS layout produced by assemble_autorun.py:
-;   body bytes  → loaded at BODY_SOURCE  (fixed, $4000)
-;   fixup table → loaded right after body, at PATCH_FIXUP_TABLE
-;   loader code → loaded at $5000 (this file)
-;
-; At install time:
-;   1. read MEMLO (current low end of free RAM)
-;   2. copy body file bytes to that address
-;   3. for each entry in the fixup table, add (MEMLO - NOMINAL_BASE) to the
-;      16-bit pointer at body+offset — patches every internal absolute ref
-;   4. populate the VCTL block (last 16 bytes of the resident image) using
-;      the EXPORTS pointer table at body+0
-;   5. install DOSINI/CASINI hooks; save the previous vectors into the
-;      relocated _vera_saved_dosini/_vera_saved_casini slots
-;   6. SETVBV(7) with the relocated _vbi_handler address
-;   7. jsr the relocated _vera_warm_reinit to draw the banner
-;   8. bump MEMLO and rts back to DOS
-;
-; Patch constants live at fixed offsets at the top of the binary;
-; assemble_autorun.py overwrites them after linking.
+; vera_sys_loader.s — robust bootstrap that installs the relocatable VERA.SYS body.
+; Based on the original loader, improved for safer RAMTOP/MEMTOP management.
 
     .setcpu "6502"
     .include "atari.inc"
@@ -28,10 +8,10 @@
 ; ZP scratch (safe — bootstrap runs before BASIC starts)
 ; ============================================================================
 
-dest_lo     = $80           ; mutated by copy_block; do not use afterwards
-dest_hi     = $81           ; ditto — use exp_lo/hi for the saved base
+dest_lo     = $80
+dest_hi     = $81
 src_lo      = $82
-src_hi      = $83           ; mutated by copy_block
+src_hi      = $83
 fixup_lo    = $84
 fixup_hi    = $85
 target_lo   = $86
@@ -40,8 +20,9 @@ delta_lo    = $88
 delta_hi    = $89
 count_lo    = $8A
 count_hi    = $8B
-exp_lo      = $8C           ; canonical "dest_base" pointer (= MEMLO at entry)
+exp_lo      = $8C
 exp_hi      = $8D
+saved_sdmctl = $8E
 
 ; ============================================================================
 ; Build-time constants
@@ -49,16 +30,19 @@ exp_hi      = $8D
 
 BODY_SOURCE   = $4000
 NOMINAL_BASE  = $A000
+CIO_CALL      = $E456
 
-; Minimum address at which the resident driver may live. DOS 2.0s / 2.5 /
-; MyDOS load DUP.SYS at the fixed range $1F0C-$3305; any resident below
-; $3306 gets overwritten the moment the user types DOS. Floor at $3400 to
-; clear that range with a small safety margin.
-; The $4000-$7FFF window is reserved by the 130XE / 320XE / 576XE / RAMBO
-; bank-switching hardware, so this floor never bumps past $3FFF in
-; practice — MEMLO above $3400 means DOS plus other handlers already
-; consumed everything below, and we just sit right on top of MEMLO.
-MIN_DEST_HI   = $34
+; ============================================================================
+; Patch constants (must remain at the top)
+; ============================================================================
+
+    .export PATCH_BODY_FILE_SIZE, PATCH_BODY_TOTAL_SIZE
+    .export PATCH_FIXUP_TABLE
+    .export bootstrap_entry
+
+PATCH_BODY_FILE_SIZE:    .word $0000
+PATCH_BODY_TOTAL_SIZE:   .word $0000
+PATCH_FIXUP_TABLE:       .word $0000
 
 ; ============================================================================
 ; EXPORTS table offsets (mirror vera_stub.s)
@@ -98,75 +82,48 @@ VCTL_FLAG_API_READY = $80
 
     .segment "CODE"
 
-; ============================================================================
-; Patch constants — assemble_autorun.py overwrites these after linking. They
-; MUST stay at the very start of the loader so the patcher finds them at a
-; known offset (also exported via the loader map file).
-; ============================================================================
-
-    .export PATCH_BODY_FILE_SIZE, PATCH_BODY_TOTAL_SIZE
-    .export PATCH_FIXUP_TABLE
-    .export bootstrap_entry
-
-PATCH_BODY_FILE_SIZE:    .word $0000
-PATCH_BODY_TOTAL_SIZE:   .word $0000
-PATCH_FIXUP_TABLE:       .word $0000
-
-; ============================================================================
-; bootstrap_entry — installer entry point (called via AUTORUN trailer)
-; ============================================================================
-
 bootstrap_entry:
-    ; --- 1. Pick a destination address: max(MEMLO, $3400). ---
-    ;       Floor justification — see MIN_DEST_HI commentary above.
-    lda MEMLO
-    sta dest_lo
-    lda MEMLO+1
-    cmp #MIN_DEST_HI
-    bcs @keep_memlo             ; MEMLO_hi >= $34 → use MEMLO as-is
-    lda #$00
-    sta dest_lo
-    lda #MIN_DEST_HI
-@keep_memlo:
+    ; --- 1. Compute dest = page_align_down(RAMTOP*256 - TOTAL_SIZE). ---
+    lda RAMTOP
+    sec
+    sbc PATCH_BODY_TOTAL_SIZE+1
+    pha
+    lda PATCH_BODY_TOTAL_SIZE
+    beq @aligned
+    pla
+    sec
+    sbc #1
+    pha
+@aligned:
+    pla
     sta dest_hi
-    ; Stash the resolved base into exp_* for the rest of the bootstrap;
-    ; copy_block clobbers dest_*.
+    lda #0
+    sta dest_lo
+
     lda dest_lo
     sta exp_lo
     lda dest_hi
     sta exp_hi
 
-    ; --- Safety: destination must be below BODY_SOURCE so a forward copy
-    ;     doesn't smash the source mid-flight. With the $3400 floor and
-    ;     the $4000-$7FFF bank-switch zone reserved, this is structurally
-    ;     guaranteed; the check is belt-and-braces. ---
-    lda exp_hi
-    cmp #>BODY_SOURCE
-    bcc @safe
-    rts                         ; bail out silently
+    ; --- 2. Disable ANTIC DMA for the install. ---
+    lda SDMCTL
+    sta saved_sdmctl
+    lda #0
+    sta SDMCTL
+    sta DMACTL
 
-@safe:
-    ; --- 2. Copy body file bytes from BODY_SOURCE to (exp_*). ---
+    ; --- 3. Copy body file bytes. ---
     lda #<BODY_SOURCE
     sta src_lo
     lda #>BODY_SOURCE
     sta src_hi
-
     lda PATCH_BODY_FILE_SIZE
     sta count_lo
     lda PATCH_BODY_FILE_SIZE+1
     sta count_hi
-
     jsr copy_block
-    ; src_hi/dest_hi are now trashed; use exp_lo/hi from here on.
 
-    ; --- 2b. Zero LOWBSS + VCTL (BSS area above the file image).
-    ;        LOWBSS is type=bss so it produces no file bytes; the RAM at that
-    ;        address contains whatever was left from a previous session.  If
-    ;        PATCH_BODY_FILE_SIZE grew (e.g. new code was added), first_init
-    ;        and other state variables shift to a new address that may hold
-    ;        stale non-zero values — causing the banner to be skipped and
-    ;        cursor state to start corrupt.  Zeroing here fixes this. ---
+    ; --- 4. Zero BSS area. ---
     clc
     lda exp_lo
     adc PATCH_BODY_FILE_SIZE
@@ -183,7 +140,7 @@ bootstrap_entry:
     sta count_hi
     jsr zero_block
 
-    ; --- 3. Compute delta = exp_base - NOMINAL_BASE ---
+    ; --- 5. Compute delta. ---
     sec
     lda exp_lo
     sbc #<NOMINAL_BASE
@@ -192,7 +149,7 @@ bootstrap_entry:
     sbc #>NOMINAL_BASE
     sta delta_hi
 
-    ; --- 4. Walk the fixup table, patching every recorded pointer. ---
+    ; --- 6. Fixup pass. ---
     lda PATCH_FIXUP_TABLE
     sta fixup_lo
     lda PATCH_FIXUP_TABLE+1
@@ -201,12 +158,10 @@ bootstrap_entry:
 @fixup_loop:
     ldy #0
     lda (fixup_lo),y
-    sta target_lo               ; offset LO
+    sta target_lo
     iny
     lda (fixup_lo),y
-    sta target_hi               ; offset HI
-
-    ; Advance fixup_ptr by 2.
+    sta target_hi
     lda fixup_lo
     clc
     adc #2
@@ -214,13 +169,10 @@ bootstrap_entry:
     bcc @check_term
     inc fixup_hi
 @check_term:
-    ; Terminator = $FFFF.
     lda target_lo
     and target_hi
     cmp #$FF
     beq @fixups_done
-
-    ; target_addr = exp_base + offset (offset currently in target_lo/hi).
     clc
     lda target_lo
     adc exp_lo
@@ -228,8 +180,6 @@ bootstrap_entry:
     lda target_hi
     adc exp_hi
     sta target_hi
-
-    ; Read 16-bit value at *target, add delta, write back.
     ldy #0
     lda (target_lo),y
     clc
@@ -239,20 +189,17 @@ bootstrap_entry:
     lda (target_lo),y
     adc delta_hi
     sta (target_lo),y
-    sta COLBK                 ; raster bar continues during fixup pass
-
+    sta COLBK
     jmp @fixup_loop
-
 @fixups_done:
-    ; --- 5. Initialize VCTL block at body[EXP_VCTL_BLOCK]. ---
+
+    ; --- 7. Initialize VCTL block at body[EXP_VCTL_BLOCK]. ---
     ldy #EXP_VCTL_BLOCK
     lda (exp_lo),y
     sta target_lo
     iny
     lda (exp_lo),y
     sta target_hi
-    ; (target_lo,target_hi) now points at the 16-byte VCTL slot.
-
     ldy #0
     lda #'V'
     sta (target_lo),y
@@ -265,7 +212,6 @@ bootstrap_entry:
     iny
     lda #'L'
     sta (target_lo),y
-
     ldy #VCTL_FLAGS
     lda #(VCTL_FLAG_METRONOME | VCTL_FLAG_API_READY)
     sta (target_lo),y
@@ -280,8 +226,6 @@ bootstrap_entry:
     sta (target_lo),y
     ldy #VCTL_CURSOR_Y
     sta (target_lo),y
-
-    ; EXP_API_SERVICE → VCTL_ENTRY
     ldy #EXP_API_SERVICE
     lda (exp_lo),y
     ldy #VCTL_ENTRY_LO
@@ -290,8 +234,6 @@ bootstrap_entry:
     lda (exp_lo),y
     ldy #VCTL_ENTRY_HI
     sta (target_lo),y
-
-    ; EXP_VBI_HANDLER → VCTL_VBI
     ldy #EXP_VBI_HANDLER
     lda (exp_lo),y
     ldy #VCTL_VBI_LO
@@ -300,8 +242,6 @@ bootstrap_entry:
     lda (exp_lo),y
     ldy #VCTL_VBI_HI
     sta (target_lo),y
-
-    ; EXP_WARM_START → VCTL_REINIT
     ldy #EXP_WARM_START
     lda (exp_lo),y
     ldy #VCTL_REINIT_LO
@@ -311,8 +251,7 @@ bootstrap_entry:
     ldy #VCTL_REINIT_HI
     sta (target_lo),y
 
-    ; --- 6. Save current DOSINI/CASINI into the relocated saved-vector slots,
-    ;       then install our hooks. ---
+    ; --- 8. Save DOSINI/CASINI hooks. ---
     ldy #EXP_SAVED_DOSINI
     lda (exp_lo),y
     sta target_lo
@@ -325,7 +264,6 @@ bootstrap_entry:
     iny
     lda DOSINI+1
     sta (target_lo),y
-
     ldy #EXP_SAVED_CASINI
     lda (exp_lo),y
     sta target_lo
@@ -338,16 +276,12 @@ bootstrap_entry:
     iny
     lda CASINI+1
     sta (target_lo),y
-
-    ; Install DOSINI = relocated _vera_dosini_asm_hook.
     ldy #EXP_DOSINI_HOOK
     lda (exp_lo),y
     sta DOSINI
     iny
     lda (exp_lo),y
     sta DOSINI+1
-
-    ; Install CASINI = relocated _vera_casini_asm_hook.
     ldy #EXP_CASINI_HOOK
     lda (exp_lo),y
     sta CASINI
@@ -355,10 +289,7 @@ bootstrap_entry:
     lda (exp_lo),y
     sta CASINI+1
 
-    ; --- 7. Run relocated _InitVbi — it does SETVBV(7) AND initializes the
-    ;        cursor/metronome counters in LOWBSS. Skipping the counter init
-    ;        is what makes the cursor "wake up" only after a random number
-    ;        of frames (whatever garbage cursor_frames happened to hold). ---
+    ; --- 9. Run relocated _InitVbi. ---
     ldy #EXP_INIT_VBI
     lda (exp_lo),y
     sta jmp_vec
@@ -367,21 +298,56 @@ bootstrap_entry:
     sta jmp_vec+1
     jsr trampoline
 
-    ; --- 8. Bump MEMLO past the resident block. ---
-    clc
-    lda exp_lo
-    adc PATCH_BODY_TOTAL_SIZE
-    sta MEMLO
+    ; --- 10. Lower RAMTOP to protect the driver. ---
+    sei
+    lda #1
+    sta CRITIC
     lda exp_hi
-    adc PATCH_BODY_TOTAL_SIZE+1
-    sta MEMLO+1
+    sta RAMTOP
+    sec
+    lda exp_lo
+    sbc #1
+    sta MEMTOP
+    lda exp_hi
+    sbc #0
+    sta MEMTOP+1
+    lda #0
+    sta CRITIC
+    cli
 
-    ; --- 9. Black out ANTIC border before banner (decrunch leaves a stale colour). ---
+    ; --- 8b. Force CIO CLOSE #0, then OPEN E: ---
+    ldx #0
+    lda #$0C                        ; CIO CLOSE command
+    sta ICCOM,x
+    jsr CIO_CALL
+
+    ldx #0
+    lda #$03                        ; CIO OPEN command
+    sta ICCOM,x
+    lda #<e_device_name
+    sta ICBAL,x
+    lda #>e_device_name
+    sta ICBAH,x
+    lda #$0C                        ; mode: read+write, Graphics 0
+    sta ICAX1,x
+    lda #0
+    sta ICAX2,x
+    jsr CIO_CALL
+
+    ; --- 8b2. Force OS screen re-init (Graphics 0) ---
+    lda #0
+    tax
+    jsr $E453
+
+    ; --- 8c. Restore ANTIC DMA ---
+    lda saved_sdmctl
+    sta SDMCTL
+    sta DMACTL
     lda #$00
     sta COLOR4
     sta COLBK
 
-    ; --- 9b. Call relocated _vera_warm_reinit (banner + font upload). ---
+    ; --- 13. Call relocated _vera_warm_reinit. ---
     ldy #EXP_WARM_REINIT
     lda (exp_lo),y
     sta jmp_vec
@@ -390,7 +356,7 @@ bootstrap_entry:
     sta jmp_vec+1
     jsr trampoline
 
-    ; --- 10. Install E:/S: HATABS hooks so PRINT mirrors to VERA. ---
+    ; --- 14. Install E:/S: HATABS hooks. ---
     ldy #EXP_INSTALL_ES
     lda (exp_lo),y
     sta jmp_vec
@@ -399,28 +365,46 @@ bootstrap_entry:
     sta jmp_vec+1
     jsr trampoline
 
-    ; --- Restore the border to whatever colour the OS expects, otherwise
-    ;     the last raster-bar byte stays on screen for ~1 frame before the
-    ;     next VBI copies COLOR4 → COLBK on its own. ---
     lda COLOR4
     sta COLBK
-
     rts
 
-; ============================================================================
-; trampoline — indirect jsr through jmp_vec.
-; ============================================================================
-
+    .align $100
 trampoline:
     jmp (jmp_vec)
-
 jmp_vec:
     .word $0000
+e_device_name:
+    .byte 'E', ':', $9B
 
-; ============================================================================
-; zero_block — zero (count_lo,count_hi) bytes at (dest_lo,dest_hi).
-; Trashes A, X, Y.
-; ============================================================================
+copy_block:
+    ldx count_hi
+    beq @tail
+@page:
+    ldy #0
+@inner:
+    lda (src_lo),y
+    sta (dest_lo),y
+    sta COLBK
+    iny
+    bne @inner
+    inc src_hi
+    inc dest_hi
+    dex
+    bne @page
+@tail:
+    ldy count_lo
+    beq @done
+    ldy #0
+@tail_loop:
+    lda (src_lo),y
+    sta (dest_lo),y
+    sta COLBK
+    iny
+    cpy count_lo
+    bne @tail_loop
+@done:
+    rts
 
 zero_block:
     lda #0
@@ -441,40 +425,6 @@ zero_block:
     ldy #0
 @tail_loop:
     sta (dest_lo),y
-    iny
-    cpy count_lo
-    bne @tail_loop
-@done:
-    rts
-
-; ============================================================================
-; copy_block — copy (count_lo,count_hi) bytes from (src_lo,src_hi) to
-; (dest_lo,dest_hi). Forward copy; trashes dest_hi/src_hi/X/Y.
-; ============================================================================
-
-copy_block:
-    ldx count_hi
-    beq @tail
-@page:
-    ldy #0
-@inner:
-    lda (src_lo),y
-    sta (dest_lo),y
-    sta COLBK                 ; decruncher-style raster bar
-    iny
-    bne @inner
-    inc src_hi
-    inc dest_hi
-    dex
-    bne @page
-@tail:
-    ldy count_lo
-    beq @done
-    ldy #0
-@tail_loop:
-    lda (src_lo),y
-    sta (dest_lo),y
-    sta COLBK
     iny
     cpy count_lo
     bne @tail_loop
