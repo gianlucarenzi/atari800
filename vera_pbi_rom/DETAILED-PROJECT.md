@@ -644,6 +644,24 @@ Il nome del file eseguibile per il nuovo test è `TESTGS.COM` (senza underscore)
 
 ---
 
+### Cursore statico — nessun lampeggio (`vera_sys_vbi.s`, `vera_driver.s`, `vera_common.inc`)
+
+**Requisito:** il cursore non deve mai lampeggiare né diventare invisibile.
+
+**Causa del lampeggio precedente:** `_vera_cursor_invalidate` (chiamata all'inizio di ogni `_VeraPutByte`, `scroll_up`, `do_clear`, `do_delete_line`, ecc.) cancellava il cursore (`cursor_drawn=0`). Il VBI ridisegnava il cursore solo ogni 4° frame (`vbi_counter & 3`), lasciandolo invisibile per finestre di 16–67 ms — visibile come lampeggio durante qualsiasi output.
+
+**Correzione:**
+
+1. **`vera_driver.s` — `@done_putc`**: dopo ogni operazione putc, aggiorna immediatamente le coordinate latch del VBI (`cursor_at_x`, `cursor_at_y`) e chiama `cursor_draw` prima di tornare al chiamante. Il cursore riappare entro i cicli macchina della scrittura VRAM, non al prossimo tick VBI.
+
+2. **`vera_sys_vbi.s` — `_vbi_handler`**: rimosso il divisore `and #3` (`vbi_counter`); `cursor_tick` ora gira ogni frame VBI. Riduce a ≤16 ms il window residuo per eventi di movimento cursore non passanti per putc (es. sincronizzazione ROWCRS_OS da tasti freccia).
+
+3. **Cleanup**: rimossi `cursor_frames` (LOWBSS, mai letto/scritto — residuo di un meccanismo blink non implementato), `vbi_counter` (non più necessario), e la costante orfana `VBI_CURSOR_RATE = 20` da `vera_common.inc`.
+
+4. **Export aggiunti** in `vera_sys_vbi.s`: `cursor_draw`, `cursor_at_x`, `cursor_at_y` — accessibili da `vera_driver.s` per il ridisegno immediato post-putc.
+
+---
+
 ## Strategia di integrazione
 Il driver rende effettivamente la scheda VERA il dispositivo di visualizzazione *primario*. Le routine OS PUT BYTE originali *non* vengono chiamate; il driver custom reindirizza invece tutto l'output di testo direttamente nella VRAM di VERA. Impostando i margini di sistema (`LMARGIN`, `RMARGIN`) a 0/79 durante l'OPEN, il driver garantisce che il software OS Atari veda un dispositivo standard a 80 colonne.
 
