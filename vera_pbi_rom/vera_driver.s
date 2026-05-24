@@ -192,6 +192,8 @@ _vera_warm_reinit:
     sta COLCRS
     lda #0
     sta CRITIC
+    lda #0
+    sta PBI_LATCH
     rts
 
 ; ============================================================================
