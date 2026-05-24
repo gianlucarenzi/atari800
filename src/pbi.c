@@ -289,7 +289,7 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 #endif
 #ifdef PBI_VERAX16
 			if (PBI_VERAX16_enabled && PBI_VERAX16_D1ffPutByte(byte) != PBI_NOT_HANDLED) {
-				/* handled - MPD+EXSEL active, ROM at $D800 */
+				/* handled */
 				fp_active = FALSE;
 				return;
 			}
