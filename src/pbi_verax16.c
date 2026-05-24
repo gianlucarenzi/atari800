@@ -2154,6 +2154,13 @@ void PBI_VERAX16_GetRegSnap(VERA_RegSnap *s)
     memcpy(s->dc, vera_dc, sizeof(s->dc));
     memcpy(s->l0,  vera_l0,    7);
     memcpy(s->l1,  vera_l1,    7);
+    s->fx_x_pos = fx_pixel_pos_x;
+    s->fx_y_pos = fx_pixel_pos_y;
+    s->fx_x_incr = fx_pixel_incr_x;
+    s->fx_y_incr = fx_pixel_incr_y;
+    /* Inizializza temporaneamente a 0 finché non vengono definiti i registri dedicati */
+    s->fx_x_incr_y = 0;
+    s->fx_y_incr_y = 0;
 }
 
 const UBYTE *PBI_VERAX16_GetVRAMPtr(void)

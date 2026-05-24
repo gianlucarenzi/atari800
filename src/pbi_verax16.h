@@ -35,6 +35,7 @@
 
 #include "atari.h"
 #include <stdio.h>
+#include <stdint.h>
 
 /* Lifecycle */
 int  PBI_VERAX16_Initialise(int *argc, char *argv[]);
@@ -64,6 +65,13 @@ typedef struct {
     UBYTE dc[8][4]; /* DC banks: 0=Video/Scale, 1=Start/Stop, 2=FX Ctrl, 3=FX Incr, 4=FX Pos, 5=FX Pos, 6=FX Cache */
     UBYTE l0[7];   /* Layer 0: CONFIG, MAPBASE, TILEBASE, HSCR_L/H, VSCR_L/H */
     UBYTE l1[7];   /* Layer 1: same                                         */
+    /* Affine FX registers */
+    int32_t fx_x_pos;
+    int32_t fx_y_pos;
+    int16_t fx_x_incr;
+    int16_t fx_y_incr;
+    int16_t fx_x_incr_y;
+    int16_t fx_y_incr_y;
 } VERA_RegSnap;
 
 void            PBI_VERAX16_GetRegSnap(VERA_RegSnap *s);

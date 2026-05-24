@@ -236,6 +236,60 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
 }
 
 /* ------------------------------------------------------------------
+ * Render an affine layer.
+ * ------------------------------------------------------------------ */
+static void render_affine_layer(UBYTE *row, const UBYTE *vram, int layer,
+                                const VERA_RegSnap *rs, int py, int start, int end)
+{
+    const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
+    UBYTE l_config = l[0];
+    UBYTE l_mapbase = l[1];
+    UBYTE l_tilebase = l[2];
+    
+    int color_depth = l_config & 0x03;
+    int bpp = 1 << color_depth;
+    int map_w_log2 = 5 + ((l_config >> 4) & 0x03); /* 32, 64, 128, 256 tiles width */
+    int map_h_log2 = 5 + ((l_config >> 6) & 0x03);
+    int tile_w_log2 = (l_tilebase & 1) ? 4 : 3;    /* 16 or 8 */
+    int tile_h_log2 = (l_tilebase & 2) ? 4 : 3;
+    ULONG map_base = (ULONG)l_mapbase * 512u;
+    ULONG tile_base = (ULONG)(l_tilebase & 0xFCu) * 512u;
+
+    int32_t curr_x = rs->fx_x_pos + (py * rs->fx_x_incr_y);
+    int32_t curr_y = rs->fx_y_pos + (py * rs->fx_y_incr_y);
+
+    for (int px = start; px < end; px++) {
+        int map_x = (curr_x >> 9) & ((1 << (map_w_log2 + tile_w_log2)) - 1);
+        int map_y = (curr_y >> 9) & ((1 << (map_h_log2 + tile_h_log2)) - 1);
+
+        int tile_x = map_x >> tile_w_log2;
+        int tile_y = map_y >> tile_h_log2;
+        int pixel_x = map_x & ((1 << tile_w_log2) - 1);
+        int pixel_y = map_y & ((1 << tile_h_log2) - 1);
+
+        ULONG map_addr = map_base + (ULONG)((tile_y * (1 << map_w_log2) + tile_x)) * 2u;
+        UBYTE ch_l = vram[map_addr & 0x1FFFFu];
+        UBYTE attr = vram[(map_addr + 1) & 0x1FFFFu];
+        
+        int tile_idx = ch_l | ((attr & 0x03) << 8);
+        ULONG glyph_addr = tile_base + (ULONG)tile_idx * ((1 << (tile_w_log2 + tile_h_log2)) * bpp / 8) + 
+                          (pixel_y * (1 << tile_w_log2) * bpp / 8) + (pixel_x * bpp / 8);
+        
+        UBYTE b = vram[glyph_addr & 0x1FFFFu];
+        int shift = (8 / bpp - 1 - (pixel_x % (8 / bpp))) * bpp;
+        int color_idx = (b >> shift) & ((1 << bpp) - 1);
+
+        if (color_idx != 0) {
+            if (color_depth != 3) color_idx += (attr & 0xF0);
+            row[px] = (UBYTE)color_idx;
+        }
+
+        curr_x += rs->fx_x_incr;
+        curr_y += rs->fx_y_incr;
+    }
+}
+
+/* ------------------------------------------------------------------
  * Render a bitmap layer.
  * ------------------------------------------------------------------ */
 static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
@@ -421,13 +475,17 @@ static void render_scanline_range(int py, int xstart, int xend)
         return;
 
     if (rs.dc[0][0] & 0x10) {
-        if (rs.l0[0] & 0x04)
+        if (rs.l0[0] & 0x08)
+            render_affine_layer(layer0_row, vram, 0, &rs, py, start, end);
+        else if (rs.l0[0] & 0x04)
             render_bitmap_layer(layer0_row, vram, 0, &rs, py, ax0, ay0, start, end);
         else
             render_tile_layer(layer0_row, vram, 0, &rs, py, ax0, ay0, start, end);
     }
     if (rs.dc[0][0] & 0x20) {
-        if (rs.l1[0] & 0x04)
+        if (rs.l1[0] & 0x08)
+            render_affine_layer(layer1_row, vram, 1, &rs, py, start, end);
+        else if (rs.l1[0] & 0x04)
             render_bitmap_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
         else
             render_tile_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
