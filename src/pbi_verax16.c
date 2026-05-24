@@ -2087,18 +2087,30 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
     if (!PBI_VERAX16_enabled)
         return PBI_NOT_HANDLED;
 
-    if (byte == verax16_pbi_mask) {
-        verax16_cs = TRUE;
-        if (verax16_rom != NULL) {
-            memcpy(MEMORY_mem + 0xd800, verax16_rom, 0x800);
-            Log_print("VeraX16: selected (CS=1), ROM mapped at $D800");
+    if (byte == verax16_pbi_mask)
+    {
+        if (!verax16_cs)
+        {
+            verax16_cs = TRUE;
+            if (verax16_rom != NULL)
+            {
+                memcpy(MEMORY_mem + 0xd800, verax16_rom, 0x800);
+                Log_print("VeraX16: Latch ENABLED, ROM mapped at $D800");
+            }
+            else
+            {
+            	Log_print("VeraX16: No ROM Found");
+            	return PBI_NOT_HANDLED;
+            }
         }
         return 0;
     }
 
-    /* Any other D1FF value deselects this device: restore OS math pack */
-    verax16_cs = FALSE;
-    memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
+    if (verax16_cs) {
+        verax16_cs = FALSE;
+        /* Ripristino Math Pack spostato in pbi.c */
+        Log_print("VeraX16: Latch DISABLED");
+    }
     return PBI_NOT_HANDLED;
 }
 
