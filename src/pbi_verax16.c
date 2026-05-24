@@ -2084,9 +2084,8 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 
 int PBI_VERAX16_D1ffPutByte(UBYTE byte)
 {
-    if (!PBI_VERAX16_enabled)
-        return PBI_NOT_HANDLED;
-
+  //  printf("%s : %02X\n", __func__, byte);
+    
     if (byte == verax16_pbi_mask)
     {
         if (!verax16_cs)
@@ -2095,22 +2094,26 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
             if (verax16_rom != NULL)
             {
                 memcpy(MEMORY_mem + 0xd800, verax16_rom, 0x800);
-                Log_print("VeraX16: Latch ENABLED, ROM mapped at $D800");
+                Log_print("VeraX16: Latch ENABLED and VERA OK, ROM mapped at $D800");
+                PBI_VERAX16_enabled = 1;
             }
             else
             {
-            	Log_print("VeraX16: No ROM Found");
+            	Log_print("VeraX16: No ROM Found. Disabling...");
+            	PBI_VERAX16_enabled = 0;
             	return PBI_NOT_HANDLED;
             }
         }
         return 0;
     }
 
-    if (verax16_cs) {
+    if (verax16_cs && byte == 0x00)
+    {
         verax16_cs = FALSE;
         /* Ripristino Math Pack spostato in pbi.c */
         Log_print("VeraX16: Latch DISABLED");
     }
+    //printf("%s PBI NOT HANDLED\n", __func__);
     return PBI_NOT_HANDLED;
 }
 
