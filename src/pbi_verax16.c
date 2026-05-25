@@ -551,10 +551,10 @@ static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
 static void vera_fx_affine_prefetch(void)
 {
     ULONG address;
-    UBYTE affine_x_tile = (UBYTE)((fx_pixel_pos_x >> 10) & 0xFFu);
-    UBYTE affine_y_tile = (UBYTE)((fx_pixel_pos_y >> 10) & 0xFFu);
-    UBYTE affine_x_sub_tile = (UBYTE)((fx_pixel_pos_x >> 7) & 0x07u);
-    UBYTE affine_y_sub_tile = (UBYTE)((fx_pixel_pos_y >> 7) & 0x07u);
+    UBYTE affine_x_tile = (UBYTE)((fx_pixel_pos_x >> 12) & 0xFFu);
+    UBYTE affine_y_tile = (UBYTE)((fx_pixel_pos_y >> 12) & 0xFFu);
+    UBYTE affine_x_sub_tile = (UBYTE)((fx_pixel_pos_x >> 9) & 0x07u);
+    UBYTE affine_y_sub_tile = (UBYTE)((fx_pixel_pos_y >> 9) & 0x07u);
     UBYTE affine_map_size = (UBYTE)(2u << (fx_map_size << 1));
     ULONG affine_tile_base = (ULONG)fx_tiledata_base_address << 9;
     ULONG affine_map_base = (ULONG)fx_map_base_address << 9;
@@ -1554,6 +1554,17 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                 vera_advance(0);
                 vera_refresh_prefetch(0);
                 vera_fx_cache_fill_push(value, addr_nibble);
+                if (fx_addr1_mode == FX_MODE_POLY_FILL) {
+                    fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
+                    fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
+                    if (fx_4bit_mode) {
+                        vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 10) & 0x1FFFFu)) & 0x1FFFFu);
+                        vera_fx_set_addr_nibble(1, (fx_pixel_pos_x >> 9) & 1);
+                    } else {
+                        vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 9) & 0x1FFFFu)) & 0x1FFFFu);
+                    }
+                    vera_refresh_prefetch(1);
+                }
             }
             return value;
         }
@@ -1563,12 +1574,12 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
             if (!no_side_effects) {
                 int addr_nibble = vera_fx_addr_nibble(1);
                 if (fx_addr1_mode == FX_MODE_AFFINE) {
-                    fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 4 : 11);
-                    fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 4 : 11);
+                    fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
+                    fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
                     vera_fx_affine_prefetch();
                 } else if (fx_addr1_mode == FX_MODE_POLY_FILL) {
-                    fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 4 : 11);
-                    fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 4 : 11);
+                    fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
+                    fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
                     if (fx_one_byte_cache_cycling && !fx_cache_fill_enabled)
                         fx_cache_byte_index = (fx_cache_byte_index + 1u) & 0x03u;
                     if (fx_4bit_mode) {
@@ -1783,7 +1794,7 @@ static void vera_write_reg(int offset, UBYTE byte)
         if (fx_addr1_mode == FX_MODE_LINE_DRAW) {
             int step0 = vera_step_lut[vera_fx_increment_index(0)];
             int index0 = vera_fx_increment_index(0);
-            int32_t dx = (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 4 : 11);
+            int32_t dx = (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 6 : 11);
 
             fx_pixel_pos_x += dx;
             if (fx_pixel_pos_x & 0x100000) { /* overflow */
@@ -1805,8 +1816,11 @@ static void vera_write_reg(int offset, UBYTE byte)
                 fx_pixel_pos_x &= ~0x100000;
             }
         } else if (fx_addr1_mode == FX_MODE_POLY_FILL) {
+            vera_advance(1);
         } else if (fx_addr1_mode == FX_MODE_AFFINE) {
-            /* Implementation of affine tilemap lookup would go here */
+            fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
+            fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
+            vera_fx_affine_prefetch();
         } else {
             vera_advance(1);
         }
