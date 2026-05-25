@@ -589,6 +589,16 @@ static void vera_fx_affine_prefetch(void)
     vera_refresh_prefetch(1);
 }
 
+static void vera_fx_accumulate_step(void)
+{
+    int32_t m_result = (int16_t)((vera_fx_cache_get_byte(1) << 8) | vera_fx_cache_get_byte(0)) *
+                       (int16_t)((vera_fx_cache_get_byte(3) << 8) | vera_fx_cache_get_byte(2));
+    if (fx_add_or_sub)
+        fx_mult_accumulator -= m_result;
+    else
+        fx_mult_accumulator += m_result;
+}
+
 static void vera_fx_2bit_poke(UBYTE value)
 {
     UBYTE cache = vera_fx_cache_get_byte(fx_cache_byte_index);
@@ -1595,18 +1605,68 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
             case 0x01:
                 return vera_dc[1][offset - 0x09];
             case 0x02:
+                /* FX_CTRL */
                 if (offset == 0x09)
-                    return (fx_transparency_enabled << 7) |
-                           (fx_cache_write_enabled << 6) |
-                           (fx_cache_fill_enabled << 5) |
-                           (fx_one_byte_cache_cycling << 4) |
-                           (fx_16bit_hop << 3) |
-                           (fx_4bit_mode << 2) |
-                           (fx_addr1_mode & 0x03);
-                return vera_version_byte_for_offset(offset);
+                    return (UBYTE)((fx_transparency_enabled << 7) |
+                                   (fx_cache_write_enabled << 6) |
+                                   (fx_cache_fill_enabled << 5) |
+                                   (fx_one_byte_cache_cycling << 4) |
+                                   (fx_16bit_hop << 3) |
+                                   (fx_4bit_mode << 2) |
+                                   (fx_addr1_mode & 0x03u));
+                /* FX_TILEBASE */
+                if (offset == 0x0A)
+                    return (UBYTE)((fx_tiledata_base_address << 2) |
+                                   (fx_apply_clip << 1) |
+                                   fx_2bit_polygon_pixels);
+                /* FX_MAPBASE */
+                if (offset == 0x0B)
+                    return (UBYTE)((fx_map_base_address << 2) | fx_map_size);
+                /* FX_MULT — ResetAccum (bit 7) is a write-only trigger, always reads 0 */
+                return (UBYTE)((fx_accumulate << 6) |
+                               (fx_add_or_sub << 5) |
+                               (fx_mult_enabled << 4) |
+                               (fx_cache_byte_index << 2) |
+                               (fx_cache_nibble_index << 1) |
+                               fx_cache_increment_mode);
+            case 0x03:
+                /* FX_X_INCR_L/H, FX_Y_INCR_L/H — 6.9 fixed point, 15 bits + 32x flag */
+                if (offset == 0x09)
+                    return (UBYTE)(fx_pixel_incr_x & 0xFF);
+                if (offset == 0x0A)
+                    return (UBYTE)((fx_pixel_incr_x_times_32 ? 0x80u : 0u) |
+                                   ((fx_pixel_incr_x >> 8) & 0x7F));
+                if (offset == 0x0B)
+                    return (UBYTE)(fx_pixel_incr_y & 0xFF);
+                /* offset == 0x0C */
+                return (UBYTE)((fx_pixel_incr_y_times_32 ? 0x80u : 0u) |
+                               ((fx_pixel_incr_y >> 8) & 0x7F));
+            case 0x04:
+                /* FX_X/Y_POS_L/H — integer part of the 11.9 fixed-point position.
+                 * Internal layout of fx_pixel_pos_x (20 bits):
+                 *   bit  0   : X_Pos[-9]  (subpixel sign extension)
+                 *   bits 8:1 : X_Pos[-8:-1] (subpixel, written by DCSEL=5)
+                 *   bits16:9 : X_Pos[7:0]  (integer low byte, POS_L)
+                 *   bits19:17: X_Pos[10:8] (integer high 3 bits, POS_H[2:0])
+                 * POS_H[7] = X_Pos[-9] = bit 0 of fx_pixel_pos_x. */
+                if (offset == 0x09)
+                    return (UBYTE)((fx_pixel_pos_x >> 9) & 0xFF);
+                if (offset == 0x0A)
+                    return (UBYTE)(((fx_pixel_pos_x & 0x01u) << 7) |
+                                   ((fx_pixel_pos_x >> 17) & 0x07u));
+                if (offset == 0x0B)
+                    return (UBYTE)((fx_pixel_pos_y >> 9) & 0xFF);
+                /* offset == 0x0C */
+                return (UBYTE)(((fx_pixel_pos_y & 0x01u) << 7) |
+                               ((fx_pixel_pos_y >> 17) & 0x07u));
             case 0x05:
+                /* FX_X/Y_POS_S — subpixel fraction bytes (bits[-1:-8]), at pos bits[8:1] */
+                if (offset == 0x09)
+                    return (UBYTE)((fx_pixel_pos_x >> 1) & 0xFF);
+                if (offset == 0x0A)
+                    return (UBYTE)((fx_pixel_pos_y >> 1) & 0xFF);
                 if (offset == 0x0B) {
-                    /* fx_fill_length_low */
+                    /* FX_POLY_FILL_L */
                     uint16_t flen = (uint16_t)((fx_pixel_pos_y >> 9) - (fx_pixel_pos_x >> 9)) & 0x3FF;
                     int overflow = (flen >> 8) == 3;
                     int poly_fill_2bit = (fx_addr1_mode == FX_MODE_POLY_FILL) && fx_4bit_mode && fx_2bit_polygon_pixels;
@@ -1621,22 +1681,31 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                     }
                     if (!overflow && (fx_pixel_pos_x & 0x200)) res |= 0x20;
                     if (!overflow && (fx_pixel_pos_x & 0x400)) res |= 0x40;
-                    if ((!fx_4bit_mode && flen > 15) || 
+                    if ((!fx_4bit_mode && flen > 15) ||
                         (!poly_fill_2bit && fx_4bit_mode && flen > 7) ||
                         (poly_fill_2bit && (fx_pixel_pos_y & 0x100))) res |= 0x80;
                     return res;
                 }
                 if (offset == 0x0C) {
-                    /* fx_fill_length_high */
+                    /* FX_POLY_FILL_H */
                     uint16_t flen = (uint16_t)((fx_pixel_pos_y >> 9) - (fx_pixel_pos_x >> 9)) & 0x3FF;
                     return (UBYTE)((flen >> 3) << 1);
                 }
                 return vera_version_byte_for_offset(offset);
             case 0x06:
-                if (offset == 0x09)
+                /* Reading FX_ACCUM_RESET ($D109) resets the accumulator (side effect).
+                 * Reading FX_ACCUM ($D10A) triggers an accumulate step (side effect).
+                 * All four reads return the corresponding cache byte. */
+                if (offset == 0x09) {
+                    if (!no_side_effects)
+                        fx_mult_accumulator = 0;
                     return (UBYTE)(ib_cache32 & 0xFFu);
-                if (offset == 0x0A)
+                }
+                if (offset == 0x0A) {
+                    if (!no_side_effects)
+                        vera_fx_accumulate_step();
                     return (UBYTE)((ib_cache32 >> 8) & 0xFFu);
+                }
                 if (offset == 0x0B)
                     return (UBYTE)((ib_cache32 >> 16) & 0xFFu);
                 return (UBYTE)((ib_cache32 >> 24) & 0xFFu);
@@ -1795,14 +1864,8 @@ static void vera_write_reg(int offset, UBYTE byte)
                     fx_cache_byte_index = (byte >> 2) & 3;
                     fx_cache_nibble_index = (byte >> 1) & 1;
                     fx_cache_increment_mode = byte & 1;
-                    if (byte & 0x40) {
-                        int32_t m_result = (int16_t)((vera_fx_cache_get_byte(1) << 8) | vera_fx_cache_get_byte(0)) *
-                                           (int16_t)((vera_fx_cache_get_byte(3) << 8) | vera_fx_cache_get_byte(2));
-                        if (fx_add_or_sub)
-                            fx_mult_accumulator -= m_result;
-                        else
-                            fx_mult_accumulator += m_result;
-                    }
+                    if (byte & 0x40)
+                        vera_fx_accumulate_step();
                     if (byte & 0x80)
                         fx_mult_accumulator = 0;
                 }
