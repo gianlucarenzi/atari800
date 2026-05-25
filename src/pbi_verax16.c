@@ -534,6 +534,11 @@ static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
         return;
     }
 
+    if (fx_transparency_enabled) {
+        if (fx_4bit_mode ? ((value & 0x0Fu) == 0u) : (value == 0u))
+            return;
+    }
+
     if (fx_4bit_mode) {
         UBYTE old = vera_vram[address & 0x1FFFFu];
         UBYTE result;
@@ -1455,8 +1460,8 @@ static void vera_chip_reset(const char *caller)
     vera_dc[1][3] = 240;    /* DC_VSTOP  = 240 (480 / 2) */
 
     /* FX state reset */
-    fx_pixel_pos_x = 0;
-    fx_pixel_pos_y = 0;
+    fx_pixel_pos_x = 256;
+    fx_pixel_pos_y = 256;
     fx_pixel_incr_x = 0;
     fx_pixel_incr_y = 0;
     fx_pixel_incr_x_times_32 = FALSE;
@@ -1557,13 +1562,12 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                 if (fx_addr1_mode == FX_MODE_POLY_FILL) {
                     fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
                     fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
-                    if (fx_4bit_mode) {
-                        vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 10) & 0x1FFFFu)) & 0x1FFFFu);
-                        vera_fx_set_addr_nibble(1, (fx_pixel_pos_x >> 9) & 1);
-                    } else {
-                        vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 9) & 0x1FFFFu)) & 0x1FFFFu);
+                    if (fx_one_byte_cache_cycling && !fx_cache_fill_enabled) {
+                        if (fx_cache_increment_mode)
+                            fx_cache_byte_index = (fx_cache_byte_index & 0x02u) | ((fx_cache_byte_index + 1u) & 0x01u);
+                        else
+                            fx_cache_byte_index = (fx_cache_byte_index + 1u) & 0x03u;
                     }
-                    vera_refresh_prefetch(1);
                 }
             }
             return value;
@@ -1580,8 +1584,6 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                 } else if (fx_addr1_mode == FX_MODE_POLY_FILL) {
                     fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
                     fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
-                    if (fx_one_byte_cache_cycling && !fx_cache_fill_enabled)
-                        fx_cache_byte_index = (fx_cache_byte_index + 1u) & 0x03u;
                     if (fx_4bit_mode) {
                         vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 10) & 0x1FFFFu)) & 0x1FFFFu);
                         vera_fx_set_addr_nibble(1, (fx_pixel_pos_x >> 9) & 1);
