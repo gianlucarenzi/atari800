@@ -66,10 +66,77 @@ VERA_INCN1              = $18                       ; ADDR_H: auto-decrement by 
 
 VERA_DCSEL0             = $00                       ; CTRL: select display composer bank 0
 VERA_DCSEL1             = $02                       ; CTRL: select display composer bank 1
+VERA_DCSEL2             = $04                       ; CTRL: select FX bank 2 (FX_CTRL … FX_MULT)
+VERA_DCSEL3             = $06                       ; CTRL: select FX bank 3 (FX_X/Y_INCR)
+VERA_DCSEL4             = $08                       ; CTRL: select FX bank 4 (FX_X/Y_POS integer)
+VERA_DCSEL5             = $0A                       ; CTRL: select FX bank 5 (FX_X/Y_POS_S, poly fill)
+VERA_DCSEL6             = $0C                       ; CTRL: select FX bank 6 (FX_CACHE)
 
 VERA_VIDEO_VGA          = $01                       ; DC_VIDEO: VGA output mode (640×480)
 VERA_LAYER1_EN          = $20                       ; DC_VIDEO: enable layer 1
 VERA_MAP_128x64         = $60                       ; L1_CONFIG: 128-wide × 64-tall tilemap
+
+; ============================================================================
+; FX coprocessor — register addresses at $D109-$D10C, muxed by CTRL[DCSEL]
+; Usage pattern: sta VERA_CTRL_REG with the DCSEL value, then access the
+; physical address.  All four addresses are shared across DCSEL banks 2-6.
+; ============================================================================
+
+; DCSEL=2 — control and geometry setup
+VERA_FX_CTRL            = PBI_ADDR+$09              ; FX_CTRL:     Addr1 mode, cache flags, 4-bit, transparency
+VERA_FX_TILEBASE        = PBI_ADDR+$0A              ; FX_TILEBASE: tile-data base (addr>>9)[5:0], clip, 2-bit poly
+VERA_FX_MAPBASE         = PBI_ADDR+$0B              ; FX_MAPBASE:  tilemap base  (addr>>9)[5:0], map size[1:0]
+VERA_FX_MULT            = PBI_ADDR+$0C              ; FX_MULT:     multiplier / accumulator control
+
+; DCSEL=3 — X and Y increments (6.9 fixed point, signed 15-bit + 32× flag)
+VERA_FX_X_INCR_L        = PBI_ADDR+$09              ; FX_X_INCR_L: X_Incr[-2:-9]
+VERA_FX_X_INCR_H        = PBI_ADDR+$0A              ; FX_X_INCR_H: [7]=32× flag, [6:0]=X_Incr[5:-1]
+VERA_FX_Y_INCR_L        = PBI_ADDR+$0B              ; FX_Y_INCR_L: Y_Incr[-2:-9]
+VERA_FX_Y_INCR_H        = PBI_ADDR+$0C              ; FX_Y_INCR_H: [7]=32× flag, [6:0]=Y_Incr[5:-1]
+
+; DCSEL=4 — X and Y integer position (11.9 fixed point, integer part)
+VERA_FX_X_POS_L         = PBI_ADDR+$09              ; FX_X_POS_L: X_Pos[7:0]
+VERA_FX_X_POS_H         = PBI_ADDR+$0A              ; FX_X_POS_H: [7]=X_Pos[-9], [2:0]=X_Pos[10:8]
+VERA_FX_Y_POS_L         = PBI_ADDR+$0B              ; FX_Y_POS_L: Y_Pos[7:0]
+VERA_FX_Y_POS_H         = PBI_ADDR+$0C              ; FX_Y_POS_H: [7]=Y_Pos[-9], [2:0]=Y_Pos[10:8]
+
+; DCSEL=5 — subpixel fraction and polygon fill length
+VERA_FX_X_POS_S         = PBI_ADDR+$09              ; FX_X_POS_S:     X_Pos[-1:-8] (subpixel fraction)
+VERA_FX_Y_POS_S         = PBI_ADDR+$0A              ; FX_Y_POS_S:     Y_Pos[-1:-8] (subpixel fraction)
+VERA_FX_POLY_FILL_L     = PBI_ADDR+$0B              ; FX_POLY_FILL_L: fill span low  (read-only)
+VERA_FX_POLY_FILL_H     = PBI_ADDR+$0C              ; FX_POLY_FILL_H: fill span high (read-only)
+
+; DCSEL=6 — 32-bit write cache (and accumulator side-effects on read)
+; Reading $D109 (FX_ACCUM_RESET) resets fx_mult_accumulator, returns cache[7:0]
+; Reading $D10A (FX_ACCUM)       triggers accumulate step,    returns cache[15:8]
+VERA_FX_CACHE_L         = PBI_ADDR+$09              ; FX_CACHE_L / FX_ACCUM_RESET (DCSEL=6)
+VERA_FX_CACHE_M         = PBI_ADDR+$0A              ; FX_CACHE_M / FX_ACCUM       (DCSEL=6)
+VERA_FX_CACHE_H         = PBI_ADDR+$0B              ; FX_CACHE_H / mult_b[7:0]    (DCSEL=6)
+VERA_FX_CACHE_U         = PBI_ADDR+$0C              ; FX_CACHE_U / mult_b[15:8]   (DCSEL=6)
+
+; ============================================================================
+; FX_CTRL (DCSEL=2, $D109) bit masks and Addr1 mode constants
+; ============================================================================
+
+VERA_FX_TRANSP          = $80                       ; bit 7: transparency — skip zero bytes/nibbles on write
+VERA_FX_CACHE_WR_EN     = $40                       ; bit 6: write 32-bit cache to VRAM on each DATA write
+VERA_FX_CACHE_FILL_EN   = $20                       ; bit 5: fill cache from DATA0/DATA1 reads
+VERA_FX_ONE_BYTE_CACHE  = $10                       ; bit 4: one-byte cache cycling (vs full 4-byte)
+VERA_FX_16BIT_HOP       = $08                       ; bit 3: 16-bit hop mode on address port 1
+VERA_FX_4BIT_MODE       = $04                       ; bit 2: 4-bit (nibble) pixel mode
+VERA_FX_ADDR1_NORMAL    = $00                       ; bits[1:0]=00: Addr1 normal (no FX helper)
+VERA_FX_ADDR1_LINE      = $01                       ; bits[1:0]=01: Addr1 line-draw helper
+VERA_FX_ADDR1_POLY      = $02                       ; bits[1:0]=10: Addr1 polygon-fill helper
+VERA_FX_ADDR1_AFFINE    = $03                       ; bits[1:0]=11: Addr1 affine-transform helper
+
+; ============================================================================
+; FX_MULT (DCSEL=2, $D10C) bit masks
+; ============================================================================
+
+VERA_FX_MULT_RESET_ACCUM = $80                      ; bit 7: reset accumulator to 0 (write-only trigger)
+VERA_FX_MULT_ACCUM      = $40                       ; bit 6: trigger one accumulate step on write
+VERA_FX_MULT_SUB_EN     = $20                       ; bit 5: subtract (vs add) in accumulate
+VERA_FX_MULT_EN         = $10                       ; bit 4: use multiplier result for VRAM write
 
 ; ============================================================================
 ; VRAM layout — 128 KB address space; text display lives in bank 1
