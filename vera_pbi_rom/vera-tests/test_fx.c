@@ -1,21 +1,14 @@
 /* test_fx.c — VERA FX coprocessor register / behaviour test.
  *
- * Runs AFTER VERA.SYS has installed its E:/S: handlers and configured the
- * display.  Two invariants are therefore strictly maintained:
+ * Standalone binary: does NOT require VERA.SYS.  Output goes through the
+ * standard Atari E: handler (40-column TV display), not VERA.
  *
- *   1. VERA CTRL bit 7 (chip RESET) is NEVER written — that would zero
- *      DC_VIDEO and the layer registers, killing the live display.
- *
- *   2. DCSEL=0 and DCSEL=1 registers (DC_VIDEO, DC_HSCALE … DC_VSTOP) are
- *      NEVER written — they are owned by VERA.SYS.
- *
- * FX registers (DCSEL 2–6) are not touched by VERA.SYS, so all tests
- * operate in those banks only.  VRAM accesses use the window $00100–$0011F
- * (bank 0, low VRAM), which does not overlap the tilemap ($01B000) or the
- * font ($01F000).
+ * Because no driver owns the VERA display, the test issues a VERA chip
+ * soft-reset (CTRL bit 7) at startup to guarantee deterministic FX state.
+ * DCSEL=0/1 registers (DC_VIDEO, DC_HSCALE…) are not relevant here.
  *
  * Tests:
- *  1. Reset state: X/Y_POS_S == 0x80 at program start (bug-9 fix)
+ *  1. Reset state: X/Y_POS_S == 0x80 after chip reset (bug-9 fix)
  *  2. FX_CTRL (DCSEL=2) write/read roundtrip
  *  3. FX_TILEBASE / FX_MAPBASE (DCSEL=2) roundtrip
  *  4. FX_MULT (DCSEL=2) write/read roundtrip
@@ -422,22 +415,20 @@ static void test_transparency(void)
 
 int main(void)
 {
-    /* Test 1 reads FX position registers BEFORE any other FX access
-     * to capture the post-reset state set by the cold-boot sequence. */
-    unsigned char xs_at_start, ys_at_start;
-    VERA_CTRL = DCSEL_5;
-    xs_at_start = VERA_REG09;
-    ys_at_start = VERA_REG0A;
-    VERA_CTRL = DCSEL_0;
-
     vera_require();
+
+    /* Soft-reset the VERA chip: clears all FX state, sets fx_pixel_pos = 256
+     * (POS_S = 0x80).  Safe here because VERA is not driving the display. */
+    VERA_CTRL = 0x80;
 
     printf("VERA FX coprocessor test\n");
     printf("========================\n");
 
-    printf("\n[1] Reset initial position\n");
-    check_b("X_POS_S after reset", xs_at_start, 0x80);
-    check_b("Y_POS_S after reset", ys_at_start, 0x80);
+    printf("\n[1] Post-reset position (bug-9: POS_S must be 0x80)\n");
+    VERA_CTRL = DCSEL_5;
+    check_b("X_POS_S after reset", VERA_REG09, 0x80);
+    check_b("Y_POS_S after reset", VERA_REG0A, 0x80);
+    VERA_CTRL = DCSEL_0;
 
     test_fx_ctrl();
     test_tilebase_mapbase();
