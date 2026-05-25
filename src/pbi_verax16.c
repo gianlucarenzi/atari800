@@ -366,7 +366,8 @@ static int vera_fx_nibble_increment(int p)
 
 static int vera_adjust_fx_hop_step(int p, ULONG addr, int step)
 {
-    if (p == 1 && fx_16bit_hop) {
+    if (p == 1 && fx_16bit_hop)
+    {
         int align = (int)(fx_16bit_hop_start_index & 0x03u);
         int lane = (int)(addr & 0x03u);
 
@@ -387,12 +388,16 @@ static void vera_advance_custom(int p, int step)
 {
     ULONG addr = VERA_FULL_ADDR(p);
 
-    if (fx_4bit_mode && vera_fx_nibble_increment(p) && step == 0) {
-        if (vera_fx_addr_nibble(p)) {
+    if (fx_4bit_mode && vera_fx_nibble_increment(p) && step == 0)
+    {
+        if (vera_fx_addr_nibble(p))
+        {
             if ((vera_fx_increment_index(p) & 1) == 0)
                 addr = (addr + 1u) & 0x1FFFFu;
             vera_fx_set_addr_nibble(p, 0);
-        } else {
+        }
+        else
+        {
             if (vera_fx_increment_index(p) & 1)
                 addr = (addr - 1u) & 0x1FFFFu;
             vera_fx_set_addr_nibble(p, 1);
@@ -401,7 +406,8 @@ static void vera_advance_custom(int p, int step)
         return;
     }
 
-    if (step != 0) {
+    if (step != 0)
+    {
         step = vera_adjust_fx_hop_step(p, addr, step);
         addr = (addr + step) & 0x1FFFFu;
         vera_set_full_addr(p, addr);
@@ -436,20 +442,26 @@ static void vera_fx_cache_fill_push(UBYTE value, int addr_nibble)
     if (!fx_cache_fill_enabled)
         return;
 
-    if (fx_4bit_mode) {
+    if (fx_4bit_mode)
+    {
         UBYTE nibble_read = addr_nibble ? (UBYTE)((value & 0x0Fu) << 4) : (UBYTE)(value & 0xF0u);
 
-        if (fx_cache_nibble_index) {
+        if (fx_cache_nibble_index)
+        {
             UBYTE current = vera_fx_cache_get_byte(fx_cache_byte_index);
             vera_fx_cache_set_byte(fx_cache_byte_index, (UBYTE)((current & 0xF0u) | (nibble_read >> 4)));
             fx_cache_nibble_index = 0;
             fx_cache_byte_index = (fx_cache_byte_index + 1u) & 0x03u;
-        } else {
+        }
+        else
+        {
             UBYTE current = vera_fx_cache_get_byte(fx_cache_byte_index);
             vera_fx_cache_set_byte(fx_cache_byte_index, (UBYTE)((current & 0x0Fu) | nibble_read));
             fx_cache_nibble_index = 1;
         }
-    } else {
+    }
+    else
+    {
         vera_fx_cache_set_byte(fx_cache_byte_index, value);
         if (fx_cache_increment_mode)
             fx_cache_byte_index = (fx_cache_byte_index & 0x02u) | ((fx_cache_byte_index + 1u) & 0x01u);
@@ -473,14 +485,16 @@ static void vera_fx_vram_cache_write(ULONG address, UBYTE data, UBYTE nibble_mas
 
 static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
 {
-    if (fx_cache_write_enabled) {
+    if (fx_cache_write_enabled)
+    {
         UBYTE cache_to_use[4];
         UBYTE wrdata_to_use;
         UBYTE ram_wrdata[4];
         UBYTE nibble_mask[4];
         int i;
 
-        if (fx_mult_enabled) {
+        if (fx_mult_enabled)
+        {
             int32_t m_result = (int16_t)((vera_fx_cache_get_byte(1) << 8) | vera_fx_cache_get_byte(0)) *
                                (int16_t)((vera_fx_cache_get_byte(3) << 8) | vera_fx_cache_get_byte(2));
 
@@ -493,7 +507,9 @@ static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
             cache_to_use[1] = (UBYTE)((m_result >> 8) & 0xFF);
             cache_to_use[2] = (UBYTE)((m_result >> 16) & 0xFF);
             cache_to_use[3] = (UBYTE)((m_result >> 24) & 0xFF);
-        } else {
+        }
+        else
+        {
             for (i = 0; i < 4; i++)
                 cache_to_use[i] = vera_fx_cache_get_byte(i);
         }
@@ -503,25 +519,35 @@ static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
         else
             wrdata_to_use = value;
 
-        if (!fx_one_byte_cache_cycling) {
+        if (!fx_one_byte_cache_cycling)
+        {
             for (i = 0; i < 4; i++)
                 ram_wrdata[i] = cache_to_use[i];
-        } else {
+        }
+        else
+        {
             for (i = 0; i < 4; i++)
                 ram_wrdata[i] = wrdata_to_use;
         }
 
-        if (fx_transparency_enabled) {
-            if (fx_4bit_mode) {
-                for (i = 0; i < 4; i++) {
+        if (fx_transparency_enabled)
+        {
+            if (fx_4bit_mode)
+            {
+                for (i = 0; i < 4; i++)
+                {
                     nibble_mask[i] = (UBYTE)((((ram_wrdata[i] & 0xF0u) == 0u) << 1) |
                                              ((ram_wrdata[i] & 0x0Fu) == 0u));
                 }
-            } else {
+            }
+            else
+            {
                 for (i = 0; i < 4; i++)
                     nibble_mask[i] = (ram_wrdata[i] != 0u) ? 0u : 3u;
             }
-        } else {
+        }
+        else
+        {
             nibble_mask[0] = value & 0x03u;
             nibble_mask[1] = (value >> 2) & 0x03u;
             nibble_mask[2] = (value >> 4) & 0x03u;
@@ -534,12 +560,14 @@ static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
         return;
     }
 
-    if (fx_transparency_enabled) {
+    if (fx_transparency_enabled)
+    {
         if (fx_4bit_mode ? ((value & 0x0Fu) == 0u) : (value == 0u))
             return;
     }
 
-    if (fx_4bit_mode) {
+    if (fx_4bit_mode)
+    {
         UBYTE old = vera_vram[address & 0x1FFFFu];
         UBYTE result;
 
@@ -548,7 +576,9 @@ static void vera_fx_write_data(ULONG address, int addr_nibble, UBYTE value)
         else
             result = (UBYTE)((old & 0xF0u) | (value & 0x0Fu));
         vera_vram[address & 0x1FFFFu] = result;
-    } else {
+    }
+    else
+    {
         vera_vram[address & 0x1FFFFu] = value;
     }
 }
@@ -567,18 +597,22 @@ static void vera_fx_affine_prefetch(void)
     if (fx_addr1_mode != FX_MODE_AFFINE)
         return;
 
-    if (!fx_apply_clip) {
+    if (!fx_apply_clip)
+    {
         affine_x_tile &= (UBYTE)(affine_map_size - 1u);
         affine_y_tile &= (UBYTE)(affine_map_size - 1u);
     }
 
-    if (affine_x_tile >= affine_map_size || affine_y_tile >= affine_map_size) {
+    if (affine_x_tile >= affine_map_size || affine_y_tile >= affine_map_size)
+    {
         address = affine_tile_base +
                   ((ULONG)affine_y_sub_tile << (3 - fx_4bit_mode)) +
                   ((ULONG)affine_x_sub_tile >> fx_4bit_mode);
         if (fx_4bit_mode)
             vera_fx_set_addr_nibble(1, affine_x_sub_tile & 1u);
-    } else {
+    }
+    else
+    {
         UBYTE affine_tile_idx;
 
         address = affine_map_base + (ULONG)affine_y_tile * (ULONG)affine_map_size + (ULONG)affine_x_tile;
@@ -611,7 +645,8 @@ static void vera_fx_2bit_poke(UBYTE value)
     UBYTE current = vera_rddata[1];
     UBYTE result = current;
 
-    switch (value >> 6) {
+    switch (value >> 6)
+    {
     case 0x00:
         result = (UBYTE)((cache & 0xC0u) | (current & 0x3Fu));
         break;
@@ -731,13 +766,15 @@ static int vera_sd_load_block(UBYTE *dest)
     size_t bytes_read;
 
     dest[0] = 0xFEu;
-    if (!vera_sd_seek_lba(vera_sd_lba)) {
+    if (!vera_sd_seek_lba(vera_sd_lba))
+    {
         dest[0] = 0x08u;
         return 1;
     }
 
     bytes_read = fread(dest + 1, 1, 512, verax16_sdcard_file);
-    if (bytes_read != 512u) {
+    if (bytes_read != 512u)
+    {
         Log_print("VeraX16: short SD read at LBA %lu", (unsigned long)vera_sd_lba);
         memset(dest + 1 + bytes_read, 0xFF, 512u - bytes_read);
     }
@@ -765,7 +802,8 @@ static void vera_sd_select(int selected)
 {
     vera_sd_selected = selected;
     vera_sd_rxbuf_idx = 0;
-    if (!selected) {
+    if (!selected)
+    {
         vera_sd_ongoing_multiblock_read = FALSE;
         vera_sd_clear_response();
     }
@@ -781,7 +819,8 @@ static UBYTE vera_sd_handle_command(UBYTE cmd, const UBYTE *packet)
 
     vera_sd_last_cmd = cmd;
 
-    switch (cmd) {
+    switch (cmd)
+    {
     case VERA_SD_CMD0:
         vera_sd_is_idle = TRUE;
         vera_sd_set_response_r1();
@@ -821,12 +860,14 @@ static UBYTE vera_sd_handle_command(UBYTE cmd, const UBYTE *packet)
         break;
     case VERA_SD_CMD24:
         vera_sd_lba = arg;
-        if ((off_t)vera_sd_lba * 512 >= verax16_sdcard_size) {
+        if ((off_t)vera_sd_lba * 512 >= verax16_sdcard_size)
+        {
             write_error_response[0] = 0x00u;
             write_error_response[1] = 0x08u;
             vera_sd_set_response_bytes(write_error_response, 2);
         }
-        else {
+        else
+        {
             vera_sd_set_response_r1();
         }
         break;
@@ -852,11 +893,15 @@ static UBYTE vera_sd_handle(UBYTE inbyte)
     if (!vera_sd_selected || verax16_sdcard_file == NULL)
         return 0xFFu;
 
-    if (vera_sd_rxbuf_idx == 0 && inbyte == 0xFFu) {
-        if (vera_sd_response != NULL) {
+    if (vera_sd_rxbuf_idx == 0 && inbyte == 0xFFu)
+    {
+        if (vera_sd_response != NULL)
+        {
             outbyte = vera_sd_response[vera_sd_response_counter++];
-            if (vera_sd_response_counter >= vera_sd_response_length) {
-                if (vera_sd_ongoing_multiblock_read) {
+            if (vera_sd_response_counter >= vera_sd_response_length)
+            {
+                if (vera_sd_ongoing_multiblock_read)
+                {
                     static UBYTE read_multiblock_response[515];
                     int response_length;
 
@@ -866,7 +911,8 @@ static UBYTE vera_sd_handle(UBYTE inbyte)
                         vera_sd_ongoing_multiblock_read = FALSE;
                     vera_sd_set_response_bytes(read_multiblock_response, response_length);
                 }
-                else {
+                else
+                {
                     vera_sd_clear_response();
                 }
             }
@@ -876,28 +922,34 @@ static UBYTE vera_sd_handle(UBYTE inbyte)
 
     vera_sd_rxbuf[vera_sd_rxbuf_idx++] = inbyte;
 
-    if ((vera_sd_rxbuf[0] & 0xC0u) == 0x40u && vera_sd_rxbuf_idx == 6) {
+    if ((vera_sd_rxbuf[0] & 0xC0u) == 0x40u && vera_sd_rxbuf_idx == 6)
+    {
         UBYTE cmd = vera_sd_rxbuf[0] & 0x3Fu;
 
         vera_sd_rxbuf_idx = 0;
-        if (vera_sd_is_acmd) {
+        if (vera_sd_is_acmd)
+        {
             cmd |= 0x80u;
             vera_sd_is_acmd = FALSE;
         }
         return vera_sd_handle_command(cmd, vera_sd_rxbuf);
     }
 
-    if (vera_sd_rxbuf_idx == 515) {
+    if (vera_sd_rxbuf_idx == 515)
+    {
         vera_sd_rxbuf_idx = 0;
-        if (vera_sd_last_cmd == VERA_SD_CMD24 && vera_sd_rxbuf[0] == 0xFEu) {
+        if (vera_sd_last_cmd == VERA_SD_CMD24 && vera_sd_rxbuf[0] == 0xFEu)
+        {
             static const UBYTE data_response_ok[1] = { 0x05u };
             static const UBYTE data_response_fail[1] = { 0x0Du };
 
-            if (verax16_sdcard_writable && vera_sd_seek_lba(vera_sd_lba)) {
+            if (verax16_sdcard_writable && vera_sd_seek_lba(vera_sd_lba))
+            {
                 vera_sd_store_block(vera_sd_rxbuf + 1);
                 vera_sd_set_response_bytes(data_response_ok, 1);
             }
-            else {
+            else
+            {
                 vera_sd_set_response_bytes(data_response_fail, 1);
             }
         }
@@ -917,16 +969,19 @@ static int vera_sdcard_attach(void)
 
     verax16_sdcard_file = fopen(verax16_sdcard_filename, "rb+");
     verax16_sdcard_writable = TRUE;
-    if (verax16_sdcard_file == NULL) {
+    if (verax16_sdcard_file == NULL)
+    {
         verax16_sdcard_file = fopen(verax16_sdcard_filename, "rb");
         verax16_sdcard_writable = FALSE;
     }
-    if (verax16_sdcard_file == NULL) {
+    if (verax16_sdcard_file == NULL)
+    {
         Log_print("VeraX16: WARNING - cannot open SD image %s", verax16_sdcard_filename);
         return FALSE;
     }
 
-    if (fseeko(verax16_sdcard_file, 0, SEEK_END) != 0) {
+    if (fseeko(verax16_sdcard_file, 0, SEEK_END) != 0)
+    {
         fclose(verax16_sdcard_file);
         verax16_sdcard_file = NULL;
         verax16_sdcard_writable = FALSE;
@@ -935,7 +990,8 @@ static int vera_sdcard_attach(void)
     }
 
     size = ftello(verax16_sdcard_file);
-    if (size < 0) {
+    if (size < 0)
+    {
         fclose(verax16_sdcard_file);
         verax16_sdcard_file = NULL;
         verax16_sdcard_writable = FALSE;
@@ -957,7 +1013,8 @@ static int vera_sdcard_attach(void)
 
 static void vera_sdcard_detach(void)
 {
-    if (verax16_sdcard_file != NULL) {
+    if (verax16_sdcard_file != NULL)
+    {
         fclose(verax16_sdcard_file);
         verax16_sdcard_file = NULL;
     }
@@ -982,7 +1039,8 @@ static void vera_spi_step(int cycles)
         return;
 
     vera_spi_cycles_until_done -= cycles;
-    if (vera_spi_cycles_until_done <= 0) {
+    if (vera_spi_cycles_until_done <= 0)
+    {
         vera_spi_busy = FALSE;
         vera_spi_cycles_until_done = 0;
         vera_spi_data = vera_sd_handle(vera_spi_tx);
@@ -1104,11 +1162,14 @@ static void vera_maybe_trigger_line_irq(void)
     if (vera_scanline_raw > 0x01FFu)
         return;
 
-    if ((vera_dc[0][0] & 0x08u) != 0) {
+    if ((vera_dc[0][0] & 0x08u) != 0)
+    {
         if ((vera_scanline_raw >> 1) == (vera_irqline >> 1))
             vera_isr |= 0x02u;
     }
-    else if (vera_scanline_raw == vera_irqline) {
+    else
+    if (vera_scanline_raw == vera_irqline)
+    {
         vera_isr |= 0x02u;
     }
 }
@@ -1126,7 +1187,8 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
         return 0;
 
     memset(sprite_line_mask, 0, sizeof(sprite_line_mask));
-    for (i = 0; i < 128u; i++) {
+    for (i = 0; i < 128u; i++)
+    {
         ULONG base = 0x1FC00u + i * 8u;
         UBYTE attr0 = vera_vram[base];
         UBYTE attr1 = vera_vram[base + 1u];
@@ -1162,7 +1224,8 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
         eff_sy = vflip ? (height - 1 - sy) : sy;
         row_addr = sprite_addr + ((ULONG)eff_sy << (width_log2 - (1 - color_mode)));
 
-        for (sx = 0; sx < width; sx++) {
+        for (sx = 0; sx < width; sx++)
+        {
             int px = x + sx;
             int eff_sx;
             UBYTE color_idx;
@@ -1172,14 +1235,16 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
                 continue;
 
             eff_sx = hflip ? (width - 1 - sx) : sx;
-            if (color_mode == 0) {
+            if (color_mode == 0)
+            {
                 UBYTE packed;
 
                 pixel_addr = row_addr + ((ULONG)eff_sx >> 1);
                 packed = vera_vram[pixel_addr & 0x1FFFFu];
                 color_idx = (eff_sx & 1) ? (packed & 0x0Fu) : (packed >> 4);
             }
-            else {
+            else
+            {
                 pixel_addr = row_addr + (ULONG)eff_sx;
                 color_idx = vera_vram[pixel_addr & 0x1FFFFu];
             }
@@ -1197,7 +1262,8 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
 
 static void vera_update_isr_and_coll(UWORD y)
 {
-    if (y == 480u) {
+    if (y == 480u)
+    {
         if (vera_sprite_frame_collisions != 0u)
             vera_isr |= 0x04u;
         vera_isr = (vera_isr & 0x0Fu) | vera_sprite_frame_collisions;
@@ -1211,11 +1277,13 @@ static void vera_advance_scanline_once(void)
     if (vera_scanline_raw < 480u)
         vera_sprite_frame_collisions |= vera_compute_sprite_line_collisions(vera_scanline_raw);
 
-    if (vera_scanline_raw + 1u >= VERA_SCANLINES_PER_FRAME) {
+    if (vera_scanline_raw + 1u >= VERA_SCANLINES_PER_FRAME)
+    {
         vera_scanline_raw = 0;
         vera_current_field ^= 1u;
     }
-    else {
+    else
+    {
         vera_scanline_raw++;
     }
 
@@ -1325,12 +1393,16 @@ static int vera_pcm_load_current_sample(void)
 {
     UBYTE raw[4];
 
-    if (vera_audio_ctrl & 0x20u) {
-        if (vera_audio_ctrl & 0x10u) {
-            if (vera_pcm_fifo_count < 4u) {
+    if (vera_audio_ctrl & 0x20u)
+    {
+        if (vera_audio_ctrl & 0x10u)
+        {
+            if (vera_pcm_fifo_count < 4u)
+            {
                 if (vera_pcm_loop)
                     vera_pcm_restart_fifo();
-                if (vera_pcm_fifo_count < 4u) {
+                if (vera_pcm_fifo_count < 4u)
+                {
                     vera_pcm_fifo_count = 0;
                     vera_pcm_fifo_read = vera_pcm_fifo_write;
                     vera_audio_update_aflow();
@@ -1343,12 +1415,15 @@ static int vera_pcm_load_current_sample(void)
             vera_pcm_current_left = (int)(SWORD)((UWORD)raw[0] | ((UWORD)raw[1] << 8));
             vera_pcm_current_right = (int)(SWORD)((UWORD)raw[2] | ((UWORD)raw[3] << 8));
         }
-        else {
+        else
+        {
             SWORD mono;
-            if (vera_pcm_fifo_count < 2u) {
+            if (vera_pcm_fifo_count < 2u)
+            {
                 if (vera_pcm_loop)
                     vera_pcm_restart_fifo();
-                if (vera_pcm_fifo_count < 2u) {
+                if (vera_pcm_fifo_count < 2u)
+                {
                     vera_pcm_fifo_count = 0;
                     vera_pcm_fifo_read = vera_pcm_fifo_write;
                     vera_audio_update_aflow();
@@ -1362,12 +1437,16 @@ static int vera_pcm_load_current_sample(void)
             vera_pcm_current_right = (int)mono;
         }
     }
-    else {
-        if (vera_audio_ctrl & 0x10u) {
-            if (vera_pcm_fifo_count < 2u) {
+    else
+    {
+        if (vera_audio_ctrl & 0x10u)
+        {
+            if (vera_pcm_fifo_count < 2u)
+            {
                 if (vera_pcm_loop)
                     vera_pcm_restart_fifo();
-                if (vera_pcm_fifo_count < 2u) {
+                if (vera_pcm_fifo_count < 2u)
+                {
                     vera_pcm_fifo_count = 0;
                     vera_pcm_fifo_read = vera_pcm_fifo_write;
                     vera_audio_update_aflow();
@@ -1379,9 +1458,11 @@ static int vera_pcm_load_current_sample(void)
             vera_pcm_current_left = (int)((UWORD)raw[0] << 8);
             vera_pcm_current_right = (int)((UWORD)raw[1] << 8);
         }
-        else {
+        else
+        {
             int mono;
-            if (vera_pcm_fifo_count < 1u) {
+            if (vera_pcm_fifo_count < 1u)
+            {
                 if (vera_pcm_loop)
                     vera_pcm_restart_fifo();
                 if (vera_pcm_fifo_count < 1u)
@@ -1422,9 +1503,11 @@ static void vera_pcm_render_sample(int *left, int *right)
 
     step = (VERA_DAC_RATE * (double)rate) / (128.0 * (double)vera_host_playback_freq);
     vera_pcm_phase += step;
-    while (vera_pcm_phase >= 1.0) {
+    while (vera_pcm_phase >= 1.0)
+    {
         vera_pcm_phase -= 1.0;
-        if (!vera_pcm_load_current_sample()) {
+        if (!vera_pcm_load_current_sample())
+        {
             vera_pcm_current_valid = FALSE;
             vera_pcm_current_left = 0;
             vera_pcm_current_right = 0;
@@ -1544,7 +1627,8 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
     int addrsel = vera_ctrl & 0x01;
     int dcsel   = (vera_ctrl >> 1) & 0x3F;
 
-    switch (offset) {
+    switch (offset)
+    {
     case 0x00:
         return vera_addr_l[addrsel];
     case 0x01:
@@ -1559,10 +1643,12 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                 vera_advance(0);
                 vera_refresh_prefetch(0);
                 vera_fx_cache_fill_push(value, addr_nibble);
-                if (fx_addr1_mode == FX_MODE_POLY_FILL) {
+                if (fx_addr1_mode == FX_MODE_POLY_FILL)
+                {
                     fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
                     fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
-                    if (fx_one_byte_cache_cycling && !fx_cache_fill_enabled) {
+                    if (fx_one_byte_cache_cycling && !fx_cache_fill_enabled)
+                    {
                         if (fx_cache_increment_mode)
                             fx_cache_byte_index = (fx_cache_byte_index & 0x02u) | ((fx_cache_byte_index + 1u) & 0x01u);
                         else
@@ -1575,23 +1661,33 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
     case 0x04:  /* DATA1 — VRAM read through port 1 */
         {
             UBYTE value = vera_rddata[1];
-            if (!no_side_effects) {
+            if (!no_side_effects)
+            {
                 int addr_nibble = vera_fx_addr_nibble(1);
-                if (fx_addr1_mode == FX_MODE_AFFINE) {
+                if (fx_addr1_mode == FX_MODE_AFFINE)
+                {
                     fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
                     fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
                     vera_fx_affine_prefetch();
-                } else if (fx_addr1_mode == FX_MODE_POLY_FILL) {
+                }
+                else
+                if (fx_addr1_mode == FX_MODE_POLY_FILL)
+                {
                     fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
                     fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
-                    if (fx_4bit_mode) {
+                    if (fx_4bit_mode)
+                    {
                         vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 10) & 0x1FFFFu)) & 0x1FFFFu);
                         vera_fx_set_addr_nibble(1, (fx_pixel_pos_x >> 9) & 1);
-                    } else {
+                    }
+                    else
+                    {
                         vera_set_full_addr(1, (VERA_FULL_ADDR(0) + ((ULONG)(fx_pixel_pos_x >> 9) & 0x1FFFFu)) & 0x1FFFFu);
                     }
                     vera_refresh_prefetch(1);
-                } else {
+                }
+                else
+                {
                     vera_advance(1);
                     vera_refresh_prefetch(1);
                 }
@@ -1609,8 +1705,10 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
         return (UBYTE)(vera_scanline_read_value() & 0xFFu);
     default:
         /* DCSEL-muxed: offsets 0x09-0x0C */
-        if (offset >= 0x09 && offset <= 0x0C) {
-            switch (dcsel) {
+        if (offset >= 0x09 && offset <= 0x0C)
+        {
+            switch (dcsel)
+            {
             case 0x00:
                 if (offset == 0x09)
                     return vera_dc_video_read();
@@ -1688,9 +1786,13 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                     if (!overflow && (flen & 0x01)) res |= 0x02;
                     if (!overflow && (flen & 0x02)) res |= 0x04;
                     if (!overflow && (flen & 0x04)) res |= 0x08;
-                    if (!overflow) {
-                        if (!fx_4bit_mode && (flen & 0x08)) res |= 0x10;
-                        else if (fx_4bit_mode && (fx_pixel_pos_x & 0x800)) res |= 0x10;
+                    if (!overflow)
+                    {
+                        if (!fx_4bit_mode && (flen & 0x08))
+                            res |= 0x10;
+                        else
+                        if (fx_4bit_mode && (fx_pixel_pos_x & 0x800))
+                            res |= 0x10;
                     }
                     if (!overflow && (fx_pixel_pos_x & 0x200)) res |= 0x20;
                     if (!overflow && (fx_pixel_pos_x & 0x400)) res |= 0x40;
@@ -1699,7 +1801,8 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                         (poly_fill_2bit && (fx_pixel_pos_y & 0x100))) res |= 0x80;
                     return res;
                 }
-                if (offset == 0x0C) {
+                if (offset == 0x0C)
+                {
                     /* FX_POLY_FILL_H */
                     uint16_t flen = (uint16_t)((fx_pixel_pos_y >> 9) - (fx_pixel_pos_x >> 9)) & 0x3FF;
                     return (UBYTE)((flen >> 3) << 1);
@@ -1709,12 +1812,14 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                 /* Reading FX_ACCUM_RESET ($D109) resets the accumulator (side effect).
                  * Reading FX_ACCUM ($D10A) triggers an accumulate step (side effect).
                  * All four reads return the corresponding cache byte. */
-                if (offset == 0x09) {
+                if (offset == 0x09)
+                {
                     if (!no_side_effects)
                         fx_mult_accumulator = 0;
                     return (UBYTE)(ib_cache32 & 0xFFu);
                 }
-                if (offset == 0x0A) {
+                if (offset == 0x0A)
+                {
                     if (!no_side_effects)
                         vera_fx_accumulate_step();
                     return (UBYTE)((ib_cache32 >> 8) & 0xFFu);
@@ -1736,7 +1841,8 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
         if (offset == 0x1B) return vera_audio_ctrl_read();
         if (offset == 0x1C) return vera_audio_rate;
         if (offset == 0x1D) return 0x00;    /* AUDIO_DATA write-only */
-        if (offset == 0x1E) {
+        if (offset == 0x1E)
+        {
             UBYTE value = vera_spi_data;
 
             if (!no_side_effects && vera_spi_autotx && vera_spi_ss && !vera_spi_busy)
@@ -1754,12 +1860,16 @@ static void vera_write_reg(int offset, UBYTE byte)
     int dcsel   = (vera_ctrl >> 1) & 0x3F;
     int rerender_midline = FALSE;
 
-    switch (offset) {
+    switch (offset)
+    {
     case 0x00:
-        if (fx_2bit_polygon_pixels && fx_4bit_mode && fx_addr1_mode == FX_MODE_POLY_FILL && addrsel == 1) {
+        if (fx_2bit_polygon_pixels && fx_4bit_mode && fx_addr1_mode == FX_MODE_POLY_FILL && addrsel == 1)
+        {
             fx_2bit_poke_mode = TRUE;
             vera_addr_l[1] = (vera_addr_l[1] & 0xFCu) | (byte & 0x03u);
-        } else {
+        }
+        else
+        {
             fx_2bit_poke_mode = FALSE;
             vera_addr_l[addrsel] = byte;
             if (addrsel == 1)
@@ -1776,7 +1886,8 @@ static void vera_write_reg(int offset, UBYTE byte)
         vera_refresh_prefetch(addrsel);
         break;
     case 0x03:  /* DATA0 — VRAM write through port 0 */
-        if (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL) {
+        if (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL)
+        {
             vera_fx_2bit_poke(byte);
             rerender_midline = TRUE;
             break;
@@ -1787,27 +1898,33 @@ static void vera_write_reg(int offset, UBYTE byte)
         rerender_midline = TRUE;
         break;
     case 0x04:  /* DATA1 — VRAM write through port 1 */
-        if (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL) {
+        if (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL)
+        {
             vera_fx_2bit_poke(byte);
             rerender_midline = TRUE;
             break;
         }
         vera_fx_write_data(VERA_FULL_ADDR(1), vera_fx_addr_nibble(1), byte);
-        if (fx_addr1_mode == FX_MODE_LINE_DRAW) {
+        if (fx_addr1_mode == FX_MODE_LINE_DRAW)
+        {
             int step0 = vera_step_lut[vera_fx_increment_index(0)];
             int index0 = vera_fx_increment_index(0);
             int32_t dx = (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 6 : 11);
 
             fx_pixel_pos_x += dx;
             if (fx_pixel_pos_x & 0x100000) { /* overflow */
-                if (fx_4bit_mode && vera_fx_nibble_increment(0)) {
+                if (fx_4bit_mode && vera_fx_nibble_increment(0))
+                {
                     ULONG addr1 = VERA_FULL_ADDR(1);
 
-                    if (vera_fx_addr_nibble(1)) {
+                    if (vera_fx_addr_nibble(1))
+                    {
                         if ((index0 & 1) == 0)
                             addr1 = (addr1 + 1u) & 0x1FFFFu;
                         vera_fx_set_addr_nibble(1, 0);
-                    } else {
+                    }
+                    else
+                    {
                         if (index0 & 1)
                             addr1 = (addr1 - 1u) & 0x1FFFFu;
                         vera_fx_set_addr_nibble(1, 1);
@@ -1817,22 +1934,33 @@ static void vera_write_reg(int offset, UBYTE byte)
                 vera_advance_custom(1, step0);
                 fx_pixel_pos_x &= ~0x100000;
             }
-        } else if (fx_addr1_mode == FX_MODE_POLY_FILL) {
+        }
+        else
+        if (fx_addr1_mode == FX_MODE_POLY_FILL)
+        {
             vera_advance(1);
-        } else if (fx_addr1_mode == FX_MODE_AFFINE) {
+        }
+        else
+        if (fx_addr1_mode == FX_MODE_AFFINE)
+        {
             fx_pixel_pos_x += (int32_t)fx_pixel_incr_x << (fx_pixel_incr_x_times_32 ? 5 : 0);
             fx_pixel_pos_y += (int32_t)fx_pixel_incr_y << (fx_pixel_incr_y_times_32 ? 5 : 0);
             vera_fx_affine_prefetch();
-        } else {
+        }
+        else
+        {
             vera_advance(1);
         }
         vera_refresh_prefetch(1);
         rerender_midline = TRUE;
         break;
     case 0x05:  /* CTRL */
-        if (byte & 0x80u) {
+        if (byte & 0x80u)
+        {
             vera_chip_reset("CTRL_REG_RESET_BIT");      /* RESET bit: soft-reset, VRAM intact */
-        } else {
+        }
+        else
+        {
             vera_ctrl = byte & 0x7Fu;   /* keep ADDRSEL + DCSEL (6 bits) */
         }
         break;
@@ -1850,15 +1978,18 @@ static void vera_write_reg(int offset, UBYTE byte)
         break;
     default:
         /* DCSEL-muxed: offsets 0x09-0x0C */
-        if (offset >= 0x09 && offset <= 0x0C) {
+        if (offset >= 0x09 && offset <= 0x0C)
+        {
             vera_dc[dcsel][offset - 0x09] = byte;
-            switch (dcsel) {
+            switch (dcsel)
+            {
             case 0x00:
                 if (offset == 0x09)
                     vera_dc[0][0] = byte & 0x7Fu;
                 break;
             case 0x02:
-                if (offset == 0x09) {
+                if (offset == 0x09)
+                {
                     fx_transparency_enabled = (byte >> 7) & 1;
                     fx_cache_write_enabled = (byte >> 6) & 1;
                     fx_cache_fill_enabled = (byte >> 5) & 1;
@@ -1866,14 +1997,23 @@ static void vera_write_reg(int offset, UBYTE byte)
                     fx_16bit_hop = (byte >> 3) & 1;
                     fx_4bit_mode = (byte >> 2) & 1;
                     fx_addr1_mode = byte & 3;
-                } else if (offset == 0x0A) {
+                }
+                else
+                if (offset == 0x0A)
+                {
                     fx_tiledata_base_address = byte >> 2;
                     fx_apply_clip = (byte >> 1) & 1;
                     fx_2bit_polygon_pixels = byte & 1;
-                } else if (offset == 0x0B) {
+                }
+                else
+                if (offset == 0x0B)
+                {
                     fx_map_base_address = byte >> 2;
                     fx_map_size = byte & 3;
-                } else if (offset == 0x0C) {
+                }
+                else
+                if (offset == 0x0C)
+                {
                     fx_add_or_sub = (byte >> 5) & 1;
                     fx_mult_enabled = (byte >> 4) & 1;
                     fx_accumulate = (byte >> 6) & 1;
@@ -1887,15 +2027,23 @@ static void vera_write_reg(int offset, UBYTE byte)
                 }
                 break;
             case 0x03:
-                if (offset == 0x09) fx_pixel_incr_x = (fx_pixel_incr_x & 0x7F00) | byte;
-                else if (offset == 0x0A) {
+                if (offset == 0x09)
+                    fx_pixel_incr_x = (fx_pixel_incr_x & 0x7F00) | byte;
+                else
+                if (offset == 0x0A)
+                {
                     fx_pixel_incr_x = (fx_pixel_incr_x & 0x00FF) | ((byte & 0x7F) << 8);
                     fx_pixel_incr_x_times_32 = (byte >> 7) & 1;
                     if (fx_addr1_mode == FX_MODE_LINE_DRAW || fx_addr1_mode == FX_MODE_POLY_FILL)
                         fx_pixel_pos_x = (fx_pixel_pos_x & ~0x1FF) | 256;
                     if (fx_addr1_mode == FX_MODE_LINE_DRAW) fx_pixel_pos_x &= ~(1 << 9);
-                } else if (offset == 0x0B) fx_pixel_incr_y = (fx_pixel_incr_y & 0x7F00) | byte;
-                else if (offset == 0x0C) {
+                }
+                else
+                if (offset == 0x0B)
+                    fx_pixel_incr_y = (fx_pixel_incr_y & 0x7F00) | byte;
+                else
+                if (offset == 0x0C)
+                {
                     fx_pixel_incr_y = (fx_pixel_incr_y & 0x00FF) | ((byte & 0x7F) << 8);
                     fx_pixel_incr_y_times_32 = (byte >> 7) & 1;
                     if (fx_addr1_mode == FX_MODE_LINE_DRAW || fx_addr1_mode == FX_MODE_POLY_FILL)
@@ -1903,45 +2051,84 @@ static void vera_write_reg(int offset, UBYTE byte)
                 }
                 break;
             case 0x04:
-                if (offset == 0x09) fx_pixel_pos_x = (fx_pixel_pos_x & 0x0E01FF) | (byte << 9);
-                else if (offset == 0x0A) fx_pixel_pos_x = (fx_pixel_pos_x & 0x01FE00) | ((byte & 7) << 17) | (byte >> 7);
-                else if (offset == 0x0B) fx_pixel_pos_y = (fx_pixel_pos_y & 0x0E01FF) | (byte << 9);
-                else if (offset == 0x0C) fx_pixel_pos_y = (fx_pixel_pos_y & 0x01FE00) | ((byte & 7) << 17) | (byte >> 7);
+                if (offset == 0x09)
+                    fx_pixel_pos_x = (fx_pixel_pos_x & 0x0E01FF) | (byte << 9);
+                else
+                if (offset == 0x0A)
+                    fx_pixel_pos_x = (fx_pixel_pos_x & 0x01FE00) | ((byte & 7) << 17) | (byte >> 7);
+                else
+                if (offset == 0x0B)
+                    fx_pixel_pos_y = (fx_pixel_pos_y & 0x0E01FF) | (byte << 9);
+                else
+                if (offset == 0x0C)
+                    fx_pixel_pos_y = (fx_pixel_pos_y & 0x01FE00) | ((byte & 7) << 17) | (byte >> 7);
                 break;
             case 0x05:
-                if (offset == 0x09) fx_pixel_pos_x = (fx_pixel_pos_x & ~0x1FE) | (byte << 1);
-                else if (offset == 0x0A) fx_pixel_pos_y = (fx_pixel_pos_y & ~0x1FE) | (byte << 1);
+                if (offset == 0x09)
+                    fx_pixel_pos_x = (fx_pixel_pos_x & ~0x1FE) | (byte << 1);
+                else
+                if (offset == 0x0A)
+                    fx_pixel_pos_y = (fx_pixel_pos_y & ~0x1FE) | (byte << 1);
                 break;
             case 0x06:
-                if (offset == 0x09) ib_cache32 = (ib_cache32 & 0xFFFFFF00) | byte;
-                else if (offset == 0x0A) ib_cache32 = (ib_cache32 & 0xFFFF00FF) | (byte << 8);
-                else if (offset == 0x0B) ib_cache32 = (ib_cache32 & 0xFF00FFFF) | (byte << 16);
-                else if (offset == 0x0C) ib_cache32 = (ib_cache32 & 0x00FFFFFF) | (byte << 24);
+                if (offset == 0x09)
+                    ib_cache32 = (ib_cache32 & 0xFFFFFF00) | byte;
+                else
+                if (offset == 0x0A)
+                    ib_cache32 = (ib_cache32 & 0xFFFF00FF) | (byte << 8);
+                else
+                if (offset == 0x0B)
+                    ib_cache32 = (ib_cache32 & 0xFF00FFFF) | (byte << 16);
+                else
+                if (offset == 0x0C)
+                    ib_cache32 = (ib_cache32 & 0x00FFFFFF) | (byte << 24);
                 break;
             }
         }
         /* Layer 0 fixed: offsets 0x0D-0x13 */
-        else if (offset >= 0x0D && offset <= 0x13) {
+        else
+        if (offset >= 0x0D && offset <= 0x13)
+        {
             vera_l0[offset - 0x0D] = byte;
         }
         /* Layer 1 fixed: offsets 0x14-0x1A */
-        else if (offset >= 0x14 && offset <= 0x1A) {
+        else
+        if (offset >= 0x14 && offset <= 0x1A)
+        {
             vera_l1[offset - 0x14] = byte;
         }
-        else if (offset == 0x1B) { vera_audio_ctrl_write(byte); }
-        else if (offset == 0x1C) {
+        else
+        if (offset == 0x1B)
+        {
+            vera_audio_ctrl_write(byte);
+        }
+        else
+        if (offset == 0x1C)
+        {
             vera_audio_rate = (byte > 128u) ? (UBYTE)(256u - (unsigned int)byte) : byte;
             vera_audio_update_aflow();
         }
-        else if (offset == 0x1D) { vera_audio_data_write(byte); }
-        else if (offset == 0x1E) { vera_spi_begin_transfer(byte); }
-        else if (offset == 0x1F) {
+        else
+        if (offset == 0x1D)
+        {
+            vera_audio_data_write(byte);
+        }
+        else
+        if (offset == 0x1E)
+        {
+            vera_spi_begin_transfer(byte);
+        }
+        else
+        if (offset == 0x1F)
+        {
             vera_spi_ctrl = byte & 0x07u;
             vera_spi_autotx = (byte & 0x04u) != 0u;
-            if (vera_spi_ss != ((byte & 0x01u) != 0u)) {
+            if (vera_spi_ss != ((byte & 0x01u) != 0u))
+            {
                 vera_spi_ss = (byte & 0x01u) != 0u;
                 vera_sd_select(vera_spi_ss);
-                if (!vera_spi_ss) {
+                if (!vera_spi_ss)
+                {
                     vera_spi_busy = FALSE;
                     vera_spi_cycles_until_done = 0;
                     vera_spi_data = 0xFF;
@@ -1967,38 +2154,54 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
     int i, j;
     int recognized;
 
-    for (i = j = 1; i < *argc; i++) {
+    for (i = j = 1; i < *argc; i++)
+    {
         recognized = FALSE;
 
         if (strcmp(argv[i], "-verax16") == 0 ||
-            strcmp(argv[i], "--use-verax16") == 0) {
+            strcmp(argv[i], "--use-verax16") == 0)
+        {
             PBI_VERAX16_enabled = TRUE;
             recognized = TRUE;
-        } else if (strcmp(argv[i], "-verax16-rom") == 0 && i + 1 < *argc) {
+        }
+        else
+        if (strcmp(argv[i], "-verax16-rom") == 0 && i + 1 < *argc)
+        {
             Util_strlcpy(verax16_rom_filename, argv[i + 1],
                          sizeof(verax16_rom_filename));
             i++;
             recognized = TRUE;
-        } else if (strcmp(argv[i], "-verax16-pbi-id") == 0 && i + 1 < *argc) {
+        }
+        else
+        if (strcmp(argv[i], "-verax16-pbi-id") == 0 && i + 1 < *argc)
+        {
             int n = atoi(argv[i + 1]);
-            if (n >= 0 && n <= 7) {
+            if (n >= 0 && n <= 7)
+            {
                 verax16_pbi_num  = n;
                 verax16_pbi_mask = (UBYTE)(1u << n);
-            } else {
+            }
+            else
+            {
                 Log_print("VeraX16: invalid PBI ID %d, keeping default %d",
                           n, verax16_pbi_num);
             }
             i++;
             recognized = TRUE;
-        } else if (strcmp(argv[i], "-verax16-sdcard") == 0 && i + 1 < *argc) {
+        }
+        else
+        if (strcmp(argv[i], "-verax16-sdcard") == 0 && i + 1 < *argc)
+        {
             Util_strlcpy(verax16_sdcard_filename, argv[i + 1],
                          sizeof(verax16_sdcard_filename));
             i++;
             recognized = TRUE;
         }
 
-        if (!recognized) {
-            if (strcmp(argv[i], "-help") == 0) {
+        if (!recognized)
+        {
+            if (strcmp(argv[i], "-help") == 0)
+            {
                 Log_print("\t-verax16           Enable VeraX16 FPGA PBI video card");
                 Log_print("\t--use-verax16      Alias for -verax16");
                 Log_print("\t-verax16-rom F     OS handler ROM (2KB, $D800-$DFFF)");
@@ -2040,7 +2243,8 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
         };
         unsigned int i;
 
-        for (i = 0; i < 256u; i++) {
+        for (i = 0; i < 256u; i++)
+        {
             UWORD entry = default_palette[i];
             vera_vram[0x1FA00u + i * 2u] = (UBYTE)(entry & 0xFFu);
             vera_vram[0x1FA00u + i * 2u + 1u] = (UBYTE)(entry >> 8);
@@ -2049,8 +2253,9 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
 
     vera_chip_reset("INITIAL_SETUP");
 
-    /* Optionally load OS handler ROM */
-    if (verax16_rom_filename[0] != '\0') {
+    /* Loading OS handler ROM is MANDATORY */
+    if (verax16_rom_filename[0] != '\0')
+    {
         char cwd[FILENAME_MAX];
         const char *cwd_str;
 
@@ -2060,7 +2265,8 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
             cwd_str = "(unknown)";
 
         verax16_rom = (UBYTE *)Util_malloc(0x800);
-        if (!Atari800_LoadImage(verax16_rom_filename, verax16_rom, 0x800)) {
+        if (!Atari800_LoadImage(verax16_rom_filename, verax16_rom, 0x800))
+        {
             free(verax16_rom);
             verax16_rom = NULL;
             Log_print("VeraX16: WARNING - ROM not loaded from %s (cwd: %s)",
@@ -2069,7 +2275,9 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
                     "VeraX16: WARNING - cannot load ROM '%s' (cwd: %s). "
                     "Use an absolute path or a path relative to the launch directory.\n",
                     verax16_rom_filename, cwd_str);
-        } else {
+        }
+        else
+        {
             Log_print("VeraX16: ROM loaded from %s", verax16_rom_filename);
         }
     }
@@ -2088,7 +2296,8 @@ void PBI_VERAX16_Exit(void)
         return;
     VERA_VIDEO_Exit();
     vera_sdcard_detach();
-    if (verax16_rom != NULL) {
+    if (verax16_rom != NULL)
+    {
         free(verax16_rom);
         verax16_rom = NULL;
     }
@@ -2097,7 +2306,8 @@ void PBI_VERAX16_Exit(void)
 
 void PBI_VERAX16_Reset(void)
 {
-    if (PBI_VERAX16_enabled) {
+    if (PBI_VERAX16_enabled)
+    {
         verax16_cs = FALSE;
         memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
         vera_chip_reset("PBI_RESET");
@@ -2108,16 +2318,21 @@ int PBI_VERAX16_ReadConfig(char *string, char *ptr)
 {
     if (strcmp(string, "VERAX16_ROM") == 0)
         Util_strlcpy(verax16_rom_filename, ptr, sizeof(verax16_rom_filename));
-    else if (strcmp(string, "VERAX16_SDCARD") == 0)
+    else
+    if (strcmp(string, "VERAX16_SDCARD") == 0)
         Util_strlcpy(verax16_sdcard_filename, ptr, sizeof(verax16_sdcard_filename));
-    else if (strcmp(string, "VERAX16_PBI_ID") == 0) {
+    else
+    if (strcmp(string, "VERAX16_PBI_ID") == 0)
+    {
         int n = atoi(ptr);
-        if (n >= 0 && n <= 7) {
+        if (n >= 0 && n <= 7)
+        {
             verax16_pbi_num  = n;
             verax16_pbi_mask = (UBYTE)(1u << n);
         }
     }
-    else return FALSE;
+    else
+        return FALSE;
     return TRUE;
 }
 
@@ -2135,7 +2350,8 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
 int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 {
     int offset = (int)addr - (int)VERA_REG_BASE;
-    if (offset >= 0 && offset < (int)VERA_REG_COUNT) {
+    if (offset >= 0 && offset < (int)VERA_REG_COUNT)
+    {
         UBYTE val = vera_read_reg(offset, no_side_effects);
         Log_D("PBI_GetByte: %04X -> %02X", addr, val);
         return (int)val;
@@ -2150,7 +2366,8 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 {
     int offset = (int)addr - (int)VERA_REG_BASE;
-    if (offset >= 0 && offset < (int)VERA_REG_COUNT) {
+    if (offset >= 0 && offset < (int)VERA_REG_COUNT)
+    {
         Log_D("PBI_PutByte: %04X <- %02X", addr, byte);
         vera_write_reg(offset, byte);
     }
@@ -2163,7 +2380,7 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 
 int PBI_VERAX16_D1ffPutByte(UBYTE byte)
 {
-  //  printf("%s : %02X\n", __func__, byte);
+    //Log_D("PBI_D1FF PutByte %02X", byte);
     
     if (byte == verax16_pbi_mask)
     {
@@ -2178,9 +2395,9 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
             }
             else
             {
-            	Log_print("VeraX16: No ROM Found. Disabling...");
-            	PBI_VERAX16_enabled = 0;
-            	return PBI_NOT_HANDLED;
+                Log_print("VeraX16: No ROM Found. Disabling...");
+                PBI_VERAX16_enabled = 0;
+                return PBI_NOT_HANDLED;
             }
         }
         return 0;
@@ -2192,7 +2409,7 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
         /* Ripristino Math Pack spostato in pbi.c */
         Log_print("VeraX16: Latch DISABLED");
     }
-    //printf("%s PBI NOT HANDLED\n", __func__);
+    //Log_D("PBI_D1FF PutByte NOT HANDLED");
     return PBI_NOT_HANDLED;
 }
 
@@ -2218,7 +2435,8 @@ void PBI_VERAX16_Scanline(void)
         return;
 
     vera_scanline_accum += VERA_SCANLINES_PER_FRAME;
-    while (vera_scanline_accum >= (unsigned int)Atari800_tv_mode) {
+    while (vera_scanline_accum >= (unsigned int)Atari800_tv_mode)
+    {
         vera_advance_scanline_once();
         vera_scanline_accum -= (unsigned int)Atari800_tv_mode;
     }
@@ -2297,7 +2515,8 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
     if (frames <= 0)
         return;
 
-    for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++) {
+    for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++)
+    {
         ULONG base = VERA_PSG_REG_BASE + (ULONG)voice * 4u;
         voices[voice].freq = (UWORD)((UWORD)vera_vram[base] | ((UWORD)vera_vram[base + 1u] << 8));
         voices[voice].vol_route = vera_vram[base + 2u];
@@ -2307,7 +2526,8 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
     buffer8 = (UBYTE *)buffer;
     buffer16 = (SWORD *)buffer;
 
-    for (frame = 0; frame < frames; frame++) {
+    for (frame = 0; frame < frames; frame++)
+    {
         int pcm_left = 0;
         int pcm_right = 0;
         int mix_left;
@@ -2317,7 +2537,8 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
         mix_left = pcm_left;
         mix_right = pcm_right;
 
-        for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++) {
+        for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++)
+        {
             VERA_PSGState *state = &vera_psg_state[voice];
             UBYTE vol = voices[voice].vol_route & 0x3Fu;
             UBYTE waveform = (UBYTE)(voices[voice].wave_pulse >> 6);
@@ -2340,7 +2561,8 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
                 state->noiseval = (UWORD)((vera_psg_noise_state >> 1) & 0x3Fu);
             state->phase = new_phase;
 
-            switch (waveform & 0x03u) {
+            switch (waveform & 0x03u)
+            {
             case 0:
                 v = ((state->phase >> 10) > pulse_width) ? 0u : 0x3Fu;
                 break;
@@ -2368,42 +2590,63 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
                 mix_right += val >> 3;
         }
 
-        if (sample_size == 2) {
+        if (sample_size == 2)
+        {
             int index = frame * (int)channels;
-            if (channels == 1u) {
+            if (channels == 1u)
+            {
                 int mono = (mix_left + mix_right) / 2;
                 int mixed = (int)buffer16[index] + mono;
                 if (mixed > 32767) mixed = 32767;
                 else if (mixed < -32768) mixed = -32768;
                 buffer16[index] = (SWORD)mixed;
             }
-            else {
+            else
+            {
                 int mixed_left = (int)buffer16[index] + mix_left;
                 int mixed_right = (int)buffer16[index + 1] + mix_right;
-                if (mixed_left > 32767) mixed_left = 32767;
-                else if (mixed_left < -32768) mixed_left = -32768;
-                if (mixed_right > 32767) mixed_right = 32767;
-                else if (mixed_right < -32768) mixed_right = -32768;
+                if (mixed_left > 32767)
+                    mixed_left = 32767;
+                else
+                if (mixed_left < -32768)
+                    mixed_left = -32768;
+                if (mixed_right > 32767)
+                    mixed_right = 32767;
+                else
+                if (mixed_right < -32768)
+                    mixed_right = -32768;
                 buffer16[index] = (SWORD)mixed_left;
                 buffer16[index + 1] = (SWORD)mixed_right;
             }
         }
-        else {
+        else
+        {
             int index = frame * (int)channels;
-            if (channels == 1u) {
+            if (channels == 1u)
+            {
                 int mono = (mix_left + mix_right) / 2;
                 int mixed = (((int)buffer8[index] - 128) << 8) + mono;
-                if (mixed > 32767) mixed = 32767;
-                else if (mixed < -32768) mixed = -32768;
+                if (mixed > 32767)
+                    mixed = 32767;
+                else
+                if (mixed < -32768)
+                    mixed = -32768;
                 buffer8[index] = (UBYTE)((mixed >> 8) + 128);
             }
-            else {
+            else
+            {
                 int mixed_left = (((int)buffer8[index] - 128) << 8) + mix_left;
                 int mixed_right = (((int)buffer8[index + 1] - 128) << 8) + mix_right;
-                if (mixed_left > 32767) mixed_left = 32767;
-                else if (mixed_left < -32768) mixed_left = -32768;
-                if (mixed_right > 32767) mixed_right = 32767;
-                else if (mixed_right < -32768) mixed_right = -32768;
+                if (mixed_left > 32767)
+                    mixed_left = 32767;
+                else
+                if (mixed_left < -32768)
+                    mixed_left = -32768;
+                if (mixed_right > 32767)
+                    mixed_right = 32767;
+                else
+                if (mixed_right < -32768)
+                    mixed_right = -32768;
                 buffer8[index] = (UBYTE)((mixed_left >> 8) + 128);
                 buffer8[index + 1] = (UBYTE)((mixed_right >> 8) + 128);
             }
