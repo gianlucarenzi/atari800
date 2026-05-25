@@ -58,7 +58,7 @@
 #define DCSEL_6   0x0C   /* FX cache bytes / accumulator side-effects       */
 
 /* Atari OS: CRITIC flag — while non-zero, deferred VBI is suppressed */
-#define ATARI_CRITIC (*(volatile unsigned char *)0x0042)
+#define CRITIC (*(volatile unsigned char *)0x0042)
 
 /* Safe VRAM window: bank 0, low addresses — clear of tilemap/font/PSG */
 #define TEST_VRAM_MULT  0x00100UL   /* 4-byte area for multiplier test    */
@@ -330,7 +330,7 @@ static void test_multiplier(void)
 
     printf("\n[9] Multiplier result to VRAM\n");
 
-    ATARI_CRITIC = 1;
+    CRITIC = 1;
 
     /* Pre-fill target area with 0xFF to make wrong results visible */
     set_addr0(TEST_VRAM_MULT, ADDR_H_INC1_B0);
@@ -371,7 +371,7 @@ static void test_multiplier(void)
     r3 = VERA_DATA0;
 
     VERA_CTRL    = DCSEL_0;
-    ATARI_CRITIC = 0;
+    CRITIC = 0;
 
     check_b("VRAM+0 = 0x0C (3*4)", r0, 0x0C);
     check_b("VRAM+1 = 0x00",       r1, 0x00);
@@ -388,7 +388,7 @@ static void test_transparency(void)
 
     printf("\n[10] Transparency (8-bit mode)\n");
 
-    ATARI_CRITIC = 1;
+    CRITIC = 1;
 
     /* Write sentinel 0x55 with transparency disabled */
     VERA_CTRL  = DCSEL_2;
@@ -415,7 +415,7 @@ static void test_transparency(void)
     VERA_CTRL    = DCSEL_2;
     VERA_REG09   = 0x00;
     VERA_CTRL    = DCSEL_0;
-    ATARI_CRITIC = 0;
+    CRITIC = 0;
 }
 
 /* ------------------------------------------------------------------ */
