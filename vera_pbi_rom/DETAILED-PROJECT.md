@@ -121,6 +121,22 @@ static void vera_fx_accumulate_step(void)
 
 Viene richiamata sia dal write handler di `FX_MULT` (DCSEL=2, $D10C) quando il bit `VERA_FX_MULT_ACCUM` è attivo, sia come side-effect della lettura di `FX_ACCUM` ($D10A con DCSEL=6).
 
+## Correzioni comportamento FX (`src/pbi_verax16.c`)
+
+Nove bug comportamentali sono stati identificati tramite audit sistematico del VHDL (`fpga-vera/47.0.2/`) e corretti:
+
+| # | Funzione / contesto | Difetto | Correzione |
+|---|---------------------|---------|------------|
+| 1 | `vera_fx_affine_prefetch()` | Shift tile `>>10` e sub-tile `>>7` errati di 2 bit → errore di scala 4× nell'indirizzo VRAM | Corretti a `>>12` (tile) e `>>9` (sub-tile), coerenti con il layout 20-bit della posizione |
+| 2 | DATA1 read AFFINE / POLY_FILL — step posizione | Shift `4:11` applicato a un accumulatore di posizione in scala identica all'incremento → step 2048× eccessivo | Shift corretto a `5:0` (32× flag = 2^5; incremento diretto senza shift aggiuntivo) |
+| 3 | DATA1 write LINE DRAW — step Bresenham | Fattore 32× usava shift 4 → scala 128× invece di 32× | Corretto a shift 6 (differenza 11-6=5, ovvero 2^5=32) |
+| 4 | DATA1 write AFFINE — stub vuoto | Dopo la write su DATA1 in modalità affine, ADDR1 non veniva aggiornato e la posizione non avanzava | Aggiunto step posizione (shift `5:0`) + chiamata a `vera_fx_affine_prefetch()` |
+| 5 | DATA1 write POLY_FILL — stub vuoto | Dopo la write su DATA1 in modalità polygon fill, ADDR1 rimaneva fermo | Aggiunto `vera_advance(1)` per avanzare al pixel successivo |
+| 6 | DATA0 read POLY_FILL — ADDR1 ricalcolato erroneamente | Il path DATA0 ricalcolava ADDR1 dopo il passo di posizione; il VHDL aggiorna solo le posizioni X1/X2, non ADDR1 | Rimosso il ricalcolo di ADDR1; il path ora avanza solo le posizioni |
+| 7 | DATA0 read POLY_FILL — cache byte cycling | Il cycling di `fx_cache_byte_index` scattava su DATA1 read (port errata) e ignorava `fx_cache_increment_mode` | Spostato su DATA0 read con logica 2-byte pingpong / 4-byte wrap coerente con il VHDL |
+| 8 | `vera_fx_write_data()` — path non-cache | La transparenza (`fx_transparency_enabled`) era verificata solo nel path cache; le write dirette sovrascrivevano VRAM anche con byte/nibble zero | Aggiunta guard transparency nel path non-cache (`value==0` per 8-bit, `value & 0x0F == 0` per 4-bit) |
+| 9 | `vera_chip_reset()` — stato iniziale posizione | `fx_pixel_pos_x` e `fx_pixel_pos_y` inizializzati a 0; il VHDL li inizializza a 256 (0.5 sub-pixel) | Corretti a 256, eliminando errori di arrotondamento al mezzo pixel alla prima operazione FX |
+
 ## Simboli condivisi (`vera_pbi_rom/vera_common.inc`)
 
 Il file `vera_common.inc` è incluso da tutti i moduli assembly del progetto e centralizza indirizzi, costanti e bitmask. I nomi dei simboli sono allineati a 24 caratteri (il `=` cade alla colonna 25).
