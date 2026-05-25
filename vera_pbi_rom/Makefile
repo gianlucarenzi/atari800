@@ -62,14 +62,14 @@ LOADER_MAP = loader.map
 
 # --- Output / packaging -----------------------------------------------------
 
-AUTORUN  = AUTORUN.SYS
 ATR      = vera_pbi.atr
 ATRBUILD = .atrbuild
 ROMDIR   = ../roms
 LABELS   = vera.lbl
 
-GEN_FIXUPS = gen_fixups.py
-ASSEMBLE   = assemble_autorun.py
+GEN_FIXUPS  = gen_fixups.py
+ASSEMBLE    = assemble_autorun.py
+BUNDLE_VERA = bundle_vera.py
 
 .PHONY: all clean cleanall install atr labels
 
@@ -126,9 +126,6 @@ labels: $(TARGET) $(SYS)
 	$(PYTHON) make_labels.py $(MAPFILE_ROM) $(BODY_MAP_A) > $(LABELS)
 	@echo "Labels written to $(LABELS) ($$(wc -l < $(LABELS)) entries)"
 
-$(AUTORUN): $(SYS)
-	cp $(SYS) $(AUTORUN)
-
 # === ATR image ==============================================================
 
 DOS20DIR     = .dos20
@@ -143,25 +140,38 @@ TEST_GS_EXE = TESTGS.COM
 TEST_MAZE_SRC = vera-tests/test_maze.c
 TEST_MAZE_EXE = TESTMAZE.COM
 
-$(TEST_EXE): $(TEST_SRC)
-	cl65 -t atari --start-addr 0x5000 -o $(TEST_EXE) $(TEST_SRC)
+TEST_FX_SRC   = vera-tests/test_fx.c
+TEST_FX_EXE   = TESTFX.COM
 
-$(TEST_GS_EXE): $(TEST_GS_SRC)
-	cl65 -t atari --start-addr 0x5000 -o $(TEST_GS_EXE) $(TEST_GS_SRC)
+$(TEST_EXE): $(TEST_SRC) $(SYS) $(BUNDLE_VERA)
+	cl65 -t atari --start-addr 0x5000 -o _$(TEST_EXE) $(TEST_SRC)
+	$(PYTHON) $(BUNDLE_VERA) $(SYS) _$(TEST_EXE) $(TEST_EXE)
+	rm -f _$(TEST_EXE)
 
-$(TEST_MAZE_EXE): $(TEST_MAZE_SRC)
-	cl65 -t atari --start-addr 0x5000 -o $(TEST_MAZE_EXE) $(TEST_MAZE_SRC)
+$(TEST_GS_EXE): $(TEST_GS_SRC) $(SYS) $(BUNDLE_VERA)
+	cl65 -t atari --start-addr 0x5000 -o _$(TEST_GS_EXE) $(TEST_GS_SRC)
+	$(PYTHON) $(BUNDLE_VERA) $(SYS) _$(TEST_GS_EXE) $(TEST_GS_EXE)
+	rm -f _$(TEST_GS_EXE)
+
+$(TEST_MAZE_EXE): $(TEST_MAZE_SRC) $(SYS) $(BUNDLE_VERA)
+	cl65 -t atari --start-addr 0x5000 -o _$(TEST_MAZE_EXE) $(TEST_MAZE_SRC)
+	$(PYTHON) $(BUNDLE_VERA) $(SYS) _$(TEST_MAZE_EXE) $(TEST_MAZE_EXE)
+	rm -f _$(TEST_MAZE_EXE)
+
+$(TEST_FX_EXE): $(TEST_FX_SRC)
+	cl65 -t atari --start-addr 0x5000 -o $(TEST_FX_EXE) $(TEST_FX_SRC)
 
 $(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
 	$(PYTHON) $(DOS20EXTRACT)
 
-atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE)
+atr: $(TARGET) $(SYS) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE)
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
-	cp $(AUTORUN) $(ATRBUILD)/$(AUTORUN)
+	cp $(SYS) $(ATRBUILD)/$(SYS)
 	cp $(TEST_EXE) $(ATRBUILD)/
 	cp $(TEST_GS_EXE) $(ATRBUILD)/
 	cp $(TEST_MAZE_EXE) $(ATRBUILD)/
+	cp $(TEST_FX_EXE) $(ATRBUILD)/
 	cp $(DOS20DIR)/DOS.SYS $(DOS20DIR)/DUP.SYS $(ATRBUILD)/
 	$(DIR2ATR) -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
@@ -169,11 +179,12 @@ atr: $(TARGET) $(AUTORUN) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_
 # === Cleanup ================================================================
 
 clean:
-	rm -rf $(OBJ) $(TARGET) $(SYS) $(AUTORUN) $(ATR) $(ATRBUILD) $(LABELS) \
+	rm -rf $(OBJ) $(TARGET) $(SYS) $(ATR) $(ATRBUILD) $(LABELS) \
 		$(BODY_OBJ) $(LOADER_OBJ) \
 		$(BODY_BIN_A) $(BODY_BIN_B) $(BODY_LBL_A) $(BODY_LBL_B) \
 		$(LOADER_BIN) $(LOADER_LBL) $(FIXUPS_BIN) \
-		$(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE)
+		$(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE) \
+		_$(TEST_EXE) _$(TEST_GS_EXE) _$(TEST_MAZE_EXE)
 
 cleanall: clean
 	rm -rf $(MAPFILE_ROM) $(BODY_MAP_A) $(BODY_MAP_B) $(LOADER_MAP)
