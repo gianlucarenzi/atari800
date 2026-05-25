@@ -9,7 +9,7 @@
  *   $D1FF       : PBI device ID latch (shared, bit selected by verax16_pbi_num)
  *   $D800-$DFFF : VERA OS handler ROM (2KB, selected via $D1FF latch)
  *
- * Copyright (C) 2024 Gianluca Renzi <gianlucarenzi@eurek.it>
+ * Copyright (C) 2026 Gianluca Renzi <gianlucarenzi@eurek.it>
  * Copyright (C) 2002-2024 Atari800 development team (see DOC/CREDITS)
  *
  * This file is part of the Atari800 emulator project which emulates
