@@ -336,12 +336,11 @@ static void test_multiplier(void)
     VERA_CTRL  = DCSEL_2;
     VERA_REG09 = 0x40;
 
-    /* FX_MULT: accumulate=0, add_or_sub=0, mult_enabled=1 → 0x10 */
-    VERA_REG0C = 0x10;
+    /* FX_MULT: bit7=ResetAccum resets accumulator to 0; bit4=mult_enabled → 0x90 */
+    VERA_REG0C = 0x90;
 
     /* Cache: A=3 (low word), B=4 (high word) */
     VERA_CTRL  = DCSEL_6;
-    (void)VERA_REG09;    /* side-effect: accumulator = 0 */
     VERA_REG09 = 0x03;   /* cache[0] = A_lo */
     VERA_REG0A = 0x00;   /* cache[1] = A_hi */
     VERA_REG0B = 0x04;   /* cache[2] = B_lo */
