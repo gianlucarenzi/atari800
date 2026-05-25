@@ -30,7 +30,8 @@ int main(void)
 				maze = *(rndgen) & 0x01;
 			}
 			// Stampiamo il maze
-			printf("%c%c", 27, maze + 6);
+			//printf("%c%c", 27, maze + 6);
+			printf("%c", maze + 6);
         }
         else
         {
