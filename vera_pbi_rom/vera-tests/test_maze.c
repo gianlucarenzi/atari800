@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <atari.h>
 #include <stdlib.h>
-
+#include "vera_detect.h"
 
 int main(void)
 {
@@ -9,7 +9,8 @@ int main(void)
     int do_rand = 1;
     int counter = 80 * 25;
 	unsigned char *rndgen = (unsigned char *) 0xD20A;
-	
+
+    printf("VeraX16 detected (ID: 0x%04X)\n", vera_require());
     printf("Starting character test maze loop (ESC sequence)...\n");
     srand(12345);
 

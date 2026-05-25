@@ -11,6 +11,7 @@
 
 #include <conio.h>
 #include <atari.h>
+#include "vera_detect.h"
 
 /* ------------------------------------------------------------------ */
 /* VERA PBI register block at $D100                                    */
@@ -140,6 +141,7 @@ int main(void)
     signed char  delta  = 1;           /* +1 = accelerating, -1 = decelerating */
     unsigned char pixels;
 
+    vera_require();
     fill_gradient();
 
     while (!kbhit())
