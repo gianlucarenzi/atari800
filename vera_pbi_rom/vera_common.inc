@@ -159,11 +159,13 @@ CHARSET_VRAM_M          = >CHARSET_ADDR             ; glyph VRAM address byte 1
 CHARSET_VRAM_H          = (VERA_INC1|^CHARSET_ADDR) ; glyph ADDR_H with increment
 
 ; ============================================================================
-; Font / viewport configuration — select at build time:
-;   make FONT_SIZE=8x8   →  80×60 viewport (8-pixel-tall tiles)
-;   make FONT_SIZE=8x16  →  80×30 viewport (16-pixel-tall tiles, default)
-;   make FONT_SIZE=40x30 →  40×30 viewport (8-pixel tiles, 2× scale)
-; Pass -D FONT_8X8=1 and/or -D MODE_40X30=1 to ca65 to select.
+; Screen / viewport configuration — select at build time:
+;   make SCREEN=80x60   →  80×60 viewport (8-pixel-tall tiles, 640×480 VGA)
+;   make SCREEN=80x30   →  80×30 viewport (16-pixel-tall tiles, default)
+;   make SCREEN=40x30   →  40×30 viewport (8-pixel tiles, 2× scale, 320×240)
+;
+; Passing MODE_40X30=1 activates the 320×240 path with 2x hardware scaling.
+; Passing FONT_8X8=1 selects the 8-pixel tall character set (font8x8.bin).
 ; ============================================================================
 
 .ifdef MODE_40X30
@@ -174,12 +176,12 @@ SCREEN_ROWS             = 30                        ; visible rows    (240 ÷ 8)
 SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9)        ; L1_TILEBASE: bit1=0 → 8px tile height
 HSCALE_VAL              = $40                       ; horizontal scale (64 = 2:1 magnification)
 VSCALE_VAL              = $40                       ; vertical scale   (64 = 2:1 magnification)
-INPUT_LINE_ROWS         = 3                         ; max logical line height (physical rows)
+INPUT_LINE_ROWS         = 3                         ; max logical line length (3 physical rows)
 .else
 SCREEN_COLS             = 80                        ; visible columns (640 ÷ 8)
 HSCALE_VAL              = $80                       ; horizontal scale (128 = 1:1)
 VSCALE_VAL              = $80                       ; vertical scale   (128 = 1:1)
-INPUT_LINE_ROWS         = 2                         ; max logical line height (physical rows)
+INPUT_LINE_ROWS         = 2                         ; max logical line length (2 physical rows)
 .ifdef FONT_8X8
 TILE_HEIGHT             = 8                         ; tile height in pixels
 FONT_PAGES              = 4                         ; 128 chars ×  8 bytes = 1024 = 4 × 256
@@ -199,11 +201,11 @@ SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2    ; L1_TILEBASE: bit1=1 → 16
 
 MAP_COLS                = 128                                  ; tilemap width  in cells (256 bytes/row stride)
 MAP_ROWS                = 64                                   ; tilemap height in cells
-SCREEN_COLS_VIEW        = SCREEN_COLS                          ; alias (retained for source compatibility)
-SCREEN_ROWS_VIEW        = SCREEN_ROWS                          ; alias (retained for source compatibility)
+SCREEN_COLS_VIEW        = SCREEN_COLS                          ; current viewport width in characters
+SCREEN_ROWS_VIEW        = SCREEN_ROWS                          ; current viewport height in characters
 TEXT_COLOR              = $61                                  ; default text colour byte (fg/bg nibbles)
 INPUT_LINE_MAX          = SCREEN_COLS_VIEW * INPUT_LINE_ROWS   ; max chars in one logical input line
-BELL_COL                = 5                                    ; trigger bell 5 chars before EOL
+BELL_COL                = 5                                    ; trigger bell click 5 chars before EOL of last row
 
 ; ============================================================================
 ; Display composer initialisation values (640×480 VGA active area)

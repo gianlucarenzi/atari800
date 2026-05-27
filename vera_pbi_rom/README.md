@@ -90,4 +90,33 @@ int main(void)
 The build system orchestrates the compilation of tests into `.COM` binaries and packages them into a single `vera_pbi.atr` disk image, enabling automated validation within the emulator.
 
 ---
+
+## 6. Build and Configuration
+The project uses a `Makefile` to generate the firmware and drivers.
+
+### Resolution Modes
+Three primary display modes are supported:
+1.  **80x30 (Default):** 640x480 VGA, 8x16 font.
+2.  **80x60:** 640x480 VGA, 8x8 font.
+3.  **40x30:** 320x240 (upscaled to 640x480 via 2x hardware scaling), 8x8 font.
+
+### Build Commands
+To build the PBI ROM and all driver variants:
+```bash
+make -C vera_pbi_rom cleanall all atr
+```
+
+This generates:
+*   `vera_pbi_handler.rom`: The PBI handler (always initializes in 80x60 mode).
+*   `VERA8030.SYS`: 80x30 driver.
+*   `VERA8060.SYS`: 80x60 driver.
+*   `VERA4030.SYS`: 40x30 driver.
+*   `vera_pbi.atr`: Disk image containing all drivers and test utilities.
+
+Individual variants can be built using the `SCREEN` variable:
+```bash
+make SCREEN=40x30
+```
+
+---
 *Technical Documentation - Project Fork Atari800*

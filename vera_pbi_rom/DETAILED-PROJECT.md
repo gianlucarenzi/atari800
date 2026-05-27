@@ -14,14 +14,19 @@ Il progetto è composto da due componenti principali, entrambi nella directory `
     *   Implementa l'header ROM PBI Atari standard (checksum, device ID, vettori JMP).
     *   Gestisce l'inizializzazione PBI (handler `INIT`) ai cold/warm start.
     *   Fornisce routine stub per le operazioni CIO, permettendo all'OS di riconoscere la scheda come periferica attiva.
-    *   Inizializza i registri hardware VERA per una modalità VGA-compatibile 640×480, configurando il Layer 1 in modalità **80×60 caratteri** (tile 8×8) o **80×30 caratteri** (tile 8×16).
+    *   Inizializza i registri hardware VERA per una modalità VGA-compatibile 640×480, configurando il Layer 1 in modalità fissa **80×60 caratteri** (tile 8×8) per garantire un boot consistente.
     *   Carica un font di boot minimale (solo i caratteri necessari per il banner) nella VRAM.
 
-### 2. Driver OS rilocabile (`AUTORUN.SYS`)
-*   **Ruolo:** Agisce come driver di sistema primario, installato automaticamente al boot.
+### 2. Driver OS rilocabile (`VERA.SYS`)
+*   **Ruolo:** Agisce come driver di sistema primario, installato automaticamente al boot (tipicamente rinominato come `AUTORUN.SYS`).
+*   **Versioni:** Vengono generate tre varianti specializzate:
+    *   **`VERA8030.SYS`**: 80x30 caratteri (default, font 8x16).
+    *   **`VERA8060.SYS`**: 80x60 caratteri (font 8x8).
+    *   **`VERA4030.SYS`**: 40x30 caratteri (risoluzione 320x240 con scaling 2x, font 8x8).
 *   **Funzionalità:**
     *   **Installazione:** Si aggancia alla HATABS (Handler Address Table) per sostituire gli handler standard dei dispositivi Editor (`E:`) e Screen (`S:`) con versioni abilitate per VERA.
-    *   **Gestione PUTC:** Sostituisce le routine CIO PUT BYTE standard con una state machine custom che renderizza testo ATASCII direttamente nella VRAM di VERA (viewport 80×60), bypassando la memoria video ANTIC/GTIA originale.
+    *   **Gestione PUTC:** Sostituisce le routine CIO PUT BYTE standard con una state machine custom che renderizza testo ATASCII direttamente nella VRAM di VERA, bypassando la memoria video ANTIC/GTIA originale. Supporta risoluzioni multiple e scaling hardware.
+    *   **Riga Logica Dinamica:** Gestisce righe logiche di lunghezza variabile (fino a 3 righe fisiche in modalità 40 colonne) e trigger del BELL acustico dinamico.
     *   **Hook VBI:** Installa routine di Vertical Blank Interrupt per gestire il lampeggio del cursore e le funzioni metronomo.
     *   **Resilienza al warm start:** Si aggancia ai vettori di reset di sistema (catena `DOSINI`/`CASINI`) per garantire che il driver rimanga attivo e la scheda VERA venga re-inizializzata dopo un reset di sistema.
 
@@ -29,9 +34,9 @@ Il progetto è composto da due componenti principali, entrambi nella directory `
 
 I seguenti moduli assembly costituiscono il nucleo dell'implementazione:
 
-*   **`vera_pbi_handler.s`**: Gestisce il protocollo PBI a basso livello, la definizione dell'header ROM e la configurazione hardware iniziale durante la sequenza di cold boot.
-*   **`vera_driver.s`**: La state machine PUT BYTE principale. Implementa un viewport ATASCII 40×24/80×60, gestendo i caratteri di controllo (EOL, CLEAR, TAB, ecc.) e il rendering diretto in VRAM.
-*   **`vera_sys_es_hook.s`**: Installa gli handler sostitutivi per i dispositivi E: e S: agganciando la HATABS e aggiornando i puntatori PUT BYTE degli IOCB aperti. Gestisce anche il buffering dell'input e la traduzione dei codici tastiera POKEY grezzi in ATASCII.
+*   **`vera_pbi_handler.s`**: Gestisce il protocollo PBI a basso livello, la definizione dell'header ROM e la configurazione hardware iniziale (80x60) durante la sequenza di cold boot.
+*   **`vera_driver.s`**: La state machine PUT BYTE principale. Supporta diverse modalità di viewport (80x30, 80x60, 40x30) e gestisce lo scaling hardware VERA (HSCALE/VSCALE) per riempire lo schermo VGA 640x480. Gestisce i caratteri di controllo (EOL, CLEAR, TAB, ecc.) e il rendering diretto in VRAM.
+*   **`vera_sys_es_hook.s`**: Installa gli handler sostitutivi per i dispositivi E: e S:. Gestisce la riga logica generalizzata (fino a 3 righe fisiche) con supporto corretto per backspace, insert/delete char e wrap dinamico. Implementa il trigger del BELL acustico basato sulla posizione relativa alla fine della riga logica. Gestisce anche il buffering dell'input e la traduzione dei codici tastiera POKEY grezzi in ATASCII.
 *   **`vera_sys_vbi.s`**: Gestisce il lampeggio del cursore pilotato dal VBI (salvando la posizione del cursore e invertendo le nibble di colore foreground/background) e garantisce che i task in background non confliggano con le scritture VRAM in foreground.
 *   **`vera_sys_loader.s`**: Bootstrap di installazione che gestisce la rilocazione dinamica del driver VERA nella memoria protetta (RAMTOP).
 
@@ -212,10 +217,19 @@ Il valore restituito da `vera_require()` (`0x5658`, ovvero i caratteri ASCII `'V
 
 ## Sistema di build (`vera_pbi_rom/Makefile`)
 
-Per compilare e verificare qualsiasi modifica ai sorgenti in `vera_pbi_rom/` usare sempre:
+Il build system automatizza la generazione del firmware e dei driver per diverse risoluzioni.
 
-```
-make -C vera_pbi_rom clean all atr
+### Variabili di configurazione
+*   **`SCREEN`**: Definisce la modalità di visualizzazione del driver RAM.
+    *   `80x30` (default): 640x480 VGA, font 8x16.
+    *   `80x60`: 640x480 VGA, font 8x8.
+    *   `40x30`: 320x240 (scala 2x), font 8x8.
+
+### Comandi principali
+Per compilare la ROM (sempre 80x60) e tutte e tre le varianti del driver (`VERA8030.SYS`, `VERA8060.SYS`, `VERA4030.SYS`) incluse nell'immagine ATR:
+
+```bash
+make -C vera_pbi_rom cleanall all atr
 ```
 
-Questo target ricostruisce in sequenza: la ROM PBI handler (`vera_pbi_handler.rom`), il driver rilocabile (`VERA.SYS` / `AUTORUN.SYS`), tutti i programmi di test `.COM` nella directory `vera-tests/`, e l'immagine disco `vera_pbi.atr` contenente tutti i file pronti per l'uso nell'emulatore.
+Il processo esegue compilazioni sequenziali pulite per ogni modalità, rinominando i file risultanti e garantendo che i define corretti (`MODE_40X30`, `FONT_8X8`) siano applicati coerentemente sia al driver che al bootstrap loader.
