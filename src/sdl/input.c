@@ -49,6 +49,9 @@
 #include "colours.h"
 #include "filter_ntsc.h"
 #include "../input.h"
+#ifdef PBI_VERAX16
+#include "../vera_video.h"
+#endif
 #include "log.h"
 #include "platform.h"
 #include "pokey.h"
@@ -782,6 +785,22 @@ int PLATFORM_Keyboard(void)
 		} break;
 
 		case SDL_WINDOWEVENT:
+#if SDL2 && defined(PBI_VERAX16)
+			{
+				SDL_Window *vera_win = VERA_VIDEO_GetWindow();
+				if (vera_win && event.window.windowID == SDL_GetWindowID(vera_win)) {
+					switch (event.window.event) {
+					case SDL_WINDOWEVENT_ENTER:
+						SDL_ShowCursor(SDL_ENABLE);
+						break;
+					case SDL_WINDOWEVENT_LEAVE:
+						SDL_ShowCursor(SDL_DISABLE);
+						break;
+					}
+					break;
+				}
+			}
+#endif
 			if (SDL_VIDEO_wnd && event.window.windowID != SDL_GetWindowID(SDL_VIDEO_wnd))
 				break; /* ignore events from secondary windows (e.g. VERA) */
 			switch (event.window.event) {
