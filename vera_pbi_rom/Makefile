@@ -1,12 +1,7 @@
 # Makefile — VeraX16 PBI ROM handler + relocatable VERA.SYS driver.
 #
-# Requires the cc65 toolchain: ca65 (assembler) and ld65 (linker).
-# Install on Debian/Ubuntu:  apt install cc65
-# Install on macOS (brew):   brew install cc65
-#
-# Build:   make
-# Clean:   make clean
-# Install: make install   (copies ROM into the emulator build tree)
+# This Makefile generates the PBI ROM (fixed at 80x60) and three different 
+# versions of the relocatable VERA.SYS driver for various resolutions.
 
 CA65     = ca65
 LD65     = ld65
@@ -14,22 +9,24 @@ DIR2ATR  ?= dir2atr
 PYTHON   ?= python3
 
 ASFLAGS    = --cpu 6502 --feature labels_without_colons
-# PBI ROM always starts in 80x60 mode (8x8 font, 1:1 scale)
+# PBI ROM always starts in 80x60 mode (8x8 font, 1:1 scale) to provide
+# a consistent boot experience before any driver is loaded.
 ROM_ASFLAGS = $(ASFLAGS) -D FONT_8X8=1
 SYSASFLAGS = $(ASFLAGS) -D __ATARIXL__ -D SHRAM_HANDLERS
 
-# Font/viewport selection for the RAM driver:
-# 8x8 → 80×60, 8x16 → 80×30 (default), 40x30 → 40×30 (320×240)
-# Usage: make FONT_SIZE=8x8   or   make FONT_SIZE=8x16   or   make FONT_SIZE=40x30
-FONT_SIZE  ?= 8x16
-ifeq ($(FONT_SIZE),8x8)
+# Screen/viewport selection for the RAM driver (passed via sub-make calls):
+#   SCREEN=80x60 → 80×60 viewport (8-pixel tiles, 640×480)
+#   SCREEN=80x30 → 80×30 viewport (16-pixel tiles, 640×480, default)
+#   SCREEN=40x30 → 40×30 viewport (8-pixel tiles, 2× scale, 320×240)
+SCREEN  ?= 80x30
+ifeq ($(SCREEN),80x60)
   SYSASFLAGS += -D FONT_8X8=1
 endif
-ifeq ($(FONT_SIZE),40x30)
+ifeq ($(SCREEN),40x30)
   SYSASFLAGS += -D MODE_40X30=1 -D FONT_8X8=1
 endif
 
-# --- Output filenames for different resolutions ---
+# --- Output filenames for multi-resolution drivers ---
 
 SYS4030 = VERA4030.SYS
 SYS8030 = VERA8030.SYS
@@ -85,25 +82,30 @@ BUNDLE_VERA = bundle_vera.py
 
 .PHONY: all clean cleanall install atr labels drivers clean_objs
 
+# The default target builds the PBI ROM and all three driver versions.
 all: $(TARGET) $(SYS) drivers
 
+# Rule to generate the three resolution-specific drivers.
+# Each build requires a clean objects pass to ensure correct defines are applied.
 drivers: $(SYS4030) $(SYS8030) $(SYS8060)
 
 $(SYS4030):
 	$(MAKE) clean_objs
-	$(MAKE) FONT_SIZE=40x30 $(SYS)
+	$(MAKE) SCREEN=40x30 $(SYS)
 	cp $(SYS) $(SYS4030)
 
 $(SYS8030):
 	$(MAKE) clean_objs
-	$(MAKE) FONT_SIZE=8x16 $(SYS)
+	$(MAKE) SCREEN=80x30 $(SYS)
 	cp $(SYS) $(SYS8030)
 
 $(SYS8060):
 	$(MAKE) clean_objs
-	$(MAKE) FONT_SIZE=8x8 $(SYS)
+	$(MAKE) SCREEN=80x60 $(SYS)
 	cp $(SYS) $(SYS8060)
 
+# Deletes only the object files and intermediate binaries to allow switching
+# between different resolution builds without deleting the final renamed drivers.
 clean_objs:
 	rm -rf $(OBJ) $(BODY_OBJ) $(LOADER_OBJ) $(BODY_BIN_A) $(BODY_BIN_B) $(FIXUPS_BIN) $(LOADER_BIN) $(SYS)
 
