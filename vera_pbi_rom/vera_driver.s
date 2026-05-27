@@ -73,14 +73,14 @@ vera_init_hw:
     lda #DC_VSTOP_VAL
     sta VERA_DC_VSTOP
 
-    ; Display composer bank 0: enable VGA output + Layer 1, 1:1 scale.
+    ; Display composer bank 0: enable VGA output + Layer 1, dynamic scale.
     lda #VERA_DCSEL0
     sta VERA_CTRL
     lda #(VERA_VIDEO_VGA | VERA_LAYER1_EN)
     sta VERA_DC_VIDEO
-    lda #$80
+    lda #HSCALE_VAL
     sta VERA_DC_HSCALE
-    lda #$80
+    lda #VSCALE_VAL
     sta VERA_DC_VSCALE
     lda #$06
     sta VERA_DC_BORDER

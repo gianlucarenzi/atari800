@@ -162,9 +162,24 @@ CHARSET_VRAM_H          = (VERA_INC1|^CHARSET_ADDR) ; glyph ADDR_H with incremen
 ; Font / viewport configuration — select at build time:
 ;   make FONT_SIZE=8x8   →  80×60 viewport (8-pixel-tall tiles)
 ;   make FONT_SIZE=8x16  →  80×30 viewport (16-pixel-tall tiles, default)
-; Pass -D FONT_8X8=1 to ca65 to activate the 8×8 path.
+;   make FONT_SIZE=40x30 →  40×30 viewport (8-pixel tiles, 2× scale)
+; Pass -D FONT_8X8=1 and/or -D MODE_40X30=1 to ca65 to select.
 ; ============================================================================
 
+.ifdef MODE_40X30
+TILE_HEIGHT             = 8                         ; tile height in pixels
+FONT_PAGES              = 4                         ; 128 chars ×  8 bytes = 1024 = 4 × 256
+SCREEN_COLS             = 40                        ; visible columns (320 ÷ 8)
+SCREEN_ROWS             = 30                        ; visible rows    (240 ÷ 8)
+SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9)        ; L1_TILEBASE: bit1=0 → 8px tile height
+HSCALE_VAL              = $40                       ; horizontal scale (64 = 2:1 magnification)
+VSCALE_VAL              = $40                       ; vertical scale   (64 = 2:1 magnification)
+INPUT_LINE_ROWS         = 3                         ; max logical line height (physical rows)
+.else
+SCREEN_COLS             = 80                        ; visible columns (640 ÷ 8)
+HSCALE_VAL              = $80                       ; horizontal scale (128 = 1:1)
+VSCALE_VAL              = $80                       ; vertical scale   (128 = 1:1)
+INPUT_LINE_ROWS         = 2                         ; max logical line height (physical rows)
 .ifdef FONT_8X8
 TILE_HEIGHT             = 8                         ; tile height in pixels
 FONT_PAGES              = 4                         ; 128 chars ×  8 bytes = 1024 = 4 × 256
@@ -176,6 +191,7 @@ FONT_PAGES              = 8                         ; 128 chars × 16 bytes = 20
 SCREEN_ROWS             = 30                        ; visible rows  (480 ÷ 16)
 SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2    ; L1_TILEBASE: bit1=1 → 16px tile height
 .endif
+.endif
 
 ; ============================================================================
 ; Viewport and tilemap dimensions
@@ -183,12 +199,11 @@ SCREEN_TILEBASE_REG     = <(CHARSET_ADDR>>9) | 2    ; L1_TILEBASE: bit1=1 → 16
 
 MAP_COLS                = 128                                  ; tilemap width  in cells (256 bytes/row stride)
 MAP_ROWS                = 64                                   ; tilemap height in cells
-SCREEN_COLS             = 80                                   ; visible columns (viewport width)
 SCREEN_COLS_VIEW        = SCREEN_COLS                          ; alias (retained for source compatibility)
 SCREEN_ROWS_VIEW        = SCREEN_ROWS                          ; alias (retained for source compatibility)
 TEXT_COLOR              = $61                                  ; default text colour byte (fg/bg nibbles)
-INPUT_LINE_ROWS         = 2                                    ; max logical line height (physical rows)
 INPUT_LINE_MAX          = SCREEN_COLS_VIEW * INPUT_LINE_ROWS   ; max chars in one logical input line
+BELL_COL                = 5                                    ; trigger bell 5 chars before EOL
 
 ; ============================================================================
 ; Display composer initialisation values (640×480 VGA active area)

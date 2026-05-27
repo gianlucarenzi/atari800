@@ -14,14 +14,26 @@ DIR2ATR  ?= dir2atr
 PYTHON   ?= python3
 
 ASFLAGS    = --cpu 6502 --feature labels_without_colons
+# PBI ROM always starts in 80x60 mode (8x8 font, 1:1 scale)
+ROM_ASFLAGS = $(ASFLAGS) -D FONT_8X8=1
 SYSASFLAGS = $(ASFLAGS) -D __ATARIXL__ -D SHRAM_HANDLERS
 
-# Font/viewport selection: 8x8 → 80×60, 8x16 → 80×30 (default)
-# Usage: make FONT_SIZE=8x8   or   make FONT_SIZE=8x16
+# Font/viewport selection for the RAM driver:
+# 8x8 → 80×60, 8x16 → 80×30 (default), 40x30 → 40×30 (320×240)
+# Usage: make FONT_SIZE=8x8   or   make FONT_SIZE=8x16   or   make FONT_SIZE=40x30
 FONT_SIZE  ?= 8x16
 ifeq ($(FONT_SIZE),8x8)
   SYSASFLAGS += -D FONT_8X8=1
 endif
+ifeq ($(FONT_SIZE),40x30)
+  SYSASFLAGS += -D MODE_40X30=1 -D FONT_8X8=1
+endif
+
+# --- Output filenames for different resolutions ---
+
+SYS4030 = VERA4030.SYS
+SYS8030 = VERA8030.SYS
+SYS8060 = VERA8060.SYS
 
 # --- PBI ROM (unchanged) -----------------------------------------------------
 
@@ -71,14 +83,34 @@ GEN_FIXUPS  = gen_fixups.py
 ASSEMBLE    = assemble_autorun.py
 BUNDLE_VERA = bundle_vera.py
 
-.PHONY: all clean cleanall install atr labels
+.PHONY: all clean cleanall install atr labels drivers clean_objs
 
-all: $(TARGET) $(SYS)
+all: $(TARGET) $(SYS) drivers
+
+drivers: $(SYS4030) $(SYS8030) $(SYS8060)
+
+$(SYS4030):
+	$(MAKE) clean_objs
+	$(MAKE) FONT_SIZE=40x30 $(SYS)
+	cp $(SYS) $(SYS4030)
+
+$(SYS8030):
+	$(MAKE) clean_objs
+	$(MAKE) FONT_SIZE=8x16 $(SYS)
+	cp $(SYS) $(SYS8030)
+
+$(SYS8060):
+	$(MAKE) clean_objs
+	$(MAKE) FONT_SIZE=8x8 $(SYS)
+	cp $(SYS) $(SYS8060)
+
+clean_objs:
+	rm -rf $(OBJ) $(BODY_OBJ) $(LOADER_OBJ) $(BODY_BIN_A) $(BODY_BIN_B) $(FIXUPS_BIN) $(LOADER_BIN) $(SYS)
 
 # === PBI ROM ================================================================
 
 $(OBJ): $(SRC)
-	$(CA65) $(ASFLAGS) -D FONT_8X8=1 -o $(OBJ) $(SRC)
+	$(CA65) $(ROM_ASFLAGS) -o $(OBJ) $(SRC)
 
 $(TARGET): $(OBJ) $(CFG)
 	$(LD65) -C $(CFG) --mapfile $(MAPFILE_ROM) -vm -o $(TARGET) $(OBJ)
@@ -164,10 +196,13 @@ $(TEST_FX_EXE): $(TEST_FX_SRC)
 $(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
 	$(PYTHON) $(DOS20EXTRACT)
 
-atr: $(TARGET) $(SYS) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE)
+atr: $(TARGET) $(SYS) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE) drivers
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
 	cp $(SYS) $(ATRBUILD)/$(SYS)
+	cp $(SYS4030) $(ATRBUILD)/
+	cp $(SYS8030) $(ATRBUILD)/
+	cp $(SYS8060) $(ATRBUILD)/
 	cp $(TEST_EXE) $(ATRBUILD)/
 	cp $(TEST_GS_EXE) $(ATRBUILD)/
 	cp $(TEST_MAZE_EXE) $(ATRBUILD)/
@@ -178,16 +213,16 @@ atr: $(TARGET) $(SYS) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE
 
 # === Cleanup ================================================================
 
-clean:
-	rm -rf $(OBJ) $(TARGET) $(SYS) $(ATR) $(ATRBUILD) $(LABELS) \
-		$(BODY_OBJ) $(LOADER_OBJ) \
-		$(BODY_BIN_A) $(BODY_BIN_B) $(BODY_LBL_A) $(BODY_LBL_B) \
-		$(LOADER_BIN) $(LOADER_LBL) $(FIXUPS_BIN) \
+clean: clean_objs
+	rm -rf $(TARGET) $(ATR) $(ATRBUILD) $(LABELS) \
+		$(BODY_LBL_A) $(BODY_LBL_B) \
+		$(LOADER_LBL) \
 		$(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE) \
 		_$(TEST_EXE) _$(TEST_GS_EXE) _$(TEST_MAZE_EXE)
 
 cleanall: clean
-	rm -rf $(MAPFILE_ROM) $(BODY_MAP_A) $(BODY_MAP_B) $(LOADER_MAP)
+	rm -rf $(MAPFILE_ROM) $(BODY_MAP_A) $(BODY_MAP_B) $(LOADER_MAP) \
+		$(SYS4030) $(SYS8030) $(SYS8060)
 
 install: $(TARGET)
 	@mkdir -p $(ROMDIR)
