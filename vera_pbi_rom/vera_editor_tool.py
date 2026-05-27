@@ -33,14 +33,15 @@ class VeraEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("VERA Sprite/Tile Editor")
-        self.root.geometry("640x480")
-        self.root.resizable(False, False)
+        self.root.geometry("800x600")
+        self.root.minsize(800, 600)
         
         self.config_file = "last_path.txt"
         self.image = None
         self.tk_image = None
         self.transparent_color = (0, 0, 0)
         self.picking_transparency = False
+        self.is_dialog_open = False
         self.selection_type = tk.StringVar(value="Sprite")
         self.selection_start = None
         self.current_rect = None
@@ -97,10 +98,13 @@ class VeraEditor:
         self.size_cb.pack()
         self.update_size_options()
         
-        self.canvas = tk.Canvas(self.root, bg='black', width=490, height=460)
+        tk.Label(self.sidebar, text="Selections:", bg='lightgray').pack(pady=(10,0))
+        self.sel_listbox = tk.Listbox(self.sidebar, height=8, width=20)
+        self.sel_listbox.pack(fill=tk.X, padx=5)
+        
+        self.canvas = tk.Canvas(self.root, bg='black')
         self.canvas.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
         
-        # Inizializza il cursore rettangolare
         color = "green" if self.selection_type.get() == "Sprite" else "red"
         self.current_rect = self.canvas.create_rectangle(0, 0, 16, 16, outline=color, tags="cursor_rect")
         
@@ -110,11 +114,11 @@ class VeraEditor:
         self.canvas.bind("<Button-4>", self.on_zoom)
         self.canvas.bind("<Button-5>", self.on_zoom)
 
-    def load_image(self):
-        path = filedialog.askopenfilename()
-        if path:
-            self.open_image(path)
-            self.save_last_path(path)
+    def update_sel_list(self):
+        self.sel_listbox.delete(0, tk.END)
+        for i, sel in enumerate(self.selections):
+            info = f"{i}: ID={sel['id']} F={sel['frame']} ({sel['type']})"
+            self.sel_listbox.insert(tk.END, info)
 
     def update_size_options(self):
         if self.selection_type.get() == "Sprite":
@@ -136,45 +140,49 @@ class VeraEditor:
             self.canvas.itemconfig(self.current_rect, outline=color)
 
     def on_mouse_move(self, event):
-        if not self.picking_transparency and self.image:
+        if not self.picking_transparency and not self.is_dialog_open and self.image:
             w, h = map(int, self.size_cb.get().split('x'))
             w *= self.zoom_level
             h *= self.zoom_level
-            self.cursor_coords = [event.x - w/2, event.y - h/2, event.x + w/2, event.y + h/2]
+            self.cursor_coords = [event.x, event.y, event.x + w, event.y + h]
             self.canvas.coords(self.current_rect, *self.cursor_coords)
             self.canvas.tag_raise("cursor_rect")
     
     def move_selection(self, dx, dy):
-        self.canvas.move(self.current_rect, dx * 5, dy * 5)
-        self.cursor_coords = self.canvas.coords(self.current_rect)
+        if not self.is_dialog_open:
+            self.canvas.move(self.current_rect, dx * 5, dy * 5)
+            self.cursor_coords = self.canvas.coords(self.current_rect)
     
     def confirm_selection(self, event):
-        if self.current_rect:
+        if self.current_rect and not self.is_dialog_open:
             coords = self.canvas.coords(self.current_rect)
             self.show_metadata_dialog(coords)
 
     def show_metadata_dialog(self, coords):
+        self.is_dialog_open = True
         top = tk.Toplevel(self.root)
         top.title("Assign Metadata")
-        tk.Label(top, text="ID:").pack()
+        
+        existing_ids = list(set([s['id'] for s in self.selections if s['id']]))
+        tk.Label(top, text=f"Existing IDs: {', '.join(existing_ids) if existing_ids else 'None'}", fg="blue").pack()
+        
+        tk.Label(top, text="ID (Inserisci esistente per concatenare):").pack()
         id_entry = tk.Entry(top)
         id_entry.pack()
         
-        frame_entry = None
-        if self.selection_type.get() == "Sprite":
-            tk.Label(top, text="Frame Index:").pack()
-            frame_entry = tk.Entry(top)
-            frame_entry.pack()
+        tk.Label(top, text="Frame Index:").pack()
+        frame_entry = tk.Entry(top)
+        frame_entry.pack()
             
         def save():
             obj_id = id_entry.get()
-            frame_idx = frame_entry.get() if frame_entry else 0
+            frame_idx = frame_entry.get()
             
             orig_coords = [c / self.zoom_level for c in coords]
             
             w, h = int(coords[2]-coords[0]), int(coords[3]-coords[1])
             color = (0, 255, 0) if self.selection_type.get() == "Sprite" else (255, 0, 0)
-            overlay = Image.new('RGBA', (w, h), color + (128,)) # 128 = ~50%
+            overlay = Image.new('RGBA', (w, h), color + (128,))
             tk_overlay = ImageTk.PhotoImage(overlay)
             
             self.canvas.create_image(coords[0], coords[1], image=tk_overlay, anchor=tk.NW, tags="selection")
@@ -186,8 +194,11 @@ class VeraEditor:
                 'frame': frame_idx,
                 'tk_obj': tk_overlay
             })
+            self.update_sel_list()
+            self.is_dialog_open = False
             top.destroy()
         
+        top.protocol("WM_DELETE_WINDOW", lambda: [setattr(self, 'is_dialog_open', False), top.destroy()])
         tk.Button(top, text="Confirm", command=save).pack()
 
     def redraw_selections(self):
@@ -275,9 +286,19 @@ class VeraEditor:
         with open(self.config_file, 'w') as f:
             f.write(path)
 
+    def load_image(self):
+        path = filedialog.askopenfilename()
+        if path:
+            self.open_image(path)
+            self.save_last_path(path)
+
     def open_image(self, path):
         self.image = Image.open(path).convert('RGB')
-        self.zoom_level = min(490 / self.image.width, 460 / self.image.height)
+        # Calcola zoom basandosi sulle dimensioni attuali del canvas
+        self.root.update() 
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        self.zoom_level = min(canvas_w / self.image.width, canvas_h / self.image.height)
         self.display_image()
 
     def convert_palette(self):
