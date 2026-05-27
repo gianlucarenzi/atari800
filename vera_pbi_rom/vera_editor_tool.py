@@ -33,7 +33,7 @@ class VeraEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("VERA Sprite/Tile Editor")
-        self.root.geometry("800x600")
+        self.root.geometry("1024x600")
         self.root.minsize(800, 600)
         
         self.config_file = "last_path.txt"
@@ -69,41 +69,51 @@ class VeraEditor:
         self.root.config(menu=menubar)
 
     def create_widgets(self):
-        self.sidebar = tk.Frame(self.root, width=150, bg='lightgray')
-        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        self.sidebar.pack_propagate(False)
+        # Layout: Sidebar a sinistra, Canvas a destra
+        self.paned = tk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(self.sidebar, text="Transparency", bg='lightgray').pack(pady=(10,0))
-        tk.Button(self.sidebar, text="Eyedropper", command=self.activate_pipette).pack(fill=tk.X)
-        self.hex_entry = tk.Entry(self.sidebar, width=8)
+        # 1. Sidebar (Strumenti + Lista Selezioni)
+        self.sidebar_container = tk.Frame(self.paned, width=200, bg='lightgray')
+        self.paned.add(self.sidebar_container, minsize=200)
+
+        # Sidebar: Area strumenti
+        self.tools_frame = tk.Frame(self.sidebar_container, bg='lightgray')
+        self.tools_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(self.tools_frame, text="Transparency", bg='lightgray').pack(pady=(10,0))
+        tk.Button(self.tools_frame, text="Eyedropper", command=self.activate_pipette).pack(fill=tk.X)
+        self.hex_entry = tk.Entry(self.tools_frame, width=8)
         self.hex_entry.insert(0, "#000000")
         self.hex_entry.pack()
-        tk.Button(self.sidebar, text="Set Hex", command=self.set_hex_transparency).pack(fill=tk.X)
+        tk.Button(self.tools_frame, text="Set Hex", command=self.set_hex_transparency).pack(fill=tk.X)
         
-        self.color_sample = tk.Frame(self.sidebar, width=40, height=20, bg='#000000', bd=1, relief="solid")
+        self.color_sample = tk.Frame(self.tools_frame, width=40, height=20, bg='#000000', bd=1, relief="solid")
         self.color_sample.pack(pady=5)
-        self.lbl_rgb = tk.Label(self.sidebar, text="RGB:(0,0,0)\nHEX:#000000", bg='lightgray')
+        self.lbl_rgb = tk.Label(self.tools_frame, text="RGB:(0,0,0)\nHEX:#000000", bg='lightgray')
         self.lbl_rgb.pack()
         
-        tk.Button(self.sidebar, text="Convert Palette", command=self.convert_palette).pack(fill=tk.X, pady=5)
+        tk.Button(self.tools_frame, text="Convert Palette", command=self.convert_palette).pack(fill=tk.X, pady=5)
         
-        tk.Label(self.sidebar, text="Mode:", bg='lightgray').pack(pady=(10,0))
-        self.rb_sprite = tk.Radiobutton(self.sidebar, text="Sprite", variable=self.selection_type, value="Sprite", bg='lightgray', command=self.update_size_options)
+        tk.Label(self.tools_frame, text="Mode:", bg='lightgray').pack(pady=(10,0))
+        self.rb_sprite = tk.Radiobutton(self.tools_frame, text="Sprite", variable=self.selection_type, value="Sprite", bg='lightgray', command=self.update_size_options)
         self.rb_sprite.pack()
-        self.rb_tile = tk.Radiobutton(self.sidebar, text="Tile", variable=self.selection_type, value="Tile", bg='lightgray', command=self.update_size_options)
+        self.rb_tile = tk.Radiobutton(self.tools_frame, text="Tile", variable=self.selection_type, value="Tile", bg='lightgray', command=self.update_size_options)
         self.rb_tile.pack()
 
-        tk.Label(self.sidebar, text="Size:", bg='lightgray').pack(pady=(10,0))
-        self.size_cb = ttk.Combobox(self.sidebar, state="readonly", width=10)
+        tk.Label(self.tools_frame, text="Size:", bg='lightgray').pack(pady=(10,0))
+        self.size_cb = ttk.Combobox(self.tools_frame, state="readonly", width=10)
         self.size_cb.pack()
         self.update_size_options()
-        
-        tk.Label(self.sidebar, text="Selections:", bg='lightgray').pack(pady=(10,0))
-        self.sel_listbox = tk.Listbox(self.sidebar, height=8, width=20)
-        self.sel_listbox.pack(fill=tk.X, padx=5)
-        
-        self.canvas = tk.Canvas(self.root, bg='black')
-        self.canvas.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
+
+        # Sidebar: Area Selezioni (Sotto strumenti)
+        tk.Label(self.sidebar_container, text="Selections:", bg='lightgray').pack(pady=(10,0))
+        self.sel_listbox = tk.Listbox(self.sidebar_container, height=10)
+        self.sel_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 2. Canvas
+        self.canvas = tk.Canvas(self.paned, bg='black')
+        self.paned.add(self.canvas, minsize=400)
         
         color = "green" if self.selection_type.get() == "Sprite" else "red"
         self.current_rect = self.canvas.create_rectangle(0, 0, 16, 16, outline=color, tags="cursor_rect")
