@@ -4,7 +4,7 @@
  * Renders the VERA chip's video output into a dedicated SDL2 window.
  * Supports tile and bitmap layers with dynamic scaling and color depths.
  *
- * Copyright (C) 2024-2026 Gianluca Renzi <gianlucarenzi@eurek.it>
+ * Copyright (C) 2024-2026 Gianluca Renzi <icjtqr@gmail.com>
  * Copyright (C) 2002-2026 Atari800 development team (see DOC/CREDITS)
  */
 
@@ -32,6 +32,14 @@ static UBYTE         vera_sprite_col_fb[VERA_W * VERA_H];
 static UBYTE         vera_sprite_z_fb[VERA_W * VERA_H];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
+
+/* ------------------------------------------------------------------
+ * Public interface.
+ * ------------------------------------------------------------------ */
+SDL_Window *VERA_VIDEO_GetWindow(void)
+{
+    return vera_win;
+}
 
 /* ------------------------------------------------------------------
  * Lazy window creation.

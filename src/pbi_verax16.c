@@ -105,6 +105,10 @@
  * Default bit 7 (mask=$80) matches the device ID byte in the ROM at $D803. */
 static int   verax16_pbi_num  = 7;
 static UBYTE verax16_pbi_mask = 0x80;
+static int   verax16_debuglevel = 0;
+
+#define VERAX16_LOG(level, ...) \
+    do { if (verax16_debuglevel >= (level)) Log_print(__VA_ARGS__); } while (0)
 
 /* OS handler ROM (2 KB, copied to $D800-$DFFF when device is selected) */
 static UBYTE *verax16_rom               = NULL;
@@ -775,7 +779,7 @@ static int vera_sd_load_block(UBYTE *dest)
     bytes_read = fread(dest + 1, 1, 512, verax16_sdcard_file);
     if (bytes_read != 512u)
     {
-        Log_print("VeraX16: short SD read at LBA %lu", (unsigned long)vera_sd_lba);
+        VERAX16_LOG(2, "VeraX16: short SD read at LBA %lu", (unsigned long)vera_sd_lba);
         memset(dest + 1 + bytes_read, 0xFF, 512u - bytes_read);
     }
     dest[513] = 0xFFu;
@@ -794,7 +798,7 @@ static void vera_sd_store_block(const UBYTE *src)
 
     bytes_written = fwrite(src, 1, 512, verax16_sdcard_file);
     if (bytes_written != 512u)
-        Log_print("VeraX16: short SD write at LBA %lu", (unsigned long)vera_sd_lba);
+        VERAX16_LOG(2, "VeraX16: short SD write at LBA %lu", (unsigned long)vera_sd_lba);
     fflush(verax16_sdcard_file);
 }
 
@@ -976,7 +980,7 @@ static int vera_sdcard_attach(void)
     }
     if (verax16_sdcard_file == NULL)
     {
-        Log_print("VeraX16: WARNING - cannot open SD image %s", verax16_sdcard_filename);
+        VERAX16_LOG(0, "VeraX16: WARNING - cannot open SD image %s", verax16_sdcard_filename);
         return FALSE;
     }
 
@@ -985,7 +989,7 @@ static int vera_sdcard_attach(void)
         fclose(verax16_sdcard_file);
         verax16_sdcard_file = NULL;
         verax16_sdcard_writable = FALSE;
-        Log_print("VeraX16: WARNING - cannot size SD image %s", verax16_sdcard_filename);
+        VERAX16_LOG(0, "VeraX16: WARNING - cannot size SD image %s", verax16_sdcard_filename);
         return FALSE;
     }
 
@@ -995,16 +999,16 @@ static int vera_sdcard_attach(void)
         fclose(verax16_sdcard_file);
         verax16_sdcard_file = NULL;
         verax16_sdcard_writable = FALSE;
-        Log_print("VeraX16: WARNING - invalid SD image size for %s", verax16_sdcard_filename);
+        VERAX16_LOG(0, "VeraX16: WARNING - invalid SD image size for %s", verax16_sdcard_filename);
         return FALSE;
     }
 
     verax16_sdcard_size = size;
     if (fseeko(verax16_sdcard_file, 0, SEEK_SET) != 0)
-        Log_print("VeraX16: WARNING - cannot rewind SD image %s", verax16_sdcard_filename);
+        VERAX16_LOG(0, "VeraX16: WARNING - cannot rewind SD image %s", verax16_sdcard_filename);
 
     vera_sd_reset_protocol();
-    Log_print("VeraX16: SD image attached from %s (%s, %lu bytes)",
+    VERAX16_LOG(1, "VeraX16: SD image attached from %s (%s, %lu bytes)",
               verax16_sdcard_filename,
               verax16_sdcard_writable ? "read-write" : "read-only",
               (unsigned long)verax16_sdcard_size);
@@ -1083,7 +1087,8 @@ static UWORD vera_scanline_read_value(void)
 
 static int vera_midline_write_cost(int offset, int dcsel)
 {
-    if (offset == 0x03 || offset == 0x04) {
+    if (offset == 0x03 || offset == 0x04)
+    {
         if (fx_addr1_mode == FX_MODE_LINE_DRAW ||
             fx_addr1_mode == FX_MODE_POLY_FILL ||
             fx_addr1_mode == FX_MODE_AFFINE ||
@@ -1365,7 +1370,8 @@ static void vera_audio_ctrl_write(UBYTE byte)
 
     if ((byte & 0xC0u) == 0xC0u)
         vera_pcm_loop = TRUE;
-    else {
+    else
+    {
         vera_pcm_loop = FALSE;
         if (byte & 0x80u)
             vera_pcm_reset_fifo();
@@ -1519,7 +1525,7 @@ static void vera_pcm_render_sample(int *left, int *right)
 /* Soft reset: registers to defaults, VRAM contents preserved */
 static void vera_chip_reset(const char *caller)
 {
-    Log_print("VeraX16: VERA chip soft-reset called by: %s", caller);
+    VERAX16_LOG(1, "VeraX16: VERA chip soft-reset called by: %s", caller);
     memset(vera_addr_l, 0, sizeof(vera_addr_l));
     memset(vera_addr_m, 0, sizeof(vera_addr_m));
     memset(vera_addr_h, 0, sizeof(vera_addr_h));
@@ -1591,7 +1597,7 @@ static void vera_chip_reset(const char *caller)
     VERA_VIDEO_Scanline(0);
     vera_update_irq();
 
-    Log_print("VeraX16: VERA chip soft-reset");
+    VERAX16_LOG(1, "VeraX16: VERA chip soft-reset");
 }
 
 static UBYTE vera_ien_read(void)
@@ -1638,7 +1644,8 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
     case 0x03:  /* DATA0 — VRAM read through port 0 */
         {
             UBYTE value = vera_rddata[0];
-            if (!no_side_effects) {
+            if (!no_side_effects)
+            {
                 int addr_nibble = vera_fx_addr_nibble(0);
                 vera_advance(0);
                 vera_refresh_prefetch(0);
@@ -1776,7 +1783,8 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                     return (UBYTE)((fx_pixel_pos_x >> 1) & 0xFF);
                 if (offset == 0x0A)
                     return (UBYTE)((fx_pixel_pos_y >> 1) & 0xFF);
-                if (offset == 0x0B) {
+                if (offset == 0x0B)
+                {
                     /* FX_POLY_FILL_L */
                     uint16_t flen = (uint16_t)((fx_pixel_pos_y >> 9) - (fx_pixel_pos_x >> 9)) & 0x3FF;
                     int overflow = (flen >> 8) == 3;
@@ -2183,9 +2191,16 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
             }
             else
             {
-                Log_print("VeraX16: invalid PBI ID %d, keeping default %d",
+                VERAX16_LOG(0, "VeraX16: invalid PBI ID %d, keeping default %d",
                           n, verax16_pbi_num);
             }
+            i++;
+            recognized = TRUE;
+        }
+        else
+        if (strcmp(argv[i], "-verax16-debuglevel") == 0 && i + 1 < *argc)
+        {
+            verax16_debuglevel = atoi(argv[i + 1]);
             i++;
             recognized = TRUE;
         }
@@ -2202,11 +2217,12 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
         {
             if (strcmp(argv[i], "-help") == 0)
             {
-                Log_print("\t-verax16           Enable VeraX16 FPGA PBI video card");
-                Log_print("\t--use-verax16      Alias for -verax16");
-                Log_print("\t-verax16-rom F     OS handler ROM (2KB, $D800-$DFFF)");
-                Log_print("\t-verax16-pbi-id N  PBI device bit 0-7 (default: 7, mask=$80)");
-                Log_print("\t-verax16-sdcard F  Raw SD image file (for example from dd) exposed through VERA SPI");
+                Log_print("\t-verax16            Enable VeraX16 FPGA PBI video card");
+                Log_print("\t--use-verax16       Alias for -verax16");
+                Log_print("\t-verax16-rom F      OS handler ROM (2KB, $D800-$DFFF)");
+                Log_print("\t-verax16-pbi-id N   PBI device bit 0-7 (default: 7, mask=$80)");
+                Log_print("\t-verax16-debuglevel N Set debug level (default: 0)");
+                Log_print("\t-verax16-sdcard F   Raw SD image file (for example from dd) exposed through VERA SPI");
                 Log_print("\t                    The Atari driver handles MBR/GPT/filesystems on top of the raw 512-byte blocks");
             }
             argv[j++] = argv[i];
@@ -2269,7 +2285,7 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
         {
             free(verax16_rom);
             verax16_rom = NULL;
-            Log_print("VeraX16: WARNING - ROM not loaded from %s (cwd: %s)",
+            VERAX16_LOG(0, "VeraX16: WARNING - ROM not loaded from %s (cwd: %s)",
                       verax16_rom_filename, cwd_str);
             fprintf(stderr,
                     "VeraX16: WARNING - cannot load ROM '%s' (cwd: %s). "
@@ -2278,14 +2294,14 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
         }
         else
         {
-            Log_print("VeraX16: ROM loaded from %s", verax16_rom_filename);
+            VERAX16_LOG(1, "VeraX16: ROM loaded from %s", verax16_rom_filename);
         }
     }
 
     if (verax16_sdcard_filename[0] != '\0')
         vera_sdcard_attach();
 
-    Log_print("VeraX16: PBI video card enabled  device-bit=%d mask=$%02X regs=$D100-$D11F VRAM=128KB",
+    VERAX16_LOG(1, "VeraX16: PBI video card enabled  device-bit=%d mask=$%02X regs=$D100-$D11F VRAM=128KB",
               verax16_pbi_num, verax16_pbi_mask);
     return TRUE;
 }
@@ -2390,12 +2406,12 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
             if (verax16_rom != NULL)
             {
                 memcpy(MEMORY_mem + 0xd800, verax16_rom, 0x800);
-                Log_print("VeraX16: Latch ENABLED and VERA OK, ROM mapped at $D800");
+                VERAX16_LOG(1, "VeraX16: Latch ENABLED and VERA OK, ROM mapped at $D800");
                 PBI_VERAX16_enabled = 1;
             }
             else
             {
-                Log_print("VeraX16: No ROM Found. Disabling...");
+                VERAX16_LOG(0, "VeraX16: No ROM Found. Disabling...");
                 PBI_VERAX16_enabled = 0;
                 return PBI_NOT_HANDLED;
             }
@@ -2407,7 +2423,7 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
     {
         verax16_cs = FALSE;
         /* Ripristino Math Pack spostato in pbi.c */
-        Log_print("VeraX16: Latch DISABLED");
+        VERAX16_LOG(1, "VeraX16: Latch DISABLED");
     }
     //Log_D("PBI_D1FF PutByte NOT HANDLED");
     return PBI_NOT_HANDLED;

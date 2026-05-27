@@ -19,6 +19,9 @@
 /* Called once after SDL is initialised (lazy — first frame also works). */
 int  VERA_VIDEO_Init(void);
 
+struct SDL_Window;
+struct SDL_Window *VERA_VIDEO_GetWindow(void);
+
 /* Called once per emulated frame to render the VERA display. */
 void VERA_VIDEO_Frame(void);
 
