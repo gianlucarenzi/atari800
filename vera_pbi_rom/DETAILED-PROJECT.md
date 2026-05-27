@@ -59,7 +59,7 @@ Il nucleo dell'emulatore `atari800` è stato esteso per supportare la periferica
     *   **Audio/SPI:** Emulazione dei canali audio PSG/PCM di VERA e dell'interfaccia SPI per l'emulazione della scheda SD.
 *   **Integrazione bus:**
     *   **Gestione IRQ:** Gestisce le richieste di interrupt da VERA alla CPU Atari in base alle impostazioni IEN/ISR.
-    *   **Configurazione:** Supporta argomenti CLI per abilitare la scheda (`-verax16`), specificare l'immagine ROM handler (`-verax16-rom`) e collegare un'immagine scheda SD per l'interfaccia SPI (`-verax16-sdcard`).
+    *   **Configurazione:** Supporta argomenti CLI per abilitare la scheda (`-verax16`), specificare l'immagine ROM handler (`-verax16-rom`), collegare un'immagine scheda SD (`-verax16-sdcard`) e regolare il livello di log (`-verax16-debuglevel`).
 *   **Gestione del ciclo di vita:** Gestisce gli stati di accensione/reset, garantendo che la VRAM sia inizializzata e la scheda sia correttamente abilitata/disabilitata sul bus.
 
 ## Coprocessore FX — Copertura completa registri (`src/pbi_verax16.c`)
