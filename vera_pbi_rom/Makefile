@@ -162,55 +162,48 @@ labels: $(TARGET) $(SYS)
 
 # === ATR image ==============================================================
 
-DOS20DIR     = .dos20
-DOS20EXTRACT = extract_dos20.py
-
-TEST_SRC    = vera-tests/test_font.c
-TEST_EXE    = TEST.COM
-
-TEST_GS_SRC = vera-tests/test_gradient_scroll.c
-TEST_GS_EXE = TESTGS.COM
-
+TEST_SRC      = vera-tests/test_font.c
+TEST_GS_SRC   = vera-tests/test_gradient_scroll.c
 TEST_MAZE_SRC = vera-tests/test_maze.c
-TEST_MAZE_EXE = TESTMAZE.COM
-
 TEST_FX_SRC   = vera-tests/test_fx.c
 TEST_FX_EXE   = TESTFX.COM
 
-$(TEST_EXE): $(TEST_SRC) $(SYS) $(BUNDLE_VERA)
-	cl65 -t atari --start-addr 0x5000 -o _$(TEST_EXE) $(TEST_SRC)
-	$(PYTHON) $(BUNDLE_VERA) $(SYS) _$(TEST_EXE) $(TEST_EXE)
-	rm -f _$(TEST_EXE)
+# Resolution-specific bundled variants (suffix: 4=40x30, 8=80x30, 6=80x60)
+TEST_EXES     = TEST4.COM TEST8.COM TEST6.COM
+TESTGS_EXES   = TESTGS4.COM TESTGS8.COM TESTGS6.COM
+TESTMAZE_EXES = TESTMAZ4.COM TESTMAZ8.COM TESTMAZ6.COM
+ALL_TEST_EXES = $(TEST_EXES) $(TESTGS_EXES) $(TESTMAZE_EXES) $(TEST_FX_EXE)
 
-$(TEST_GS_EXE): $(TEST_GS_SRC) $(SYS) $(BUNDLE_VERA)
-	cl65 -t atari --start-addr 0x5000 -o _$(TEST_GS_EXE) $(TEST_GS_SRC)
-	$(PYTHON) $(BUNDLE_VERA) $(SYS) _$(TEST_GS_EXE) $(TEST_GS_EXE)
-	rm -f _$(TEST_GS_EXE)
+# Template: compile once to an intermediate binary, then bundle three times.
+# $(1) = output base name (7 chars max, no digit suffix)
+# $(2) = intermediate raw binary (e.g. _TEST.COM)
+# $(3) = C source file
+define make_test_variants
+$(2): $(3)
+	cl65 -t atari --start-addr 0x5000 -o $$@ $$<
 
-$(TEST_MAZE_EXE): $(TEST_MAZE_SRC) $(SYS) $(BUNDLE_VERA)
-	cl65 -t atari --start-addr 0x5000 -o _$(TEST_MAZE_EXE) $(TEST_MAZE_SRC)
-	$(PYTHON) $(BUNDLE_VERA) $(SYS) _$(TEST_MAZE_EXE) $(TEST_MAZE_EXE)
-	rm -f _$(TEST_MAZE_EXE)
+$(1)4.COM: $(2) $(SYS4030) $(BUNDLE_VERA)
+	$$(PYTHON) $$(BUNDLE_VERA) $$(SYS4030) $$< $$@
+
+$(1)8.COM: $(2) $(SYS8030) $(BUNDLE_VERA)
+	$$(PYTHON) $$(BUNDLE_VERA) $$(SYS8030) $$< $$@
+
+$(1)6.COM: $(2) $(SYS8060) $(BUNDLE_VERA)
+	$$(PYTHON) $$(BUNDLE_VERA) $$(SYS8060) $$< $$@
+endef
+
+$(eval $(call make_test_variants,TEST,_TEST.COM,$(TEST_SRC)))
+$(eval $(call make_test_variants,TESTGS,_TESTGS.COM,$(TEST_GS_SRC)))
+$(eval $(call make_test_variants,TESTMAZ,_TESTMAZE.COM,$(TEST_MAZE_SRC)))
 
 $(TEST_FX_EXE): $(TEST_FX_SRC)
 	cl65 -t atari --start-addr 0x5000 -o $(TEST_FX_EXE) $(TEST_FX_SRC)
 
-$(DOS20DIR)/DOS.SYS: $(DOS20EXTRACT) 810_Master_Disk_DOS_2.0s_1980_Atari.atr
-	$(PYTHON) $(DOS20EXTRACT)
-
-atr: $(TARGET) $(SYS) $(DOS20DIR)/DOS.SYS $(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE) drivers
+atr: $(TARGET) $(ALL_TEST_EXES) drivers
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
-	cp $(SYS) $(ATRBUILD)/$(SYS)
-	cp $(SYS4030) $(ATRBUILD)/
-	cp $(SYS8030) $(ATRBUILD)/
-	cp $(SYS8060) $(ATRBUILD)/
-	cp $(TEST_EXE) $(ATRBUILD)/
-	cp $(TEST_GS_EXE) $(ATRBUILD)/
-	cp $(TEST_MAZE_EXE) $(ATRBUILD)/
-	cp $(TEST_FX_EXE) $(ATRBUILD)/
-	cp $(DOS20DIR)/DOS.SYS $(DOS20DIR)/DUP.SYS $(ATRBUILD)/
-	$(DIR2ATR) -b Dos20 $(ATR) $(ATRBUILD)
+	cp $(ALL_TEST_EXES) $(ATRBUILD)/
+	$(DIR2ATR) -E -m -b MyPicoDos406 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
 
 # === Cleanup ================================================================
@@ -219,8 +212,9 @@ clean: clean_objs
 	rm -rf $(TARGET) $(ATR) $(ATRBUILD) $(LABELS) \
 		$(BODY_LBL_A) $(BODY_LBL_B) \
 		$(LOADER_LBL) \
-		$(TEST_EXE) $(TEST_GS_EXE) $(TEST_MAZE_EXE) $(TEST_FX_EXE) \
-		_$(TEST_EXE) _$(TEST_GS_EXE) _$(TEST_MAZE_EXE)
+		$(ALL_TEST_EXES) \
+		_TEST.COM _TESTGS.COM _TESTMAZE.COM \
+		.dos20
 
 cleanall: clean
 	rm -rf $(MAPFILE_ROM) $(BODY_MAP_A) $(BODY_MAP_B) $(LOADER_MAP) \
