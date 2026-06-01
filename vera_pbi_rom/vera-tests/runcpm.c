@@ -11,7 +11,7 @@
 #include <conio.h>
 #include <unistd.h>
 #include <atari.h>
-#include "vera_detect.h"
+#include <stdint.h>
 
 /* --- SIO Constants --- */
 #define DFUJI   0x71
@@ -38,16 +38,102 @@ unsigned char devicespec[256];
 unsigned char trip = 0;
 void* old_vprced;
 unsigned char old_enabled;
-unsigned int  vera_present = 0;
+
+/* --- VERA keyboard input (only when the VERA *driver* is installed) --- */
+#define VCTL_SIG0 'V'
+#define VCTL_SIG1 'C'
+#define VCTL_SIG2 'T'
+#define VCTL_SIG3 'L'
+
+#define VCTL_FLAGS     4
+#define VCTL_REQUEST   5
+#define VCTL_PARAM0    6
+#define VCTL_ENTRY_LO  10
+#define VCTL_ENTRY_HI  11
+
+#define VCTL_FLAG_API_READY 0x80
+#define VERA_REQ_GETC       0x04
+
+static volatile unsigned char* vctl = 0;
+static void (*vera_api_entry)(void) = 0;
+static unsigned char vera_pending = 0xFF;
+
+static volatile unsigned char* find_vctl_block(void)
+{
+    uint16_t base = (uint16_t)((uintptr_t)OS.memtop + 1u);
+    uint16_t a;
+
+    /* Sanity: VERA driver lives in RAM below ROM ($C000). */
+    if (base < 0x2000u || base >= 0xC000u) return 0;
+
+    /* Scan a small window above MEMTOP for the "VCTL" signature. */
+    for (a = base; a < 0xC000u - 16u; ++a) {
+        volatile unsigned char* p = (volatile unsigned char*)(uintptr_t)a;
+        if (p[0] == VCTL_SIG0 && p[1] == VCTL_SIG1 && p[2] == VCTL_SIG2 && p[3] == VCTL_SIG3) {
+            return p;
+        }
+    }
+
+    return 0;
+}
+
+static void vera_api_init(void)
+{
+    uint16_t entry;
+
+    vctl = find_vctl_block();
+    vera_api_entry = 0;
+    vera_pending = 0xFF;
+
+    if (!vctl) return;
+    if ((vctl[VCTL_FLAGS] & VCTL_FLAG_API_READY) == 0) {
+        vctl = 0;
+        return;
+    }
+
+    entry = (uint16_t)vctl[VCTL_ENTRY_LO] | ((uint16_t)vctl[VCTL_ENTRY_HI] << 8);
+    if (entry < 0x2000u || entry >= 0xC000u) {
+        vctl = 0;
+        return;
+    }
+
+    vera_api_entry = (void (*)(void))(uintptr_t)entry;
+}
+
+static unsigned char vera_getc_nb(void)
+{
+    if (!vctl || !vera_api_entry) return 0xFF;
+
+    vctl[VCTL_REQUEST] = VERA_REQ_GETC;
+    vera_api_entry();
+    return vctl[VCTL_PARAM0];
+}
+
+static unsigned char kb_haschar(void)
+{
+    if (!vctl) return kbhit();
+
+    if (vera_pending != 0xFF) return 1;
+    vera_pending = vera_getc_nb();
+    return (vera_pending != 0xFF);
+}
+
+static unsigned char kb_getchar(void)
+{
+    unsigned char c;
+
+    if (!vctl) return cgetc();
+
+    if (vera_pending == 0xFF) vera_pending = vera_getc_nb();
+    c = vera_pending;
+    vera_pending = 0xFF;
+    return c;
+}
 
 /* --- External Assembly Wrappers --- */
 extern void __fastcall__ siov(void);
 extern void ih(void);
 
-/* --- VERA Direct Hardware Driver --- */
-extern void v_init(void);
-extern void v_cls(void);
-extern void __fastcall__ v_putc(unsigned char c);
 
 /* 
  * ============================================================================
@@ -185,6 +271,9 @@ int main(void)
     clrscr();
     printf("CP/M Terminal\n");
 
+    /* If the VERA 80x30 driver is loaded, use its non-blocking GETC API. */
+    vera_api_init();
+
     /* Initialize FujiNet session */
     if (nopen() != SUCCESS)
     {
@@ -206,9 +295,9 @@ int main(void)
     while (running)
     {
         /* 1. KEYBOARD -> FUJINET */
-        if (kbhit())
+        if (kb_haschar())
         {
-            tx_buf[0] = atascii_to_ascii(cgetc());
+            tx_buf[0] = atascii_to_ascii(kb_getchar());
             nwrite(tx_buf, 1);
         }
 
