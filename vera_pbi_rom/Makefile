@@ -172,7 +172,7 @@ TEST_FX_EXE   = TESTFX.COM
 TEST_EXES     = TEST4.COM TEST8.COM TEST6.COM
 TESTGS_EXES   = TESTGS4.COM TESTGS8.COM TESTGS6.COM
 TESTMAZE_EXES = TESTMAZ4.COM TESTMAZ8.COM TESTMAZ6.COM
-ALL_TEST_EXES = $(TEST_EXES) $(TESTGS_EXES) $(TESTMAZE_EXES) $(TEST_FX_EXE) $(RUNCPM_EXE) $(RUNCPM_EXE)
+ALL_TEST_EXES = $(TEST_EXES) $(TESTGS_EXES) $(TESTMAZE_EXES) $(TEST_FX_EXE) $(RUNCPM_EXE)
 
 # Template: compile once to an intermediate binary, then bundle three times.
 # $(1) = output base name (7 chars max, no digit suffix)
@@ -200,11 +200,11 @@ $(eval $(call make_test_variants,TESTMAZ,_TESTMAZE.COM,$(TEST_MAZE_SRC)))
 RUNCPM_SRC = vera-tests/runcpm.c
 RUNCPM_EXE = RUNCPM.COM
 
-$(RUNCPM_EXE): $(RUNCPM_SRC) vera-tests/serterm_handler.o
-	cl65 -t atari --start-addr 0x5000 -o $(RUNCPM_EXE) $(RUNCPM_SRC) vera-tests/serterm_handler.o
+$(RUNCPM_EXE): $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
+	cl65 -t atari --start-addr 0x5000 -o $(RUNCPM_EXE) $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
 
 vera-tests/serterm_handler.o: vera-tests/serterm_handler.s
-	$(CA65) -o $@ $<
+	$(CA65) -I . -o $@ $<
 
 $(TEST_FX_EXE): $(TEST_FX_SRC)
 	cl65 -t atari --start-addr 0x5000 -o $(TEST_FX_EXE) $(TEST_FX_SRC)

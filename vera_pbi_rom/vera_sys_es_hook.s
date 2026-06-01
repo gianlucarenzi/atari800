@@ -22,6 +22,7 @@
     .export _vera_kbd_irq_handler
     .export _vera_kbd_repeat_tick
     .export _vera_scroll_hook
+    .export kbd_ring_buf, kbd_ring_rd, kbd_ring_wr
 
     .import _CallVeraApiService
     .import _vera_ctl_block
