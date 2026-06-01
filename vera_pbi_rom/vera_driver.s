@@ -249,9 +249,10 @@ ReadyText:
 
 
 ; ============================================================================
-; _CallVeraApiService — dispatch on VCTL_REQUEST. Currently only PUTC is
-; routed; everything else falls through to rts (no-op).
+; _CallVeraApiService — dispatch on VCTL_REQUEST.
 ; ============================================================================
+
+    .import kbd_ring_buf, kbd_ring_rd, kbd_ring_wr
 
 _CallVeraApiService:
     lda #1
@@ -259,6 +260,8 @@ _CallVeraApiService:
     lda _vera_ctl_block + VERACTL_REQUEST
     cmp #VERA_REQ_PUTC
     beq @do_putc
+    cmp #VERA_REQ_GETC
+    beq @do_getc
     lda #0
     sta CRITIC
     rts
@@ -266,6 +269,37 @@ _CallVeraApiService:
     jsr _VeraPutByte
     lda #0
     sta CRITIC
+    rts
+@do_getc:
+    jsr _VeraGetByte
+    lda #0
+    sta CRITIC
+    rts
+
+
+; ============================================================================
+; _VeraGetByte — read one character from the keyboard ring buffer.
+; Returns char in VERACTL_PARAM0, or $FF if empty.
+; ============================================================================
+
+_VeraGetByte:
+    lda kbd_ring_rd
+    cmp kbd_ring_wr
+    beq @empty
+    
+    tax
+    lda kbd_ring_buf, x
+    sta _vera_ctl_block + VERACTL_PARAM0
+    
+    inx
+    txa
+    and #$0F
+    sta kbd_ring_rd
+    rts
+
+@empty:
+    lda #$FF
+    sta _vera_ctl_block + VERACTL_PARAM0
     rts
 
 
