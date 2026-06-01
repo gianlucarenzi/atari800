@@ -202,7 +202,9 @@ RUNCPM_EXE = RUNCPM.COM
 RUNCPM80_EXE = RUNCPM80.COM
 
 $(RUNCPM_EXE): $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
-	cl65 -t atari --start-addr 0x5000 -o $(RUNCPM_EXE) $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
+	# Load RUNCPM low enough to fit even if resident drivers (VERA/FujiNet/etc.) lower MEMTOP.
+	# Use a cc65 cfg without the SYSCHK chunk at $2E00.
+	cl65 -t atari -C vera-tests/atari_nosyschk.cfg --start-addr 0x3000 -o $(RUNCPM_EXE) $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
 
 $(RUNCPM80_EXE): $(RUNCPM_EXE) $(SYS8030) $(BUNDLE_VERA)
 	$(PYTHON) $(BUNDLE_VERA) $(SYS8030) $(RUNCPM_EXE) $(RUNCPM80_EXE)
@@ -220,11 +222,23 @@ REQUIRED_TEST_EXES = TEST4.COM TEST6.COM TESTFX.COM
 # Example: make atr FUJINET_SD_PATH=/media/user/FUJINET/
 FUJINET_SD_PATH ?=
 
-atr: $(TARGET) $(REQUIRED_TEST_EXES) $(RUNCPM80_EXE) drivers
+# DOS 2.0s master disk used as source to extract DOS.SYS/DUP.SYS.
+# Note: DOS 2.0s itself doesn't support ED, but this still produces a bootable
+# image; extra sectors are simply unused by DOS.
+DOS20_ATR    = 810_Master_Disk_DOS_2.0s_1980_Atari.atr
+DOS20_DIR    = .dos20
+DOS20_EXTRACT = extract_dos20.py
+
+$(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS: $(DOS20_ATR) $(DOS20_EXTRACT)
+	$(PYTHON) $(DOS20_EXTRACT) $(DOS20_ATR) $(DOS20_DIR)
+
+# Build a bootable DOS 2.0s ED ATR containing RUNCPM.COM and the
+# VERA 80x30 driver (VERA8030.SYS) to be loaded on demand.
+atr: $(TARGET) $(RUNCPM_EXE) $(SYS8030) $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
-	cp $(REQUIRED_TEST_EXES) $(RUNCPM80_EXE) $(ATRBUILD)/
-	$(DIR2ATR) -E -m -b MyPicoDos406 $(ATR) $(ATRBUILD)
+	cp $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS $(RUNCPM_EXE) $(SYS8030) $(ATRBUILD)/
+	$(DIR2ATR) -E -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
 	@if [ ! -z "$(FUJINET_SD_PATH)" ]; then \
 		cp $(ATR) $(FUJINET_SD_PATH)/; \
