@@ -164,17 +164,8 @@ unsigned char atascii_to_ascii(unsigned char c)
 
 void terminal_putc(unsigned char c)
 {
-    if (vera_present)
-    {
-        v_putc(c);
-    }
-    else
-    {
-        if (c == 13) putchar('\n');
-        else if (c == 10) ; /* Skip LF */
-        else if (c == 8) putchar('\b');
-        else putchar(c);
-    }
+    /* Use OS handler E: for all output */
+    putchar(c);
 }
 
 /* 
@@ -189,27 +180,15 @@ int main(void)
     unsigned short bw, i, chunk;
     int running = 1;
 
-    /* Silence unused warning */
-    (void)vera_require;
-
-    /* Detect and Init VERA if present */
-    vera_present = (vera_detect() == VERA_CARD_ID);
-
-    if (vera_present)
-    {
-        v_init();
-    }
-    else
-    {
-        cursor(1);
-        clrscr();
-        printf("CP/M Terminal (40-col fallback)\n");
-    }
+    /* Init screen/terminal */
+    cursor(1);
+    clrscr();
+    printf("CP/M Terminal\n");
 
     /* Initialize FujiNet session */
     if (nopen() != SUCCESS)
     {
-        if (!vera_present) printf("Open Error!\n");
+        printf("Open Error!\n");
         while(!kbhit());
         return 1;
     }
@@ -222,7 +201,7 @@ int main(void)
     OS.vprced = ih;
     PIA.pactl |= 1;
 
-    if (!vera_present) printf("Connected.\n\n");
+    printf("Connected.\n\n");
 
     while (running)
     {
@@ -241,7 +220,7 @@ int main(void)
             
             if (status == E_EOF)
             {
-                if (!vera_present) printf("\nDisconnected.\n");
+                printf("\nDisconnected.\n");
                 running = 0;
             }
             else

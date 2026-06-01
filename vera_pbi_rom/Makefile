@@ -199,9 +199,13 @@ $(eval $(call make_test_variants,TESTMAZ,_TESTMAZE.COM,$(TEST_MAZE_SRC)))
 # RUNCPM.COM specifically for 80x30
 RUNCPM_SRC = vera-tests/runcpm.c
 RUNCPM_EXE = RUNCPM.COM
+RUNCPM80_EXE = RUNCPM80.COM
 
 $(RUNCPM_EXE): $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
 	cl65 -t atari --start-addr 0x5000 -o $(RUNCPM_EXE) $(RUNCPM_SRC) vera-tests/serterm_handler.o vera_sys_font.o
+
+$(RUNCPM80_EXE): $(RUNCPM_EXE) $(SYS8030) $(BUNDLE_VERA)
+	$(PYTHON) $(BUNDLE_VERA) $(SYS8030) $(RUNCPM_EXE) $(RUNCPM80_EXE)
 
 vera-tests/serterm_handler.o: vera-tests/serterm_handler.s
 	$(CA65) -I . -o $@ $<
@@ -209,14 +213,17 @@ vera-tests/serterm_handler.o: vera-tests/serterm_handler.s
 $(TEST_FX_EXE): $(TEST_FX_SRC)
 	cl65 -t atari --start-addr 0x5000 -o $(TEST_FX_EXE) $(TEST_FX_SRC)
 
+# ATR image configuration
+REQUIRED_TEST_EXES = TEST4.COM TEST6.COM TESTFX.COM
+
 # FUJINET_SD_PATH can be set to the path of your Fujinet SD card
 # Example: make atr FUJINET_SD_PATH=/media/user/FUJINET/
 FUJINET_SD_PATH ?=
 
-atr: $(TARGET) $(ALL_TEST_EXES) drivers
+atr: $(TARGET) $(REQUIRED_TEST_EXES) $(RUNCPM80_EXE) drivers
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
-	cp $(ALL_TEST_EXES) $(ATRBUILD)/
+	cp $(REQUIRED_TEST_EXES) $(RUNCPM80_EXE) $(ATRBUILD)/
 	$(DIR2ATR) -E -m -b MyPicoDos406 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
 	@if [ ! -z "$(FUJINET_SD_PATH)" ]; then \
