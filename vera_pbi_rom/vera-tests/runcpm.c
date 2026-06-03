@@ -278,8 +278,9 @@ unsigned char ring_get(void)
 
 unsigned char atascii_to_ascii(unsigned char c)
 {
-    if (c == 155) return 13;
-    if (c == 126) return 8;
+    if (c == 155) return 13;   /* ATASCII EOL  → CR  */
+    if (c == 126) return 8;    /* ATASCII BS   → BS  */
+    if (c == 127) return 9;    /* ATASCII TAB  → TAB */
     return c;
 }
 
@@ -348,6 +349,12 @@ static void term_sync_cursor(void)
     {
         vt.cur_x = vctl[VCTL_CURSOR_X];
         vt.cur_y = vctl[VCTL_CURSOR_Y];
+    }
+    else
+    {
+        /* Without VERA: read position from OS display handler (ROWCRS/COLCRS). */
+        vt.cur_x = (unsigned char) OS.colcrs;
+        vt.cur_y = OS.rowcrs;
     }
 }
 
@@ -1014,7 +1021,38 @@ void terminal_putc(unsigned char c)
 {
     vt_feed(c);
 }
-/* 
+
+/* Send one ATASCII keystroke to FujiNet, expanding cursor keys to VT100. */
+static void kb_send(void)
+{
+    unsigned char c = kb_getchar();
+
+    switch (c)
+    {
+        case ATASCII_CURSOR_UP:
+            tx_buf[0] = 0x1B; tx_buf[1] = '['; tx_buf[2] = 'A';
+            nwrite(tx_buf, 3);
+            break;
+        case ATASCII_CURSOR_DOWN:
+            tx_buf[0] = 0x1B; tx_buf[1] = '['; tx_buf[2] = 'B';
+            nwrite(tx_buf, 3);
+            break;
+        case ATASCII_CURSOR_LEFT:
+            tx_buf[0] = 0x1B; tx_buf[1] = '['; tx_buf[2] = 'D';
+            nwrite(tx_buf, 3);
+            break;
+        case ATASCII_CURSOR_RIGHT:
+            tx_buf[0] = 0x1B; tx_buf[1] = '['; tx_buf[2] = 'C';
+            nwrite(tx_buf, 3);
+            break;
+        default:
+            tx_buf[0] = atascii_to_ascii(c);
+            nwrite(tx_buf, 1);
+            break;
+    }
+}
+
+/*
  * ============================================================================
  * MAIN TERMINAL LOOP
  * ============================================================================
@@ -1063,8 +1101,7 @@ int main(void)
         /* 1. KEYBOARD -> FUJINET */
         if (kb_haschar())
         {
-            tx_buf[0] = atascii_to_ascii(kb_getchar());
-            nwrite(tx_buf, 1);
+            kb_send();
         }
 
         /* 2. PRODUCER: SIO -> RING BUFFER */
