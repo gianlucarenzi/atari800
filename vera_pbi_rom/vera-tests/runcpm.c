@@ -1077,6 +1077,15 @@ int main(void)
     vera_api_init();
     vt_reset();
 
+    /* Drain any keys buffered in the VERA ring before the session starts.
+     * Keys typed while navigating DUP (to launch this program) would
+     * otherwise be forwarded to CP/M immediately, causing a phantom flood. */
+    if (vctl)
+    {
+        while (vera_getc_nb() != 0xFF)
+            ;
+    }
+
     /* Initialize FujiNet session */
     if (nopen() != SUCCESS)
     {
