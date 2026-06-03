@@ -172,6 +172,30 @@ replaces the normal SIO handler entirely with UDP transport to FujiNet-PC.
 
 ---
 
+## Copying the ATR to the FujiNet SD card
+
+The Makefile supports an optional `FUJINET_SD_PATH` variable that copies the built
+`vera_pbi.atr` directly into the FujiNet SD directory after each build.
+
+**Important:** `make -C vera_pbi_rom/` runs with `vera_pbi_rom/` as its working
+directory, so `FUJINET_SD_PATH` must be relative to `vera_pbi_rom/` (not to the
+project root), or an absolute path.
+
+```sh
+# relative path (from vera_pbi_rom/)
+make -C vera_pbi_rom/ atr FUJINET_SD_PATH=FujiNet/fujinet-pc-ATARI/SD
+
+# absolute path (safe from anywhere)
+make -C vera_pbi_rom/ atr FUJINET_SD_PATH=$(pwd)/vera_pbi_rom/FujiNet/fujinet-pc-ATARI/SD
+```
+
+Combined with a full rebuild:
+```sh
+make -C vera_pbi_rom/ clean all atr FUJINET_SD_PATH=FujiNet/fujinet-pc-ATARI/SD
+```
+
+---
+
 ## Quick-start — one-liner sequence
 
 ```sh
