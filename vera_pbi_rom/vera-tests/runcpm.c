@@ -1079,11 +1079,17 @@ int main(void)
 
     /* Drain any keys buffered in the VERA ring before the session starts.
      * Keys typed while navigating DUP (to launch this program) would
-     * otherwise be forwarded to CP/M immediately, causing a phantom flood. */
-    if (vctl)
+     * otherwise be forwarded to CP/M immediately, causing a phantom flood.
+     * Use kb_haschar()/kb_getchar() which are known non-blocking; bound to
+     * the ring buffer size (16) so we never loop forever. */
     {
-        while (vera_getc_nb() != 0xFF)
-            ;
+        unsigned char drain;
+        for (drain = 0; drain < 16; ++drain)
+        {
+            if (!kb_haschar())
+                break;
+            (void) kb_getchar();
+        }
     }
 
     /* Initialize FujiNet session */
