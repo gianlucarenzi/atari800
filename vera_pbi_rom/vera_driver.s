@@ -10,6 +10,7 @@
     .import _vera_x16_font, _vera_ctl_block
     .import _vera_cursor_invalidate, cursor_draw, cursor_at_x, cursor_at_y, cursor_enabled
     .import _vera_trigger_click, _vera_scroll_hook
+    .import nibble_tmp
 
     .include "vera_common.inc"
     .include "atari.inc"
@@ -169,7 +170,7 @@ _vera_warm_reinit:
     lda ReadyText,x
     beq @banner_done
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     inx
     bne @loop
@@ -478,10 +479,23 @@ print_literal:
     ; Choose normal or inverse color based on putc_inverse flag.
     lda putc_inverse
     beq @normal_color
-    lda #VERA_INVERSE_COLOR
+    ; Inverse: swap fg/bg nibbles of current color.
+    lda _vera_ctl_block + VERACTL_PARAM1
+    pha
+    lsr a
+    lsr a
+    lsr a
+    lsr a               ; A = bg nibble in low half
+    sta nibble_tmp
+    pla
+    asl a
+    asl a
+    asl a
+    asl a               ; A = fg nibble in high half
+    ora nibble_tmp      ; A = (fg<<4)|bg = swapped
     bne @write_color
 @normal_color:
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
 @write_color:
     sta VERA_DATA0
     ; Clear inverse flag for next call.
@@ -600,7 +614,7 @@ scroll_up:
 @clear_loop:
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     dey
     bne @clear_loop
@@ -646,7 +660,7 @@ do_clear:
 @col_loop:
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     dey
     bne @col_loop
@@ -689,7 +703,7 @@ do_backspace:
     sta VERA_ADDR_H
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
 @done:
     rts
@@ -833,7 +847,7 @@ do_delete_line:
 @dl_clr_loop:
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     dey
     bne @dl_clr_loop
@@ -909,7 +923,7 @@ do_insert_line:
 @il_clr_loop:
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     dey
     bne @il_clr_loop
@@ -988,7 +1002,7 @@ do_delete_char:
     sta VERA_ADDR_H
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     rts
 
@@ -1060,7 +1074,7 @@ do_insert_char:
     sta VERA_ADDR_H
     lda #' '
     sta VERA_DATA0
-    lda #VERA_TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     rts
 
@@ -1081,7 +1095,7 @@ _pbi_clear_screen:
 @Col:
     lda #' '
     sta VERA_DATA0
-    lda #TEXT_COLOR
+    lda _vera_ctl_block + VERACTL_PARAM1
     sta VERA_DATA0
     dex
     bne @Col

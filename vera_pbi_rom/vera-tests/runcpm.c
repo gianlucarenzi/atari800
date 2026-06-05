@@ -55,8 +55,9 @@ unsigned char old_soundr;
 #define VCTL_ENTRY_LO      10
 #define VCTL_ENTRY_HI      11
 
+#define VCTL_PARAM1        7    /* current text color byte (bg<<4|fg), VERA palette */
+
 #define VCTL_FLAG_API_READY 0x80
-#define VERA_REQ_GETC       0x04
 #define VERA_REQ_FLUSH_KBD  0x05
 
 static volatile unsigned char* vctl           = 0;
@@ -213,29 +214,9 @@ static unsigned char kb_haschar(void)
     if (kbd_pending != 0xFF)
         return 1;
 
-    /* 1. OS.ch */
-    if (OS.ch != 0xFF)
-    {
-        kbd_pending = OS.ch;
-        OS.ch = 0xFF;
-        return 1;
-    }
-
-    /* 2. VERA ring buffer */
-    if (vctl && vera_api_entry)
-    {
-        vctl[VCTL_PARAM0]  = 0xFF;
-        vctl[VCTL_REQUEST] = VERA_REQ_GETC;
-        vera_api_entry();
-        c = vctl[VCTL_PARAM0];
-        if (c != 0xFF)
-        {
-            kbd_pending = c;
-            return 1;
-        }
-    }
-
-    /* 3. Direct KBCODE poll */
+    /* Direct SKSTAT/KBCODE poll — single path, no double-echo risk.
+     * OS.ch and VERA ring are skipped: @vbi_detect fills both in the same
+     * VBI tick, causing the same keypress to be detected twice. */
     c = kbd_poll_kbcode();
     if (c != 0xFF)
     {
@@ -419,8 +400,47 @@ static struct
     unsigned char    scroll_bottom; /* 0-based */
     unsigned char    vt52_row;      /* pending row for ESC Y r c */
 
+    unsigned char    fg;            /* current VERA fg color (0-15) */
+    unsigned char    bg;            /* current VERA bg color (0-15) */
+    unsigned char    bold;          /* SGR bold flag → bright colors */
+
     unsigned char    last_was_cr;
 } vt;
+
+/* ANSI color index (0-7) → VERA color index (0-15) */
+static const unsigned char ansi_to_vera[8] =
+{
+    0,   /* 0 black   → VERA 0  black      */
+    2,   /* 1 red     → VERA 2  red        */
+    5,   /* 2 green   → VERA 5  green      */
+    7,   /* 3 yellow  → VERA 7  yellow     */
+    6,   /* 4 blue    → VERA 6  blue       */
+    4,   /* 5 magenta → VERA 4  purple     */
+    3,   /* 6 cyan    → VERA 3  cyan       */
+    1    /* 7 white   → VERA 1  white      */
+};
+
+/* Bright variants (+8 in VERA palette) */
+static const unsigned char ansi_to_vera_bright[8] =
+{
+    11,  /* 0 bright black   → VERA 11 dark grey   */
+    10,  /* 1 bright red     → VERA 10 light red   */
+    13,  /* 2 bright green   → VERA 13 light green */
+    15,  /* 3 bright yellow  → VERA 15 light grey  */
+    14,  /* 4 bright blue    → VERA 14 light blue  */
+    4,   /* 5 bright magenta → VERA 4  purple      */
+    3,   /* 6 bright cyan    → VERA 3  cyan        */
+    1    /* 7 bright white   → VERA 1  white       */
+};
+
+static void vt_apply_color(void)
+{
+    unsigned char fg = vt.bold ? ansi_to_vera_bright[vt.fg & 7]
+                               : ansi_to_vera[vt.fg & 7];
+    unsigned char color = (unsigned char)((vt.bg << 4) | fg);
+    if (vctl)
+        vctl[VCTL_PARAM1] = color;
+}
 
 static unsigned char term_cols(void)
 {
@@ -823,6 +843,10 @@ static void vt_reset(void)
     vt.scroll_top    = 0;
     vt.scroll_bottom = (unsigned char) (rows - 1u);
     vt.last_was_cr   = 0;
+    vt.fg            = 7;   /* white */
+    vt.bg            = 6;   /* blue  */
+    vt.bold          = 0;
+    vt_apply_color();
 }
 
 static unsigned char csi_param(unsigned char idx, unsigned char defval)
@@ -907,9 +931,76 @@ static void vt_dispatch_csi(unsigned char final)
             term_erase_in_line(n1);
             break;
 
-        case 'm': /* SGR */
-            /* Attributes/colors not implemented (monochrome). */
+        case 'm': /* SGR — Select Graphic Rendition */
+        {
+            unsigned char pi;
+            unsigned char changed = 0;
+
+            if (vt.pcount == 0)
+            {
+                /* ESC[m = reset */
+                vt.fg   = 7;
+                vt.bg   = 6;
+                vt.bold = 0;
+                changed = 1;
+            }
+
+            for (pi = 0; pi < vt.pcount; ++pi)
+            {
+                unsigned char p = vt.params[pi];
+
+                if (p == 0)
+                {
+                    vt.fg = 7; vt.bg = 6; vt.bold = 0;
+                    changed = 1;
+                }
+                else if (p == 1)
+                {
+                    vt.bold = 1;
+                    changed = 1;
+                }
+                else if (p == 22)
+                {
+                    vt.bold = 0;
+                    changed = 1;
+                }
+                else if (p >= 30 && p <= 37)
+                {
+                    vt.fg = (unsigned char)(p - 30);
+                    changed = 1;
+                }
+                else if (p == 39)
+                {
+                    vt.fg = 7;
+                    changed = 1;
+                }
+                else if (p >= 40 && p <= 47)
+                {
+                    vt.bg = ansi_to_vera[p - 40];
+                    changed = 1;
+                }
+                else if (p == 49)
+                {
+                    vt.bg = 6;
+                    changed = 1;
+                }
+                else if (p >= 90 && p <= 97)  /* bright fg */
+                {
+                    vt.fg = (unsigned char)(p - 90);
+                    vt.bold = 1;
+                    changed = 1;
+                }
+                else if (p >= 100 && p <= 107) /* bright bg */
+                {
+                    vt.bg = ansi_to_vera_bright[p - 100];
+                    changed = 1;
+                }
+            }
+
+            if (changed)
+                vt_apply_color();
             break;
+        }
 
         case 's': /* save cursor */
             term_save_cursor();
@@ -1248,11 +1339,6 @@ int main(void)
     unsigned short bw, i, chunk;
     int running = 1;
 
-    /* Init screen/terminal */
-    cursor(1);
-    clrscr();
-    printf("CP/M Terminal\n");
-
     /* Silence noisy I/O (SIO beeps) during the terminal session. */
     old_soundr = OS.soundr;
     OS.soundr  = 0;
@@ -1260,6 +1346,54 @@ int main(void)
     /* Detect VERA driver (for cursor tracking and kbd ring flush). */
     vera_api_init();
     vt_reset();
+
+    /* Disable ATARI ANTIC display — VERA/VGA is our output; prevents ANTIC
+     * screen RAM from being dirtied by the OS cursor/E: handler. */
+    *(volatile unsigned char*)0x022F = 0x00;   /* SDMCTL = 0 */
+
+    /* Helper: set VERA text color directly (fg/bg are VERA palette indices). */
+#define SET_COLOR(fg, bg) do { if (vctl) vctl[VCTL_PARAM1] = (unsigned char)(((bg)<<4)|(fg)); } while(0)
+
+    /* Helper: print a string through vt_feed (handles CRLF, no color escape). */
+#define P(s) { const char *_p = s; while(*_p) terminal_putc((unsigned char)*_p++); }
+
+    /* Clear VERA screen, home cursor */
+    P("\x1B[2J\x1B[H");
+
+    /* Logo — yellow (7) on blue (6) */
+    SET_COLOR(7, 6);
+    P("       ___  _              _ \r\n");
+    P("      / _ \\| |_ __ _ _ __ (_)\r\n");
+    P("     / /_\\/\\   __/ _` | '__| |\r\n");
+    P("    / /_\\\\  | || (_| | |  | |\r\n");
+    P("    \\____/  |_| \\__,_|_|  |_|\r\n\r\n");
+
+    /* atari@VERA-X16 header */
+    SET_COLOR(1, 6);   P("  atari");
+    SET_COLOR(14, 6);  P("@");
+    SET_COLOR(3, 6);   P("VERA-X16\r\n");
+    SET_COLOR(11, 6);  P("  --------------------------\r\n");
+
+    SET_COLOR(14, 6);  P("  Host:     "); SET_COLOR(1, 6); P("Atari 800XL / 130XE\r\n");
+    SET_COLOR(14, 6);  P("  Display:  "); SET_COLOR(1, 6); P("VERA X16 PBI  80x30  VGA\r\n");
+    SET_COLOR(14, 6);  P("  CPU:      "); SET_COLOR(1, 6); P("MOS 6502 @ 1.77 MHz\r\n");
+    SET_COLOR(14, 6);  P("  Terminal: "); SET_COLOR(1, 6); P("VT52 / VT100 / ANSI\r\n");
+    SET_COLOR(14, 6);  P("  Network:  "); SET_COLOR(1, 6); P("FujiNet SIO  N:CPM:///\r\n");
+
+    /* Color swatches — 8 normal + 8 bright backgrounds */
+    SET_COLOR(14, 6);  P("  Colors:   ");
+    { unsigned char ci;
+      for (ci = 0; ci < 8; ++ci)  { SET_COLOR(1, ci);    P(" "); }
+      P(" ");
+      for (ci = 8; ci < 16; ++ci) { SET_COLOR(0, ci);    P(" "); }
+    }
+    SET_COLOR(1, 6);   P("\r\n\r\n");
+
+    SET_COLOR(13, 6);  P("  Connecting to CP/M...\r\n\r\n");
+    SET_COLOR(1, 6);   /* restore default */
+
+#undef SET_COLOR
+#undef P
 
     /* Clear OS.ch and flush the VERA kbd ring + repeat state.
      * _vera_kbd_irq_handler updates CH; kbhit()/cgetc() handle the rest. */

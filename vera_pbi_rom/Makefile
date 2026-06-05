@@ -94,7 +94,7 @@ $(SYS4030):
 	$(MAKE) SCREEN=40x30 $(SYS)
 	cp $(SYS) $(SYS4030)
 
-$(SYS8030):
+$(SYS8030): $(BODY_SRC) $(LOADER_SRC) vera_common.inc
 	$(MAKE) clean_objs
 	$(MAKE) SCREEN=80x30 $(SYS)
 	cp $(SYS) $(SYS8030)
@@ -253,6 +253,7 @@ clean: clean_objs
 		$(LOADER_LBL) \
 		$(ALL_TEST_EXES) \
 		_TEST.COM _TESTGS.COM _TESTMAZE.COM \
+		$(SYS4030) $(SYS8030) $(SYS8060) \
 		.dos20
 
 cleanall: clean

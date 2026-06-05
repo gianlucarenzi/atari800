@@ -5,6 +5,7 @@
     .export _vera_cursor_invalidate
     .export _vera_trigger_click
     .export cursor_draw, cursor_at_x, cursor_at_y, cursor_enabled
+    .export nibble_tmp
     .import _VeraApiService, _vera_ctl_block, _vera_warm_reinit
     .import __VERA_EXPORTS__
     .import _vera_kbd_repeat_tick
