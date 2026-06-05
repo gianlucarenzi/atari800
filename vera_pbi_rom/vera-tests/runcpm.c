@@ -58,6 +58,8 @@ unsigned char old_soundr;
 #define VCTL_ENTRY_HI      11
 
 #define VCTL_PARAM1        7    /* current text color byte (bg<<4|fg), VERA palette */
+#define VCTL_SCREEN_COLS   16   /* viewport width  in chars (set by loader) */
+#define VCTL_SCREEN_ROWS   17   /* viewport height in chars (set by loader) */
 
 #define VCTL_FLAG_API_READY 0x80
 #define VERA_REQ_FLUSH_KBD  0x05
@@ -446,14 +448,21 @@ static void vt_apply_color(void)
 
 static unsigned char term_cols(void)
 {
-    /* OS.rmargn is the last column index (0-based). */
+    /* Read from VCTL when VERA is active (set by loader to SCREEN_COLS_VIEW).
+     * Fall back to OS.rmargn+1 for non-VERA or old drivers without the field. */
+    if (vctl && vctl[VCTL_SCREEN_COLS])
+        return vctl[VCTL_SCREEN_COLS];
     return (unsigned char) (OS.rmargn + 1u);
 }
 
 static unsigned char term_rows(void)
 {
-    /* With VERA 80x30 driver loaded, cursor Y runs 0..29. */
-    return (unsigned char) (vctl ? 30u : 24u);
+    /* Read from VCTL when VERA is active (set by loader to SCREEN_ROWS_VIEW).
+     * This handles 80x30 (30), 80x60 (60), 40x30 (30) automatically.
+     * Fall back to 24 for non-VERA or old drivers without the field. */
+    if (vctl && vctl[VCTL_SCREEN_ROWS])
+        return vctl[VCTL_SCREEN_ROWS];
+    return 24u;   /* non-VERA: standard 40x24 Atari */
 }
 
 static void term_sync_cursor(void)

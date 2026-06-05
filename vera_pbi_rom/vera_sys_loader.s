@@ -11,6 +11,18 @@
     .setcpu "6502"
     .include "atari.inc"
 
+; Screen dimensions — replicated from vera_common.inc to avoid symbol clashes
+.ifdef MODE_40X30
+SCREEN_COLS_VIEW = 40
+SCREEN_ROWS_VIEW = 30
+.elseif .defined(FONT_8X8)
+SCREEN_COLS_VIEW = 80
+SCREEN_ROWS_VIEW = 60
+.else
+SCREEN_COLS_VIEW = 80
+SCREEN_ROWS_VIEW = 30
+.endif
+
 ; ============================================================================
 ; ZP scratch
 ; ============================================================================
@@ -80,6 +92,8 @@ VCTL_VBI_LO     = 12
 VCTL_VBI_HI     = 13
 VCTL_REINIT_LO  = 14
 VCTL_REINIT_HI  = 15
+VCTL_SCREEN_COLS = 16   ; viewport width  in chars — read by runcpm
+VCTL_SCREEN_ROWS = 17   ; viewport height in chars — read by runcpm
 
 VCTL_FLAG_METRONOME = $01
 VCTL_FLAG_API_READY = $80
@@ -322,10 +336,19 @@ bootstrap_entry:
     
     ldy #VCTL_CURSOR_X
     sta (target_lo),y
-    
+
     ldy #VCTL_CURSOR_Y
     sta (target_lo),y
-    
+
+    ; Screen dimensions — runcpm reads these to handle 40x24 / 80x30 / 80x60
+    ldy #VCTL_SCREEN_COLS
+    lda #SCREEN_COLS_VIEW
+    sta (target_lo),y
+
+    ldy #VCTL_SCREEN_ROWS
+    lda #SCREEN_ROWS_VIEW
+    sta (target_lo),y
+
     ldy #EXP_API_SERVICE
     lda (exp_lo),y
     ldy #VCTL_ENTRY_LO
