@@ -316,7 +316,9 @@ bootstrap_entry:
     sta (target_lo),y
     
     ldy #VCTL_PARAM1
+    lda #$61            ; default text color: fg=white(1) bg=blue(6)
     sta (target_lo),y
+    lda #0              ; restore zero for subsequent fields
     
     ldy #VCTL_CURSOR_X
     sta (target_lo),y
