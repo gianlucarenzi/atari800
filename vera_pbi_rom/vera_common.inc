@@ -246,6 +246,7 @@ VERA_CTL_FLAG_API_READY = VCTL_FLAG_API_READY       ; alias
 
 VERA_REQ_PUTC           = $03                       ; VCTL_REQUEST opcode: write character
 VERA_REQ_GETC           = $04                       ; VCTL_REQUEST opcode: read character (non-blocking)
+VERA_REQ_FLUSH_KBD      = $05                       ; VCTL_REQUEST opcode: flush ring + cancel repeat
 
 ; ============================================================================
 ; Atari OS addresses used by the driver

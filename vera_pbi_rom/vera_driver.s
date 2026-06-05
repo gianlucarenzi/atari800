@@ -252,7 +252,7 @@ ReadyText:
 ; _CallVeraApiService — dispatch on VCTL_REQUEST.
 ; ============================================================================
 
-    .import kbd_ring_buf, kbd_ring_rd, kbd_ring_wr
+    .import kbd_ring_buf, kbd_ring_rd, kbd_ring_wr, kbd_repeat_raw
 
 _CallVeraApiService:
     lda #1
@@ -262,6 +262,8 @@ _CallVeraApiService:
     beq @do_putc
     cmp #VERA_REQ_GETC
     beq @do_getc
+    cmp #VERA_REQ_FLUSH_KBD
+    beq @do_flush_kbd
     lda #0
     sta CRITIC
     rts
@@ -272,6 +274,11 @@ _CallVeraApiService:
     rts
 @do_getc:
     jsr _VeraGetByte
+    lda #0
+    sta CRITIC
+    rts
+@do_flush_kbd:
+    jsr _VeraFlushKbd
     lda #0
     sta CRITIC
     rts
@@ -300,6 +307,25 @@ _VeraGetByte:
 @empty:
     lda #$FF
     sta _vera_ctl_block + VERACTL_PARAM0
+    rts
+
+
+; ============================================================================
+; _VeraFlushKbd — flush the keyboard ring and cancel any pending key-repeat.
+; Called via VERA_REQ_FLUSH_KBD. Atomically empties the ring (wr = rd) and
+; resets kbd_repeat_raw to KEY_NONE so the repeat tick can't re-inject the
+; last pressed key. Also clears VERACTL_PARAM0 so callers never read stale
+; PUTC data as a spurious keypress.
+; ============================================================================
+
+_VeraFlushKbd:
+    sei
+    lda kbd_ring_rd
+    sta kbd_ring_wr             ; empty ring: wr = rd
+    lda #KEY_NONE               ; = $FF
+    sta kbd_repeat_raw          ; cancel repeat state
+    cli
+    sta _vera_ctl_block + VERACTL_PARAM0    ; PARAM0 = $FF (no key pending)
     rts
 
 
