@@ -13,6 +13,7 @@
 #include <atari.h>
 #include <stdint.h>
 
+
 /* --- SIO Constants --- */
 #define DFUJI           0x71
 #define DREAD           0x40
@@ -40,7 +41,7 @@ void*         old_vprced;
 unsigned char old_enabled;
 unsigned char old_soundr;
 
-/* --- VERA keyboard input (only when the VERA *driver* is installed) --- */
+/* --- VERA driver detection (used for cursor tracking and FLUSH_KBD) --- */
 #define VCTL_SIG0          'V'
 #define VCTL_SIG1          'C'
 #define VCTL_SIG2          'T'
@@ -49,15 +50,17 @@ unsigned char old_soundr;
 #define VCTL_FLAGS         4
 #define VCTL_REQUEST       5
 #define VCTL_PARAM0        6
+#define VCTL_CURSOR_X      8
+#define VCTL_CURSOR_Y      9
 #define VCTL_ENTRY_LO      10
 #define VCTL_ENTRY_HI      11
 
 #define VCTL_FLAG_API_READY 0x80
 #define VERA_REQ_GETC       0x04
+#define VERA_REQ_FLUSH_KBD  0x05
 
 static volatile unsigned char* vctl           = 0;
 static void                 (*vera_api_entry)(void) = 0;
-static unsigned char          vera_pending   = 0xFF;
 
 static volatile unsigned char* find_vctl_block(void)
 {
@@ -66,25 +69,16 @@ static volatile unsigned char* find_vctl_block(void)
 
     base = (uint16_t) ((uintptr_t) OS.memtop + 1u);
 
-    /* Sanity: VERA driver lives in RAM below ROM ($C000). */
     if ((base < 0x2000u) || (base >= 0xC000u))
-    {
         return 0;
-    }
 
-    /* Scan a small window above MEMTOP for the "VCTL" signature. */
     for (a = base; a < 0xC000u - 16u; ++a)
     {
-        volatile unsigned char* p;
-
-        p = (volatile unsigned char*) (uintptr_t) a;
-
-        if ((p[0] == VCTL_SIG0) && (p[1] == VCTL_SIG1) && (p[2] == VCTL_SIG2) && (p[3] == VCTL_SIG3))
-        {
+        volatile unsigned char* p = (volatile unsigned char*) (uintptr_t) a;
+        if ((p[0] == VCTL_SIG0) && (p[1] == VCTL_SIG1) &&
+            (p[2] == VCTL_SIG2) && (p[3] == VCTL_SIG3))
             return p;
-        }
     }
-
     return 0;
 }
 
@@ -94,12 +88,9 @@ static void vera_api_init(void)
 
     vctl           = find_vctl_block();
     vera_api_entry = 0;
-    vera_pending   = 0xFF;
 
     if (!vctl)
-    {
         return;
-    }
 
     if ((vctl[VCTL_FLAGS] & VCTL_FLAG_API_READY) == 0)
     {
@@ -118,50 +109,147 @@ static void vera_api_init(void)
     vera_api_entry = (void (*)(void)) (uintptr_t) entry;
 }
 
-static unsigned char vera_getc_nb(void)
+/*
+ * kbcode_table — KBCODE → ATASCII, same layout as vera_sys_es_hook.s.
+ * Blocks: [0..63]=unshifted, [64..127]=SHIFT, [128..191]=CTRL, [192..255]=CTRL+SHIFT.
+ * $80 = undefined key, $82/$83/$84 = CAPS LOCK toggle (handled separately).
+ */
+static const unsigned char kbcode_table[256] = {
+    /* Unshifted */
+    0x6C,0x6A,0x3B,0x80,0x80,0x6B,0x2B,0x2A,
+    0x6F,0x80,0x70,0x75,0x9B,0x69,0x2D,0x3D,
+    0x76,0x80,0x63,0x80,0x80,0x62,0x78,0x7A,
+    0x34,0x80,0x33,0x36,0x1B,0x35,0x32,0x31,
+    0x2C,0x20,0x2E,0x6E,0x80,0x6D,0x2F,0x81,
+    0x72,0x80,0x65,0x79,0x7F,0x74,0x77,0x71,
+    0x39,0x80,0x30,0x37,0x7E,0x38,0x3C,0x3E,
+    0x66,0x68,0x64,0x80,0x82,0x67,0x73,0x61,
+    /* SHIFT */
+    0x4C,0x4A,0x3A,0x80,0x80,0x4B,0x5C,0x5E,
+    0x4F,0x80,0x50,0x55,0x9B,0x49,0x5F,0x7C,
+    0x56,0x80,0x43,0x80,0x80,0x42,0x58,0x5A,
+    0x24,0x80,0x23,0x26,0x1B,0x25,0x22,0x21,
+    0x5B,0x20,0x5D,0x4E,0x80,0x4D,0x3F,0x80,
+    0x52,0x80,0x45,0x59,0x9F,0x54,0x57,0x51,
+    0x28,0x80,0x29,0x27,0x9C,0x40,0x7D,0x9D,
+    0x46,0x48,0x44,0x80,0x83,0x47,0x53,0x41,
+    /* CTRL */
+    0x0C,0x0A,0x7B,0x80,0x80,0x0B,0x1E,0x1F,
+    0x0F,0x80,0x10,0x15,0x9B,0x09,0x1C,0x1D,
+    0x16,0x80,0x03,0x80,0x80,0x02,0x18,0x1A,
+    0x80,0x80,0x85,0x80,0x1B,0x80,0xFD,0x80,
+    0x00,0x20,0x60,0x0E,0x80,0x0D,0x80,0x80,
+    0x12,0x80,0x05,0x19,0x9E,0x14,0x17,0x11,
+    0x80,0x80,0x80,0x80,0xFE,0x80,0x7D,0xFF,
+    0x06,0x08,0x04,0x80,0x84,0x07,0x13,0x01,
+    /* CTRL+SHIFT (same as CTRL) */
+    0x0C,0x0A,0x7B,0x80,0x80,0x0B,0x1E,0x1F,
+    0x0F,0x80,0x10,0x15,0x9B,0x09,0x1C,0x1D,
+    0x16,0x80,0x03,0x80,0x80,0x02,0x18,0x1A,
+    0x80,0x80,0x85,0x80,0x1B,0x80,0xFD,0x80,
+    0x00,0x20,0x60,0x0E,0x80,0x0D,0x80,0x80,
+    0x12,0x80,0x05,0x19,0x9E,0x14,0x17,0x11,
+    0x80,0x80,0x80,0x80,0xFE,0x80,0x7D,0xFF,
+    0x06,0x08,0x04,0x80,0x84,0x07,0x13,0x01
+};
+
+/*
+ * Keyboard input.
+ *
+ * Three paths tried in order:
+ *  1. OS.ch ($02FC)    — set by _vera_kbd_irq_handler / VBI @vbi_detect via stx CH
+ *  2. VERA ring buffer — set by VBI @vbi_detect push (in case stx CH doesn't reach)
+ *  3. Direct SKSTAT/KBCODE poll + kbcode_table translation (always works)
+ */
+
+static unsigned char kbd_pending = 0xFF;
+static unsigned char kbd_caps    = 0xFF; /* $FF = CAPS active (matches VERA driver default) */
+
+static unsigned char kbd_translate(unsigned char kb)
 {
-    if (!vctl || !vera_api_entry)
+    unsigned char c = kbcode_table[kb];
+    /* CAPS toggle */
+    if (c == 0x82 || c == 0x83 || c == 0x84)
     {
+        kbd_caps ^= 0xFF;
+        return 0xFF;            /* no char to return */
+    }
+    if (c == 0x80 || c == 0x81)
+        return 0xFF;            /* undefined */
+    /* Apply CAPS LOCK: flip case for a-z / A-Z */
+    if (kbd_caps == 0xFF)
+    {
+        unsigned char u = c & 0xDF;
+        if (u >= 'A' && u <= 'Z')
+            c ^= 0x20;
+    }
+    return c;
+}
+
+static unsigned char kbd_poll_kbcode(void)
+{
+    static unsigned char last_kb = 0xFF;
+    unsigned char sk = *(volatile unsigned char*)0xD20F;
+    unsigned char kb;
+
+    if (sk & 0x04)          /* bit2=1 = no key held */
+    {
+        last_kb = 0xFF;
         return 0xFF;
     }
 
-    vctl[VCTL_REQUEST] = VERA_REQ_GETC;
-    vera_api_entry();
-    return vctl[VCTL_PARAM0];
+    kb = *(volatile unsigned char*)0xD209;
+    if (kb == 0xFF || kb == last_kb)
+        return 0xFF;
+
+    last_kb = kb;
+    return kbd_translate(kb);
 }
 
 static unsigned char kb_haschar(void)
 {
-    if (!vctl)
-    {
-        return kbhit();
-    }
+    unsigned char c;
 
-    if (vera_pending != 0xFF)
+    if (kbd_pending != 0xFF)
+        return 1;
+
+    /* 1. OS.ch */
+    if (OS.ch != 0xFF)
     {
+        kbd_pending = OS.ch;
+        OS.ch = 0xFF;
         return 1;
     }
 
-    vera_pending = vera_getc_nb();
-    return (vera_pending != 0xFF);
+    /* 2. VERA ring buffer */
+    if (vctl && vera_api_entry)
+    {
+        vctl[VCTL_PARAM0]  = 0xFF;
+        vctl[VCTL_REQUEST] = VERA_REQ_GETC;
+        vera_api_entry();
+        c = vctl[VCTL_PARAM0];
+        if (c != 0xFF)
+        {
+            kbd_pending = c;
+            return 1;
+        }
+    }
+
+    /* 3. Direct KBCODE poll */
+    c = kbd_poll_kbcode();
+    if (c != 0xFF)
+    {
+        kbd_pending = c;
+        return 1;
+    }
+
+    return 0;
 }
 
 static unsigned char kb_getchar(void)
 {
-    unsigned char c;
-
-    if (!vctl)
-    {
-        return cgetc();
-    }
-
-    if (vera_pending == 0xFF)
-    {
-        vera_pending = vera_getc_nb();
-    }
-
-    c            = vera_pending;
-    vera_pending = 0xFF;
+    unsigned char c = kbd_pending;
+    kbd_pending = 0xFF;
     return c;
 }
 
@@ -1073,23 +1161,17 @@ int main(void)
     old_soundr = OS.soundr;
     OS.soundr  = 0;
 
-    /* If the VERA 80x30 driver is loaded, use its non-blocking GETC API. */
+    /* Detect VERA driver (for cursor tracking and kbd ring flush). */
     vera_api_init();
     vt_reset();
 
-    /* Drain any keys buffered in the VERA ring before the session starts.
-     * Keys typed while navigating DUP (to launch this program) would
-     * otherwise be forwarded to CP/M immediately, causing a phantom flood.
-     * Use kb_haschar()/kb_getchar() which are known non-blocking; bound to
-     * the ring buffer size (16) so we never loop forever. */
+    /* Clear OS.ch and flush the VERA kbd ring + repeat state.
+     * _vera_kbd_irq_handler updates CH; kbhit()/cgetc() handle the rest. */
+    OS.ch = 0xFF;
+    if (vctl && vera_api_entry)
     {
-        unsigned char drain;
-        for (drain = 0; drain < 16; ++drain)
-        {
-            if (!kb_haschar())
-                break;
-            (void) kb_getchar();
-        }
+        vctl[VCTL_REQUEST] = VERA_REQ_FLUSH_KBD;
+        vera_api_entry();
     }
 
     /* Initialize FujiNet session */
@@ -1108,6 +1190,12 @@ int main(void)
     PIA.pactl &= (~1);
     OS.vprced = ih;
     PIA.pactl |= 1;
+
+    /* Re-enable keyboard IRQ after SIO: nopen() leaves IRQEN with keyboard
+     * bit cleared. Our VKEYBD handler re-arms it on each keypress, but we
+     * need at least one IRQ to fire first. Writing $C0 here primes the pump. */
+    OS.ch = 0xFF;
+    *(volatile unsigned char*)0xD20E = 0xC0;   /* IRQEN: keyboard + break key */
 
     printf("Connected.\n\n");
 

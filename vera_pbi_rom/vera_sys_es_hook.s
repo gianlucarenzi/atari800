@@ -22,7 +22,7 @@
     .export _vera_kbd_irq_handler
     .export _vera_kbd_repeat_tick
     .export _vera_scroll_hook
-    .export kbd_ring_buf, kbd_ring_rd, kbd_ring_wr
+    .export kbd_ring_buf, kbd_ring_rd, kbd_ring_wr, kbd_repeat_raw
 
     .import _CallVeraApiService
     .import _vera_ctl_block
@@ -54,10 +54,7 @@ GET_BYTE_OFFSET  = 4                ; offset of GET BYTE vector in handler table
 PUT_BYTE_OFFSET  = 6                ; offset of PUT BYTE vector in handler table
 
 ; Keyboard / system OS equates used by the GET handler.
-; NOTE: CH ($02FC) holds the raw POKEY KBCODE: bits 0-5 = key matrix pos,
-; bit 6 = SHIFT, bit 7 = CTRL. NOT ATASCII. Translation is done by kbcode_table.
-;CH               = $02FC            ; raw key code from keyboard IRQ ($FF = none)
-;BRKKEY           = $0011            ; break key: $00 = pressed, else not pressed
+; CH is defined in atari.inc ($02FC) — we update it so kbhit()/cgetc() work.
 
 ; AKEY_ CTRL combos that map to cursor / edit ATASCII codes (bit 7 = CTRL set).
 AKEY_UP          = $8E              ; CTRL+MINUS  → cursor up    ($1C)
@@ -256,6 +253,7 @@ _vera_kbd_irq_handler:
 @push_char:
     ; A = final char, Y = raw KBCODE. X free (saved on stack at entry).
     tax                         ; X = char — preserve before full-check clobbers A
+    stx CH                      ; update OS key variable so kbhit()/cgetc() work
     lda kbd_ring_wr
     clc
     adc #1
@@ -272,6 +270,8 @@ _vera_kbd_irq_handler:
 
     ; Prime repeat: save raw code and load initial delay.
     sty kbd_repeat_raw
+    lda #KEY_NONE
+    sta _vera_ctl_block + VERACTL_PARAM0    ; clear stale PUTC data so GETC callers never read a network char
     lda KRPDEL
     sta kbd_repeat_cnt
 
@@ -280,6 +280,11 @@ _vera_kbd_irq_handler:
     tay                     ; restore Y
     pla
     tax                     ; restore X
+    ; Re-arm POKEY keyboard IRQ: writing to IRQEN restores IRQST bit6.
+    ; The ROM VKEYBD handler does this; without it IRQST bit6 stays 0
+    ; and no further keyboard IRQs fire.
+    lda #$C0                ; keyboard ($40) + break key ($80)
+    sta $D20E               ; IRQEN
     pla                     ; restore A (the one OS pushed before jmp (vkeybd))
     rti
 
@@ -314,8 +319,8 @@ _install_kbd_irq:
 
 _vera_kbd_repeat_tick:
     lda kbd_repeat_raw
-    cmp #KEY_NONE           ; $FF means no key tracked
-    beq @done
+    cmp #KEY_NONE           ; $FF means no key tracked via IRQ
+    beq @vbi_detect         ; → try direct SKSTAT/KBCODE poll (IRQ-less fallback)
 
     ; Is a key currently pressed? SKSTAT bit 2 = 0 → yes (active low).
     lda SKSTAT
@@ -378,6 +383,84 @@ _vera_kbd_repeat_tick:
     lda #KEY_NONE
     sta kbd_repeat_raw
 @done:
+    rts
+
+; ----------------------------------------------------------------------------
+; @vbi_detect — IRQ-less fallback: keyboard IRQ may be disabled (IRQEN broken
+; after SIO). Poll SKSTAT/KBCODE directly from the VBI, exactly like the IRQ
+; handler would, so runCPM (and any app that bypasses vera_editor_get) still
+; gets keys. Runs only when kbd_repeat_raw == KEY_NONE.
+; ----------------------------------------------------------------------------
+@vbi_detect:
+    lda SKSTAT
+    and #$04
+    bne @done               ; bit2=1 → no key held → nothing to do
+
+    lda KBCODE
+    cmp #KEY_NONE
+    beq @done               ; $FF = no valid key code
+
+    tay                     ; Y = raw KBCODE
+
+    lda kbcode_table, y     ; A = ATASCII translation
+
+    ; CAPS toggle keys: flip state, push nothing.
+    cmp #$82
+    beq @vbi_caps
+    cmp #$83
+    beq @vbi_caps
+    cmp #$84
+    beq @vbi_caps
+    jmp @vbi_apply_caps
+
+@vbi_caps:
+    lda caps_lock_state
+    eor #$FF
+    sta caps_lock_state
+    sty kbd_repeat_raw      ; track key so we don't re-toggle on the same hold
+    lda KRPDEL
+    sta kbd_repeat_cnt
+    jmp @done
+
+@vbi_apply_caps:
+    pha
+    and #$DF
+    cmp #'A'
+    bcc @vbi_no_flip
+    cmp #'Z' + 1
+    bcs @vbi_no_flip
+    bit caps_lock_state
+    bpl @vbi_no_flip
+    pla
+    eor #$20
+    jmp @vbi_push
+@vbi_no_flip:
+    pla
+
+@vbi_push:
+    sei
+    tax                         ; X = translated char
+    stx CH                      ; update OS.ch so kbhit()/OS.ch read works
+    lda kbd_ring_wr
+    clc
+    adc #1
+    and #$0F
+    cmp kbd_ring_rd
+    beq @vbi_full
+    pha
+    txa
+    ldx kbd_ring_wr
+    sta kbd_ring_buf, x
+    pla
+    sta kbd_ring_wr
+@vbi_full:
+    cli
+
+    sty kbd_repeat_raw
+    lda #KEY_NONE
+    sta _vera_ctl_block + VERACTL_PARAM0
+    lda KRPDEL
+    sta kbd_repeat_cnt
     rts
 
 
