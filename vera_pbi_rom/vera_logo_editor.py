@@ -169,9 +169,17 @@ class LogoEditor:
         self.glyphs, self.glyph_h = load_font(font_path)
         self.cell_h = self.glyph_h
 
-        # Displayed cell stride: glyph at 2× + 2px black border gap
-        self.stride_w = CELL_W    * CELL_SCALE + CELL_BORDER  # e.g. 18 px
-        self.stride_h = self.cell_h * CELL_SCALE + CELL_BORDER  # 18 or 34 px
+        # Choose scale: use CELL_SCALE (2) only when the screen is tall enough.
+        # Estimate minimum required height: canvas + ~160px chrome (menu/status/
+        # window decorations). If the screen can't fit it, fall back to scale 1.
+        CHROME_H = 160
+        required_h = ROWS * (self.cell_h * CELL_SCALE + CELL_BORDER) + CHROME_H
+        screen_h   = root.winfo_screenheight()
+        self.scale = CELL_SCALE if screen_h >= required_h else 1
+
+        # Displayed cell stride: glyph at scale× + 2px black border gap
+        self.stride_w = CELL_W      * self.scale + CELL_BORDER
+        self.stride_h = self.cell_h * self.scale + CELL_BORDER
 
         # Full canvas pixel size (black background = borders)
         self.canvas_w = COLS * self.stride_w
@@ -248,7 +256,8 @@ class LogoEditor:
         main.pack(fill='both', expand=True, padx=4, pady=4)
 
         # Canvas frame — with scrollbars (canvas may be >screen size at 2x)
-        cf = tk.LabelFrame(main, text='Canvas  80×30  (2× + 2px border)',
+        cf = tk.LabelFrame(main,
+                           text=f'Canvas  80×30  ({self.scale}× + {CELL_BORDER}px border)',
                            bg=C_BG, fg='#AAAAAA', font=('monospace', 9))
         cf.pack(side='left', anchor='nw', fill='both', expand=True)
 
@@ -387,7 +396,7 @@ class LogoEditor:
         y = row * self.stride_h
         cell_img = render_cell(self.glyphs, self.glyph_h,
                                cell.char, cell.fg, cell.bg, cell.inv,
-                               scale=CELL_SCALE)
+                               scale=self.scale)
         img.paste(cell_img, (x, y))
 
     def _rebuild_canvas_full(self):
@@ -483,8 +492,8 @@ class LogoEditor:
         # Reject clicks that land on the border gap (not on the glyph area)
         cell_x = cx % self.stride_w
         cell_y = cy % self.stride_h
-        glyph_pw = CELL_W    * CELL_SCALE
-        glyph_ph = self.cell_h * CELL_SCALE
+        glyph_pw = CELL_W      * self.scale
+        glyph_ph = self.cell_h * self.scale
         if cell_x >= glyph_pw or cell_y >= glyph_ph:
             return None
         if 0 <= col < COLS and 0 <= row < ROWS:
