@@ -70,11 +70,12 @@ VERA_ANSI_BG = [40, 47, 41, 46, 45, 42, 44, 43, 43, 43, 101, 100, 47, 102, 104, 
 COLS        = 80
 ROWS        = 30
 CELL_W      = 8         # font pixel width (always 8)
-CELL_SCALE  = 2         # 2× rendering of each glyph
-CELL_BORDER = 2         # black gap between adjacent cells (pixels)
-SWATCH_SZ   = 20        # color swatch pixels in palette
-PICKER_COLS = 16        # chars per row in the glyph picker
-PICKER_SCALE = 1        # scale factor for picker glyphs (1 = actual size)
+CELL_SCALE        = 2   # 2× rendering of each glyph on canvas
+CELL_BORDER       = 1   # black gap between adjacent cells (pixels)
+SWATCH_SZ         = 20  # color swatch pixels in palette
+PICKER_COLS       = 16  # chars per row in the glyph picker
+PICKER_GLYPH_SCALE = 2  # picker glyphs always at 2× regardless of canvas scale
+PICKER_SEP        = 1   # 1px separator between picker glyphs
 
 C_BG      = '#1C1C2E'
 C_PANEL   = '#14141E'
@@ -185,6 +186,10 @@ class LogoEditor:
         self.canvas_w = COLS * self.stride_w
         self.canvas_h = ROWS * self.stride_h
 
+        # Picker stride (always 2× + 1px separator)
+        self.picker_stride_x = CELL_W      * PICKER_GLYPH_SCALE + PICKER_SEP
+        self.picker_stride_y = self.cell_h * PICKER_GLYPH_SCALE + PICKER_SEP
+
         # Grid + undo
         self.grid  = [[Cell() for _ in range(COLS)] for _ in range(ROWS)]
         self._undo = None   # single-level undo snapshot
@@ -194,6 +199,10 @@ class LogoEditor:
         self.cur_fg    = 1     # white
         self.cur_bg    = 6     # blue
         self.cur_inv   = tk.BooleanVar(value=False)
+
+        # Canvas keyboard cursor
+        self.cursor_row = 0
+        self.cursor_col = 0
 
         self.project_file = None
         self.dirty = False
@@ -220,6 +229,13 @@ class LogoEditor:
         root.bind('<Control-z>', lambda e: self._cmd_undo())
         root.bind('f',           lambda e: self._cmd_fill())
         root.bind('F',           lambda e: self._cmd_fill())
+
+        # Canvas cursor navigation
+        root.bind('<Left>',      lambda e: self._move_cursor(0, -1))
+        root.bind('<Right>',     lambda e: self._move_cursor(0,  1))
+        root.bind('<Up>',        lambda e: self._move_cursor(-1, 0))
+        root.bind('<Down>',      lambda e: self._move_cursor( 1, 0))
+        root.bind('<space>',     lambda e: self._paint_at_cursor())
 
         if project_path:
             self._load_project(project_path)
@@ -314,11 +330,12 @@ class LogoEditor:
         tk.Label(parent, text='CHARACTER', bg=C_PANEL, fg='#AAAAAA',
                  font=('sans', 8, 'bold')).pack(anchor='w')
 
-        picker_w = PICKER_COLS * CELL_W * PICKER_SCALE
-        picker_h = self.PICKER_ROWS * self.cell_h * PICKER_SCALE
-        # Show at most 10 rows in the picker widget; scroll via scrollbar
-        vis_rows   = min(self.PICKER_ROWS, 10)
-        vis_h      = vis_rows * self.cell_h * PICKER_SCALE
+        # Picker always at 2× + 1px separators
+        picker_w = PICKER_COLS      * self.picker_stride_x
+        picker_h = self.PICKER_ROWS * self.picker_stride_y
+        # Show at most 8 rows visible; scroll via scrollbar
+        vis_rows = min(self.PICKER_ROWS, 8)
+        vis_h    = vis_rows * self.picker_stride_y
 
         pf = tk.Frame(parent, bg=C_PANEL)
         pf.pack(anchor='w')
@@ -327,7 +344,7 @@ class LogoEditor:
         pbar.pack(side='right', fill='y')
 
         self.tk_picker = tk.Canvas(pf, width=picker_w, height=vis_h,
-                                   bg='#111111', yscrollcommand=pbar.set,
+                                   bg='#161616', yscrollcommand=pbar.set,
                                    scrollregion=(0, 0, picker_w, picker_h),
                                    highlightthickness=1, highlightbackground=C_BORDER,
                                    cursor='hand2')
@@ -390,21 +407,31 @@ class LogoEditor:
 
     # ── PIL rendering ─────────────────────────────────────────────────────────
 
-    def _render_cell_pil(self, img, row, col, cell):
-        """Paint one cell into the PIL Image at 2× scale with border gap."""
+    def _render_cell_pil(self, img, row, col, cell, is_cursor=False):
+        """Paint one cell into the PIL Image at scale× with border gap.
+
+        If is_cursor, overlay an orange 2-px border to show the keyboard cursor.
+        """
         x = col * self.stride_w
         y = row * self.stride_h
+        gw = CELL_W      * self.scale
+        gh = self.cell_h * self.scale
         cell_img = render_cell(self.glyphs, self.glyph_h,
                                cell.char, cell.fg, cell.bg, cell.inv,
                                scale=self.scale)
         img.paste(cell_img, (x, y))
+        if is_cursor:
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([x, y, x + gw - 1, y + gh - 1],
+                           outline=(255, 200, 0), width=max(1, self.scale))
 
     def _rebuild_canvas_full(self):
         """Redraw the entire canvas PIL image."""
         img = Image.new('RGB', (self.canvas_w, self.canvas_h), (0, 0, 0))
         for row in range(ROWS):
             for col in range(COLS):
-                self._render_cell_pil(img, row, col, self.grid[row][col])
+                is_cur = (row == self.cursor_row and col == self.cursor_col)
+                self._render_cell_pil(img, row, col, self.grid[row][col], is_cur)
         self._canvas_img = img
         self._flush_canvas()
 
@@ -414,7 +441,8 @@ class LogoEditor:
             return
         img = self._canvas_img
         for (row, col) in self._dirty_cells:
-            self._render_cell_pil(img, row, col, self.grid[row][col])
+            is_cur = (row == self.cursor_row and col == self.cursor_col)
+            self._render_cell_pil(img, row, col, self.grid[row][col], is_cur)
         self._dirty_cells.clear()
         self._flush_canvas()
 
@@ -425,17 +453,23 @@ class LogoEditor:
         self.tk_canvas.create_image(0, 0, anchor='nw', image=self._canvas_tk, tags='img')
 
     def _rebuild_picker(self):
-        """Render the character picker."""
-        cw = CELL_W * PICKER_SCALE
-        ch = self.cell_h * PICKER_SCALE
-        img = Image.new('RGB', (PICKER_COLS * cw, self.PICKER_ROWS * ch), (17, 17, 17))
+        """Render the character picker at 2× with 1px separators."""
+        gw = CELL_W      * PICKER_GLYPH_SCALE   # glyph width in pixels
+        gh = self.cell_h * PICKER_GLYPH_SCALE   # glyph height in pixels
+        sx = self.picker_stride_x               # stride incl. separator
+        sy = self.picker_stride_y
+        img_w = PICKER_COLS      * sx
+        img_h = self.PICKER_ROWS * sy
+        # Dark background fills the separator gaps
+        img = Image.new('RGB', (img_w, img_h), (22, 22, 22))
         for ci in range(256):
             row = ci // PICKER_COLS
             col = ci  % PICKER_COLS
             cell_img = render_cell(self.glyphs, self.glyph_h,
                                    ci, self.cur_fg, self.cur_bg,
-                                   self.cur_inv.get(), scale=PICKER_SCALE)
-            img.paste(cell_img, (col * cw, row * ch))
+                                   self.cur_inv.get(),
+                                   scale=PICKER_GLYPH_SCALE)
+            img.paste(cell_img, (col * sx, row * sy))
         self._picker_img = img
         self._picker_tk = ImageTk.PhotoImage(img)
         self.tk_picker.delete('img')
@@ -444,13 +478,15 @@ class LogoEditor:
         self._picker_dirty = False
 
     def _update_picker_sel(self):
-        cw = CELL_W * PICKER_SCALE
-        ch = self.cell_h * PICKER_SCALE
-        ci = self.cur_char
+        gw = CELL_W      * PICKER_GLYPH_SCALE
+        gh = self.cell_h * PICKER_GLYPH_SCALE
+        ci  = self.cur_char
         col = ci % PICKER_COLS
         row = ci // PICKER_COLS
-        x0, y0 = col * cw, row * ch
-        self.tk_picker.coords(self._picker_sel_rect, x0, y0, x0 + cw, y0 + ch)
+        x0 = col * self.picker_stride_x
+        y0 = row * self.picker_stride_y
+        self.tk_picker.coords(self._picker_sel_rect,
+                              x0, y0, x0 + gw, y0 + gh)
 
     def _update_preview(self):
         img = render_cell(self.glyphs, self.glyph_h,
@@ -550,12 +586,10 @@ class LogoEditor:
         self._update_status()
 
     def _on_picker_click(self, e):
-        cw = CELL_W * PICKER_SCALE
-        ch = self.cell_h * PICKER_SCALE
-        # Account for scroll offset
-        cy = int(self.tk_picker.canvasy(e.y))
-        col = e.x // cw
-        row = cy  // ch
+        # Account for scroll offset; use picker stride (2× + 1px sep)
+        cy  = int(self.tk_picker.canvasy(e.y))
+        col = e.x // self.picker_stride_x
+        row = cy  // self.picker_stride_y
         ci  = row * PICKER_COLS + col
         if 0 <= ci < 256:
             self.cur_char = ci
@@ -572,6 +606,43 @@ class LogoEditor:
         self._update_preview()
         self._rebuild_picker()
         self._update_status()
+
+    # ── canvas keyboard cursor ────────────────────────────────────────────────
+
+    def _move_cursor(self, dr, dc):
+        old_r, old_c = self.cursor_row, self.cursor_col
+        self.cursor_row = max(0, min(ROWS - 1, self.cursor_row + dr))
+        self.cursor_col = max(0, min(COLS - 1, self.cursor_col + dc))
+        if (self.cursor_row, self.cursor_col) != (old_r, old_c):
+            self._dirty_cells.add((old_r, old_c))
+            self._dirty_cells.add((self.cursor_row, self.cursor_col))
+            self._redraw_dirty()
+            self._scroll_to_cursor()
+        self._update_status()
+
+    def _scroll_to_cursor(self):
+        """Scroll the canvas so the cursor cell is visible."""
+        cx = self.cursor_col * self.stride_w
+        cy = self.cursor_row * self.stride_h
+        vw = self.tk_canvas.winfo_width()
+        vh = self.tk_canvas.winfo_height()
+        x0 = int(self.tk_canvas.canvasx(0))
+        y0 = int(self.tk_canvas.canvasy(0))
+        if cx < x0:
+            self.tk_canvas.xview_moveto(cx / self.canvas_w)
+        elif cx + self.stride_w > x0 + vw:
+            self.tk_canvas.xview_moveto(
+                max(0, cx + self.stride_w - vw) / self.canvas_w)
+        if cy < y0:
+            self.tk_canvas.yview_moveto(cy / self.canvas_h)
+        elif cy + self.stride_h > y0 + vh:
+            self.tk_canvas.yview_moveto(
+                max(0, cy + self.stride_h - vh) / self.canvas_h)
+
+    def _paint_at_cursor(self):
+        """Paint the cell at the keyboard cursor position (spacebar action)."""
+        self._save_undo()
+        self._paint(self.cursor_row, self.cursor_col)
 
     # ── undo ─────────────────────────────────────────────────────────────────
 
