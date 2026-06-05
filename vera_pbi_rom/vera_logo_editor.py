@@ -766,32 +766,54 @@ class LogoEditor:
         return f'\\x{ch:02X}'
 
     def _build_cell_table(self):
-        """Return (cell_bytes, count) for non-default cells.
+        """Return (start_row, start_col, num_rows, num_cols, data) where
+        data is a flat list of (vera_color, glyph) pairs covering ALL cells
+        in the bounding box of user-touched cells, row by row, left to right.
 
-        Each cell = 4 bytes: row(0-29), col(0-79), vera_color((bg<<4)|fg), glyph.
-        Terminated by 0xFF (row can never be 0xFF).
+        "User-touched" = any cell that differs from the pristine default
+        (char=0x20, fg=1/white, bg=6/blue, inv=False).  Cells outside the
+        bounding box are never emitted; cells INSIDE the box are always
+        emitted even if they look like the default, so the user can set a
+        custom background color anywhere inside the logo area.
+
+        Format accepted by draw_logo():
+            header: start_row, start_col, num_rows, num_cols  (4 bytes)
+            body:   vera_color, glyph  per cell, row-major    (num_rows*num_cols*2 bytes)
         """
         DEF_FG = 1   # VERA white
         DEF_BG = 6   # VERA blue
 
-        def is_default(cell):
+        def is_touched(cell):
             ef = cell.bg if cell.inv else cell.fg
             eb = cell.fg if cell.inv else cell.bg
-            return cell.char == 0x20 and ef == DEF_FG and eb == DEF_BG
+            return not (cell.char == 0x20 and ef == DEF_FG and eb == DEF_BG)
 
-        cells = []
-        for row in range(ROWS):
-            if all(is_default(self.grid[row][c]) for c in range(COLS)):
-                continue
-            for col in range(COLS):
+        # --- bounding box of touched cells ---
+        touched = [(r, c)
+                   for r in range(ROWS)
+                   for c in range(COLS)
+                   if is_touched(self.grid[r][c])]
+        if not touched:
+            return 0, 0, 0, 0, []
+
+        min_row = min(r for r, _ in touched)
+        max_row = max(r for r, _ in touched)
+        min_col = min(c for _, c in touched)
+        max_col = max(c for _, c in touched)
+        num_rows = max_row - min_row + 1
+        num_cols = max_col - min_col + 1
+
+        # --- ALL cells inside the bounding box ---
+        data = []
+        for row in range(min_row, max_row + 1):
+            for col in range(min_col, max_col + 1):
                 cell = self.grid[row][col]
-                if is_default(cell):
-                    continue
-                fg = cell.bg if cell.inv else cell.fg
-                bg = cell.fg if cell.inv else cell.bg
-                vera_color = (bg << 4) | fg
-                cells.append((row, col, vera_color, cell.char))
-        return cells
+                ef = cell.bg if cell.inv else cell.fg   # effective fg
+                eb = cell.fg if cell.inv else cell.bg   # effective bg (fills space)
+                vera_color = (eb << 4) | ef
+                data.append((vera_color, cell.char))
+
+        return min_row, min_col, num_rows, num_cols, data
 
     def _build_ansi_string(self):
         """Return a list of C string-literal fragments.
@@ -875,66 +897,87 @@ class LogoEditor:
         return parts
 
     def _export_c_header(self, path):
-        """Export the logo as a VERA-native cell table.
+        """Export the logo as a VERA-native bounding-box table.
 
-        Format: flat byte array {row, col, vera_color, glyph} per cell,
-        terminated by 0xFF.  draw_logo() writes cursor+color directly to
-        the VCTL block and calls putchar() for each glyph — no VT100
-        parser involved, so the full 256-char VERA charset is supported.
+        Header: start_row, start_col, num_rows, num_cols  (4 bytes)
+        Body:   vera_color, glyph  for every cell in the box, row-major.
+
+        ALL cells inside the bounding box of touched cells are exported —
+        including those that look like the default — so the user can choose
+        any fg/bg for the logo area background.  Only cells completely
+        outside the bounding box (never touched) are omitted.
+
+        draw_logo() positions the cursor once per row (VCTL + ROWCRS_OS/
+        COLCRS_OS) then emits color+glyph pairs left-to-right; CURSOR_X
+        auto-advances after each putchar().  No VT100 parsing.
 
         In runcpm.c:  draw_logo(vctl);
         """
         guard = Path(path).name.upper().replace('.', '_').replace('-', '_')
-        cells = self._build_cell_table()
+        start_row, start_col, num_rows, num_cols, data = self._build_cell_table()
 
-        # Build the byte array as hex literals, 4 per line
+        # Build data lines: 8 (color,glyph) pairs per source line
         data_lines = []
-        for row, col, color, glyph in cells:
-            data_lines.append(
-                f'    0x{row:02X},0x{col:02X},0x{color:02X},0x{glyph:02X},'
-                f'  /* r{row} c{col} color=0x{color:02X} */')
+        for i in range(0, len(data), 8):
+            chunk = data[i:i+8]
+            pairs = ','.join(f'0x{color:02X},0x{glyph:02X}' for color, glyph in chunk)
+            data_lines.append(f'    {pairs},')
 
         lines = []
         lines.append(f'/* {Path(path).name} — generated by vera_logo_editor.py */')
-        lines.append(f'/* VeraX16 80\xd7{ROWS} logo — VERA-native cell table.          */')
+        lines.append(f'/* VeraX16 80\xd7{ROWS} logo — VERA-native bounding-box table.    */')
         lines.append(f'#ifndef {guard}')
         lines.append(f'#define {guard}')
         lines.append('')
-        lines.append(f'#define LOGO_COLS   {COLS}')
-        lines.append(f'#define LOGO_ROWS   {ROWS}')
-        lines.append(f'#define LOGO_CELLS  {len(cells)}')
+        lines.append(f'#define LOGO_COLS      {COLS}')
+        lines.append(f'#define LOGO_ROWS      {ROWS}')
+        lines.append(f'#define LOGO_START_ROW {start_row}')
+        lines.append(f'#define LOGO_START_COL {start_col}')
+        lines.append(f'#define LOGO_NUM_ROWS  {num_rows}')
+        lines.append(f'#define LOGO_NUM_COLS  {num_cols}')
         lines.append('')
         lines.append('/*')
-        lines.append(' * logo_data[] — flat array of quads: row, col, vera_color, glyph.')
-        lines.append(' * vera_color = (bg_nibble << 4) | fg_nibble  (VERA palette 0-15).')
-        lines.append(' * Terminated by 0xFF (row is always 0-29).')
+        lines.append(' * logo_data[]: header (4B) + body (num_rows*num_cols*2B), row-major.')
+        lines.append(' *   [0] start_row  [1] start_col  [2] num_rows  [3] num_cols')
+        lines.append(' *   [4..] vera_color, glyph  per cell  (vera_color=(bg<<4)|fg)')
         lines.append(' *')
-        lines.append(' * In runcpm.c:')
-        lines.append(' *   draw_logo(vctl);')
+        lines.append(' * ALL cells inside the bounding box are included — touching or not —')
+        lines.append(' * so custom background colors inside the logo area are preserved.')
         lines.append(' *')
-        lines.append(' * draw_logo() sets VCTL_CURSOR_X/Y and VCTL_PARAM1 directly,')
-        lines.append(' * then calls putchar() for each glyph.  No VT100 parsing.')
+        lines.append(' * In runcpm.c:  draw_logo(vctl);')
         lines.append(' */')
         lines.append('static const unsigned char logo_data[] = {')
+        lines.append(f'    /* header */ 0x{start_row:02X},0x{start_col:02X},'
+                     f'0x{num_rows:02X},0x{num_cols:02X},')
         lines.extend(data_lines)
-        lines.append('    0xFF  /* end marker */')
         lines.append('};')
         lines.append('')
-        lines.append('/* Draw the logo.  v = vctl pointer from runcpm (may be 0 = no VERA). */')
+        lines.append('/*')
+        lines.append(' * draw_logo() — render logo directly via VERA VCTL block.')
+        lines.append(' * Positions cursor once per row; CURSOR_X auto-advances each putchar.')
+        lines.append(' * ROWCRS_OS/COLCRS_OS kept in sync to prevent VBI cursor_tick override.')
+        lines.append(' * v = vctl pointer (pass NULL to skip VERA writes, e.g. no driver).')
+        lines.append(' */')
         lines.append('static void draw_logo(volatile unsigned char *v)')
         lines.append('{')
         lines.append('    const unsigned char *p = logo_data;')
-        lines.append('    while (*p != 0xFF) {')
-        lines.append('        unsigned char row   = *p++;')
-        lines.append('        unsigned char col   = *p++;')
-        lines.append('        unsigned char color = *p++;')
-        lines.append('        unsigned char glyph = *p++;')
+        lines.append('    unsigned char sr = *p++; /* start_row */')
+        lines.append('    unsigned char sc = *p++; /* start_col */')
+        lines.append('    unsigned char nr = *p++; /* num_rows  */')
+        lines.append('    unsigned char nc = *p++; /* num_cols  */')
+        lines.append('    unsigned char r, c;')
+        lines.append('    for (r = sr; r < (unsigned char)(sr + nr); ++r) {')
         lines.append('        if (v) {')
-        lines.append('            v[8] = col;    /* VCTL_CURSOR_X */')
-        lines.append('            v[9] = row;    /* VCTL_CURSOR_Y */')
-        lines.append('            v[7] = color;  /* VCTL_PARAM1: (bg<<4)|fg */')
+        lines.append('            v[9] = r;   /* VCTL_CURSOR_Y */')
+        lines.append('            v[8] = sc;  /* VCTL_CURSOR_X */')
+        lines.append('            *((volatile unsigned char*)0x0054) = r;  /* ROWCRS_OS */')
+        lines.append('            *((volatile unsigned char*)0x0055) = sc; /* COLCRS_OS */')
         lines.append('        }')
-        lines.append('        putchar(glyph);')
+        lines.append('        for (c = sc; c < (unsigned char)(sc + nc); ++c) {')
+        lines.append('            if (v) v[7] = *p++; /* VCTL_PARAM1: vera_color */')
+        lines.append('            else   p++;')
+        lines.append('            putchar(*p++);      /* glyph — CURSOR_X auto-advances */')
+        lines.append('        }')
         lines.append('    }')
         lines.append('}')
         lines.append('')
