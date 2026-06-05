@@ -233,3 +233,175 @@ make -C vera_pbi_rom cleanall all atr
 ```
 
 Il processo esegue compilazioni sequenziali pulite per ogni modalità, rinominando i file risultanti e garantendo che i define corretti (`MODE_40X30`, `FONT_8X8`) siano applicati coerentemente sia al driver che al bootstrap loader.
+
+---
+
+## Terminale CP/M via FujiNet (`vera-tests/runcpm.c`)
+
+Il programma `RUNCPM.COM` implementa un terminale VT100/VT52/ANSI completo per accedere a un sistema CP/M remoto tramite FujiNet SIO (device `N1:CPM:///`). Compilato con cc65 per il target Atari, si carica in RAM bassa ($3000) per coesistere con il driver VERA.
+
+### Architettura
+
+- **Receive path:** FujiNet SIO (interrupt PIA PROCEED) → ring buffer C (2 KB) → `terminal_putc()` → `vt_feed()` → `putchar()` → CIO → `vera_editor_put` → `_VeraPutByte` → VERA VRAM
+- **Transmit path:** SKSTAT/KBCODE poll → `kbd_translate()` → `kb_send()` → `nwrite()` → FujiNet SIO
+
+### Parser VT100/VT52 (`vt_feed()`)
+
+La funzione `vt_feed()` implementa una macchina a stati che supporta:
+
+| Stato | Descrizione |
+|-------|-------------|
+| `VT_ST_NORM` | Caratteri normali, sequenze `\r`, `\n`, `\b`, `\t`, `\a` |
+| `VT_ST_ESC` | Dopo `ESC`: sequenze VT52 single-char e avvio CSI |
+| `VT_ST_CSI` | Sequenze ANSI `ESC[…` — parametri accumulati, dispatch su final byte |
+| `VT_ST_VT52Y_R` | `ESC Y`: attesa byte riga (row+32) |
+| `VT_ST_VT52Y_C` | `ESC Y row`: attesa byte colonna (col+32) |
+
+**Sequenze VT52 supportate:** `A/B/C/D` (cursore), `H` (home), `E` (clear+home), `J` (erase to EOS), `K` (erase to EOL), `I` (reverse LF), `Y row col` (posizionamento assoluto).
+
+**Sequenze ANSI/CSI supportate:** CUU/D/F/B (`A-D`), CUP (`H/f`), ED (`J`), EL (`K`), SGR (`m`) con colori VERA, DECSTBM (`r`), IL/DL (`L/M`), ICH/DCH (`@/P`), ECH (`X`), SU/SD (`S/T`), save/restore cursor (`s/u`).
+
+### Colori ANSI → VERA
+
+Il case SGR (`m`) mappa i codici ANSI ai 16 colori della palette VERA Commander X16:
+
+```c
+static const unsigned char ansi_to_vera[8]        = {0,2,5,7,6,4,3,1};
+static const unsigned char ansi_to_vera_bright[8]  = {11,10,13,15,14,4,3,1};
+```
+
+Il colore corrente è scritto direttamente in `vctl[VCTL_PARAM1]` (offset 7 del blocco VCTL) — il driver VERA lo legge da `_vera_ctl_block + VERACTL_PARAM1` in `_VeraPutByte` invece del costante `VERA_TEXT_COLOR`.
+
+### Tastiera — poll diretto SKSTAT/KBCODE
+
+Il keyboard IRQ POKEY viene disabilitato da `nopen()` (SIO FujiNet) e non si riarma nel contesto di runCPM. La soluzione è il poll diretto:
+
+```c
+static unsigned char kbd_poll_kbcode(void)
+{
+    /* legge SKSTAT ($D20F) bit2 e KBCODE ($D209) */
+    /* traduce via kbcode_table[256] (identica al driver VERA) */
+}
+```
+
+La `kbcode_table[256]` in C replica esattamente quella assembler in `vera_sys_es_hook.s`, con gestione SHIFT, CTRL e CAPS LOCK.
+
+### Banner neofetch + logo (`logo.x16.h`)
+
+All'avvio, RUNCPM visualizza:
+1. `P("\x1B[2J\x1B[H")` — clear screen VERA via vt_feed
+2. `draw_logo(vctl)` — logo ASCII-art da `logo.x16.h` (vedi sezione Editor Logo)
+3. Scritte informative con `SET_COLOR(fg,bg)` → `vctl[VCTL_PARAM1]` diretto
+4. "Connecting to CP/M..."
+
+### Hotfix post-merge
+
+Il merge con il vecchio master aveva introdotto due regressioni fatali:
+- `term_rows()` hardcoded a 24 invece di `vctl ? 30 : 24` → crash sullo scroll
+- `term_sync_cursor()` leggeva `OS.colcrs`/`OS.rowcrs` ignorando VCTL → cursore scorrelato
+
+---
+
+## Colori VERA dinamici nel driver (`vera_driver.s`, `vera_sys_loader.s`)
+
+Il driver VERA ora supporta colori dinamici per carattere:
+
+- **`VERACTL_PARAM1`** (offset 7 nel blocco VCTL): byte colore corrente `(bg_nibble<<4)|fg_nibble`
+- Il loader inizializza `PARAM1 = $61` (bianco su blu, default)
+- `_VeraPutByte` legge `_vera_ctl_block + VERACTL_PARAM1` invece del costante `VERA_TEXT_COLOR`
+- Il caso inverse video swappa i nibble dinamicamente: `(fg<<4)|bg`
+- `nibble_tmp` esportato da `vera_sys_vbi.s` per uso condiviso
+
+### API FLUSH_KBD
+
+Aggiunto `VERA_REQ_FLUSH_KBD = $05` che svuota atomicamente il ring buffer della tastiera e azzera `kbd_repeat_raw` (stato key-repeat), prevenendo il flood `>` all'avvio di RUNCPM.
+
+### Rilevamento tasti via VBI (`vera_sys_es_hook.s`)
+
+Aggiunto path `@vbi_detect` in `_vera_kbd_repeat_tick`: quando `kbd_repeat_raw == KEY_NONE` e SKSTAT mostra un tasto fisicamente premuto, il VBI stesso traduce KBCODE, fa push al ring buffer e aggiorna `OS.ch` via `stx CH` — bypassando completamente il keyboard IRQ POKEY.
+
+---
+
+## Editor Logo VERA (`vera_logo_editor.py`)
+
+Editor visuale Python (tkinter + PIL) per comporre loghi ASCII-art su canvas 80×30 con la palette VERA a 16 colori, esportabili come header C per l'inclusione in RUNCPM.
+
+### Funzionalità
+
+| Feature | Descrizione |
+|---------|-------------|
+| Font binari | Supporta 1024 B (128 char × 8px), 2048 B (128 char × 16px) |
+| Canvas | 80×30 celle a scala 2× con bordo 1px, scrollabile |
+| Picker | 256 glifi a 2× con separatore 1px, scorrevole |
+| Palette | 2 × 16 swatches VERA (fg e bg separati) |
+| Inverse | Checkbox: swap fg↔bg per blocchi di colore pieni |
+| Cursore | Navigazione frecce + spazio per disegnare; bordo arancione |
+| Undo | Single-level undo |
+| Auto-scala | A schermo < required_height: scala 1× automatica |
+| Salvataggio | Progetto `.logo.json` (tutte le celle 80×30) |
+| Esportazione | Header C `logo.x16.h` con tabella bounding-box |
+
+### Formato esportato (`logo.x16.h`)
+
+```c
+/* header: start_row, start_col, num_rows, num_cols (4 byte) */
+/* body:   vera_color, glyph  per ogni cella del box, row-major */
+static const unsigned char logo_data[] = { ... };
+
+static void draw_logo(volatile unsigned char *v)
+{
+    /* Per ogni riga nel bounding box: */
+    /* - imposta v[9]=row, v[8]=col, ROWCRS_OS, COLCRS_OS */
+    /* - emette color+glyph via putchar() → vera_editor_put → _VeraPutByte */
+}
+```
+
+**Bounding box**: vengono esportate TUTTE le celle all'interno del rettangolo minimo che contiene le celle non-default — incluse quelle che sembrano default ma che l'utente ha toccato per impostare un colore di sfondo personalizzato. Le celle mai toccate fuori dal box vengono omesse.
+
+**Sync VBI**: `draw_logo()` aggiorna anche `ROWCRS_OS` ($54) e `COLCRS_OS` ($55) oltre al VCTL, impedendo al `cursor_tick` del VBI deferred di sovrascrivere la posizione cursore con il valore OS precedente (che causerebbe rendering alla riga sbagliata).
+
+**Spazio in inverse**: una cella con `char=0x20, inv=True` è inclusa se il colore effettivo (dopo lo swap fg↔bg) differisce dal default — usata per creare blocchi colorati di riempimento.
+
+---
+
+## Panoramica progetto (da GEMINI.md)
+
+> Questo progetto è un fork dell'emulatore **Atari800** (versione 5.2.0), esteso con supporto per la scheda video FPGA **VERA X16** tramite il **Parallel Bus Interface (PBI)** dell'Atari.
+
+### Componenti principali
+
+**Emulatore core (`src/`):**
+- `pbi_verax16.c/h` — emulazione chip VERA e interfaccia bus PBI
+- `vera_video.c/h` — rendering video VERA integrato nel loop display
+- `pbi.c` — dispatch bus cycles all'handler VERA PBI
+
+**Driver & ROM VERA (`vera_pbi_rom/`):**
+- `vera_pbi_handler.s` — handler ROM PBI: rilevamento e inizializzazione VERA da OS
+- `vera_sys_es_hook.s` — hook OS per handler `E:` e `S:` ad alta risoluzione
+- `vera_sys_vbi.s` / `vera_sys_loader.s` — integrazione VBI e caricamento driver
+- `vera_driver.s` — driver VERA a basso livello (putc, scroll, colori)
+
+### Build emulatore
+
+```bash
+./autogen.sh
+./configure --enable-pbi-verax16
+make
+```
+
+### Build driver VERA
+
+```bash
+# Build completo con deploy su SD FujiNet
+make -C vera_pbi_rom clean all atr FUJINET_SD_PATH=<path/to/SD>
+```
+
+Produce `vera_pbi_handler.rom`, `VERA8030.SYS`, `VERA8060.SYS`, `VERA4030.SYS` e l'immagine `vera_pbi.atr` (DOS 2.0s bootabile con RUNCPM.COM).
+
+### Convenzioni sviluppo
+
+- **Linguaggio:** C (C99/ANSI) per l'emulatore; Assembly 6502 (CA65) per i driver
+- **Stile:** Standard Atari800 (vedi `DOC/PORTING`); Allman braces nel codice C
+- **PBI:** Registri VERA a `$D100-$D11F`; ROM PBI a `$D800-$DFFF` (latch `$D1FF`)
+- **Test:** Validare in `vera_pbi_rom/vera-tests/`; usare `-verax16 -verax16-rom vera_pbi_handler.rom`
+- **Commit:** Messaggi in inglese; no `Co-Authored-By`
