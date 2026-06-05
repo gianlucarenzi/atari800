@@ -765,73 +765,177 @@ class LogoEditor:
             return chr(ch)
         return f'\\x{ch:02X}'
 
-    def _build_ansi_string(self):
-        """Return a list of C string-literal fragments."""
-        parts = ['"\\x1B[2J\\x1B[H"  /* clear screen, home cursor */']
+    def _build_cell_table(self):
+        """Return (cell_bytes, count) for non-default cells.
 
+        Each cell = 4 bytes: row(0-29), col(0-79), vera_color((bg<<4)|fg), glyph.
+        Terminated by 0xFF (row can never be 0xFF).
+        """
+        DEF_FG = 1   # VERA white
+        DEF_BG = 6   # VERA blue
+
+        def is_default(cell):
+            ef = cell.bg if cell.inv else cell.fg
+            eb = cell.fg if cell.inv else cell.bg
+            return cell.char == 0x20 and ef == DEF_FG and eb == DEF_BG
+
+        cells = []
+        for row in range(ROWS):
+            if all(is_default(self.grid[row][c]) for c in range(COLS)):
+                continue
+            for col in range(COLS):
+                cell = self.grid[row][col]
+                if is_default(cell):
+                    continue
+                fg = cell.bg if cell.inv else cell.fg
+                bg = cell.fg if cell.inv else cell.bg
+                vera_color = (bg << 4) | fg
+                cells.append((row, col, vera_color, cell.char))
+        return cells
+
+    def _build_ansi_string(self):
+        """Return a list of C string-literal fragments.
+
+        Only rows with at least one non-default cell are emitted.
+        Position (ESC[r;cH) and color are emitted only when a non-empty run
+        exists — this avoids spurious color-state changes with no visible chars.
+
+        Default state = space (0x20), fg=white (ANSI 37), bg=blue (ANSI 44),
+        matching vt_reset() + ESC[2J executed by the caller before draw_logo().
+
+        ESC[2J is NOT included here.
+        Glyph 0x1B is replaced by space (logo_emit treats 0x1B as ESC).
+        Trailing spaces are stripped only when the background is the default
+        blue (44); colored spaces are kept because they render background blocks.
+        """
+        DEF_FG = VERA_ANSI_FG[1]   # 37 = white
+        DEF_BG = VERA_ANSI_BG[6]   # 44 = blue
+
+        def cell_ansi(cell):
+            ef = cell.bg if cell.inv else cell.fg
+            eb = cell.fg if cell.inv else cell.bg
+            return VERA_ANSI_FG[ef], VERA_ANSI_BG[eb]
+
+        def is_default(cell):
+            af, ab = cell_ansi(cell)
+            return cell.char == 0x20 and af == DEF_FG and ab == DEF_BG
+
+        parts = []
         prev_ansi_fg = None
         prev_ansi_bg = None
 
         for row in range(ROWS):
-            # Absolute cursor position for each row (skip unchanged rows later)
-            parts.append(f'"\\x1B[{row + 1};1H"')
+            if all(is_default(self.grid[row][c]) for c in range(COLS)):
+                continue     # skip fully-default rows
+
             col = 0
             while col < COLS:
-                cell = self.grid[row][col]
-                eff_fg = cell.bg if cell.inv else cell.fg
-                eff_bg = cell.fg if cell.inv else cell.bg
-                ansi_fg = VERA_ANSI_FG[eff_fg]
-                ansi_bg = VERA_ANSI_BG[eff_bg]
+                # Skip default cells
+                while col < COLS and is_default(self.grid[row][col]):
+                    col += 1
+                if col >= COLS:
+                    break
 
-                # Emit color change only when needed
+                run_col  = col
+                ansi_fg, ansi_bg = cell_ansi(self.grid[row][col])
+
+                # Gather same-color run (including default-colored spaces within
+                # it so the cursor advances correctly across the run).
+                run = ''
+                while col < COLS:
+                    c = self.grid[row][col]
+                    af, ab = cell_ansi(c)
+                    if af != ansi_fg or ab != ansi_bg:
+                        break
+                    ch = 0x20 if c.char == 0x1B else c.char
+                    run += self._c_esc(ch)
+                    col += 1
+
+                # Strip trailing spaces only for default-background runs
+                # (non-default bg spaces are visible background-color blocks).
+                if ansi_bg == DEF_BG:
+                    run = run.rstrip(' ')
+
+                if not run:
+                    continue  # nothing to emit — skip position+color too
+
+                # Position (emitted AFTER confirming the run is non-empty)
+                parts.append(f'"\\x1B[{row + 1};{run_col + 1}H"')
+
+                # Color
                 if ansi_fg != prev_ansi_fg or ansi_bg != prev_ansi_bg:
                     parts.append(f'"\\x1B[{ansi_fg};{ansi_bg}m"')
                     prev_ansi_fg = ansi_fg
                     prev_ansi_bg = ansi_bg
 
-                # Gather run of same-color cells
-                run = ''
-                while col < COLS:
-                    c = self.grid[row][col]
-                    ef = c.bg if c.inv else c.fg
-                    eb = c.fg if c.inv else c.bg
-                    if VERA_ANSI_FG[ef] != prev_ansi_fg or VERA_ANSI_BG[eb] != prev_ansi_bg:
-                        break
-                    run += self._c_esc(c.char)
-                    col += 1
-                if run:
-                    # Split long runs to avoid very long C string literals
-                    for i in range(0, len(run), 64):
-                        parts.append(f'"{run[i:i+64]}"')
+                # Characters (split at 64 to keep C string literals short)
+                for i in range(0, len(run), 64):
+                    parts.append(f'"{run[i:i+64]}"')
 
         return parts
 
     def _export_c_header(self, path):
+        """Export the logo as a VERA-native cell table.
+
+        Format: flat byte array {row, col, vera_color, glyph} per cell,
+        terminated by 0xFF.  draw_logo() writes cursor+color directly to
+        the VCTL block and calls putchar() for each glyph — no VT100
+        parser involved, so the full 256-char VERA charset is supported.
+
+        In runcpm.c:  draw_logo(vctl);
+        """
         guard = Path(path).name.upper().replace('.', '_').replace('-', '_')
-        parts = self._build_ansi_string()
+        cells = self._build_cell_table()
+
+        # Build the byte array as hex literals, 4 per line
+        data_lines = []
+        for row, col, color, glyph in cells:
+            data_lines.append(
+                f'    0x{row:02X},0x{col:02X},0x{color:02X},0x{glyph:02X},'
+                f'  /* r{row} c{col} color=0x{color:02X} */')
 
         lines = []
         lines.append(f'/* {Path(path).name} — generated by vera_logo_editor.py */')
-        lines.append(f'/* VeraX16 80\xd7{ROWS} ASCII-art logo, ANSI/VT100 encoded.      */')
+        lines.append(f'/* VeraX16 80\xd7{ROWS} logo — VERA-native cell table.          */')
         lines.append(f'#ifndef {guard}')
         lines.append(f'#define {guard}')
         lines.append('')
-        lines.append(f'#define LOGO_COLS {COLS}')
-        lines.append(f'#define LOGO_ROWS {ROWS}')
+        lines.append(f'#define LOGO_COLS   {COLS}')
+        lines.append(f'#define LOGO_ROWS   {ROWS}')
+        lines.append(f'#define LOGO_CELLS  {len(cells)}')
         lines.append('')
-        lines.append('/* Feed each byte to your VT100 terminal output function.          */')
-        lines.append('/* In runcpm: draw_logo(terminal_putc);                            */')
-        lines.append('static const char logo_ansi[] =')
-        for p in parts:
-            lines.append(f'    {p}')
-        lines.append('    "\\x1B[0m"  /* reset attributes */')
-        lines.append('    ;')
+        lines.append('/*')
+        lines.append(' * logo_data[] — flat array of quads: row, col, vera_color, glyph.')
+        lines.append(' * vera_color = (bg_nibble << 4) | fg_nibble  (VERA palette 0-15).')
+        lines.append(' * Terminated by 0xFF (row is always 0-29).')
+        lines.append(' *')
+        lines.append(' * In runcpm.c:')
+        lines.append(' *   draw_logo(vctl);')
+        lines.append(' *')
+        lines.append(' * draw_logo() sets VCTL_CURSOR_X/Y and VCTL_PARAM1 directly,')
+        lines.append(' * then calls putchar() for each glyph.  No VT100 parsing.')
+        lines.append(' */')
+        lines.append('static const unsigned char logo_data[] = {')
+        lines.extend(data_lines)
+        lines.append('    0xFF  /* end marker */')
+        lines.append('};')
         lines.append('')
-        lines.append('/* Emit the logo via a single-byte callback. */')
-        lines.append('static void draw_logo(void (*emit)(unsigned char))')
+        lines.append('/* Draw the logo.  v = vctl pointer from runcpm (may be 0 = no VERA). */')
+        lines.append('static void draw_logo(volatile unsigned char *v)')
         lines.append('{')
-        lines.append('    const char *p = logo_ansi;')
-        lines.append('    while (*p) emit((unsigned char)*p++);')
+        lines.append('    const unsigned char *p = logo_data;')
+        lines.append('    while (*p != 0xFF) {')
+        lines.append('        unsigned char row   = *p++;')
+        lines.append('        unsigned char col   = *p++;')
+        lines.append('        unsigned char color = *p++;')
+        lines.append('        unsigned char glyph = *p++;')
+        lines.append('        if (v) {')
+        lines.append('            v[8] = col;    /* VCTL_CURSOR_X */')
+        lines.append('            v[9] = row;    /* VCTL_CURSOR_Y */')
+        lines.append('            v[7] = color;  /* VCTL_PARAM1: (bg<<4)|fg */')
+        lines.append('        }')
+        lines.append('        putchar(glyph);')
+        lines.append('    }')
         lines.append('}')
         lines.append('')
         lines.append(f'#endif /* {guard} */')

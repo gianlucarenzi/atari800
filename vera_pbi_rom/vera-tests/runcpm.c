@@ -13,6 +13,8 @@
 #include <atari.h>
 #include <stdint.h>
 
+#include "../logo.x16.h"
+
 
 /* --- SIO Constants --- */
 #define DFUJI           0x71
@@ -1297,6 +1299,7 @@ void terminal_putc(unsigned char c)
     vt_feed(c);
 }
 
+
 /* Send one ATASCII keystroke to FujiNet, expanding cursor keys to VT100. */
 static void kb_send(void)
 {
@@ -1360,13 +1363,10 @@ int main(void)
     /* Clear VERA screen, home cursor */
     P("\x1B[2J\x1B[H");
 
-    /* Logo — yellow (7) on blue (6) */
-    SET_COLOR(7, 6);
-    P("       ___  _              _ \r\n");
-    P("      / _ \\| |_ __ _ _ __ (_)\r\n");
-    P("     / /_\\/\\   __/ _` | '__| |\r\n");
-    P("    / /_\\\\  | || (_| | |  | |\r\n");
-    P("    \\____/  |_| \\__,_|_|  |_|\r\n\r\n");
+    /* Logo from vera_logo_editor (logo.x16.h).
+     * draw_logo writes cursor+color directly to the VCTL block and calls
+     * putchar() for each glyph — no VT100 parsing, full 256-char VERA set. */
+    draw_logo(vctl);
 
     /* atari@VERA-X16 header */
     SET_COLOR(1, 6);   P("  atari");
