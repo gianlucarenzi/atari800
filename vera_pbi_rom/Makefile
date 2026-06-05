@@ -232,12 +232,12 @@ DOS20_EXTRACT = extract_dos20.py
 $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS: $(DOS20_ATR) $(DOS20_EXTRACT)
 	$(PYTHON) $(DOS20_EXTRACT) $(DOS20_ATR) $(DOS20_DIR)
 
-# Build a bootable DOS 2.0s ED ATR containing RUNCPM.COM and the
-# VERA 80x30 driver (VERA8030.SYS) to be loaded on demand.
-atr: $(TARGET) $(RUNCPM_EXE) $(SYS8030) $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS
+# Build a bootable DOS 2.0s ED ATR containing RUNCPM.COM and both
+# VERA8030.SYS (80x30) and VERA8060.SYS (80x60) drivers.
+atr: $(TARGET) $(RUNCPM_EXE) $(SYS8030) $(SYS8060) $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS
 	rm -rf $(ATRBUILD)
 	mkdir -p $(ATRBUILD)
-	cp $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS $(RUNCPM_EXE) $(SYS8030) $(ATRBUILD)/
+	cp $(DOS20_DIR)/DOS.SYS $(DOS20_DIR)/DUP.SYS $(RUNCPM_EXE) $(SYS8030) $(SYS8060) $(ATRBUILD)/
 	$(DIR2ATR) -E -b Dos20 $(ATR) $(ATRBUILD)
 	@echo "ATR written to $(ATR)"
 	@if [ ! -z "$(FUJINET_SD_PATH)" ]; then \
