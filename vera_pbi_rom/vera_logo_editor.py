@@ -1,0 +1,779 @@
+#!/usr/bin/env python3
+"""
+vera_logo_editor.py — 80×30 ASCII-art / logo editor for VeraX16 PBI.
+
+Usage:
+    python3 vera_logo_editor.py <font.bin> [project.logo.json]
+
+Controls:
+    Left-click / drag      paint current char+colors onto canvas
+    Right-click            eyedropper (pick char+colors from cell)
+    Char picker            click a glyph to select it
+    FG / BG swatches       click to set foreground / background color
+    Inverse checkbox       toggle inverse attribute
+    Ctrl+S                 save project
+    Ctrl+E / F5            export logo-ansi.h
+    Ctrl+Z                 undo last paint stroke
+    F                      fill entire canvas with current char+colors
+
+Font file sizes accepted:
+    1024 B  →  128 chars × 8 B  (8-pixel glyphs, partial charset)
+    2048 B  →  256 chars × 8 B  (8-pixel glyphs, full charset)
+    4096 B  →  256 chars × 16 B (16-pixel glyphs, full charset)
+"""
+
+import sys
+import os
+import json
+import argparse
+from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+try:
+    from PIL import Image, ImageDraw, ImageTk
+except ImportError:
+    sys.exit("PIL/Pillow required:  pip install Pillow")
+
+# ─── VERA 16-color palette ───────────────────────────────────────────────────
+
+VERA_RGB = [
+    (0x00, 0x00, 0x00),  #  0 black
+    (0xFF, 0xFF, 0xFF),  #  1 white
+    (0x88, 0x00, 0x00),  #  2 red
+    (0xAA, 0xFF, 0xEE),  #  3 cyan
+    (0xCC, 0x44, 0xCC),  #  4 purple
+    (0x00, 0xCC, 0x55),  #  5 green
+    (0x00, 0x00, 0xAA),  #  6 blue
+    (0xFF, 0xFF, 0x55),  #  7 yellow
+    (0xDD, 0x88, 0x55),  #  8 orange
+    (0x66, 0x44, 0x00),  #  9 brown
+    (0xFF, 0x77, 0x77),  # 10 light red
+    (0x33, 0x33, 0x33),  # 11 dark grey
+    (0x77, 0x77, 0x77),  # 12 grey
+    (0xAA, 0xFF, 0x66),  # 13 light green
+    (0x00, 0x88, 0xFF),  # 14 light blue
+    (0xBB, 0xBB, 0xBB),  # 15 light grey
+]
+VERA_NAMES = [
+    'Black', 'White', 'Red', 'Cyan', 'Purple', 'Green', 'Blue', 'Yellow',
+    'Orange', 'Brown', 'Lt.Red', 'Dk.Grey', 'Grey', 'Lt.Green', 'Lt.Blue', 'Lt.Grey',
+]
+VERA_HEX = ['#%02X%02X%02X' % c for c in VERA_RGB]
+
+# VERA index → ANSI fg / bg codes  (30-37 normal, 90-97 bright)
+VERA_ANSI_FG = [30, 37, 31, 36, 35, 32, 34, 33, 33, 33, 91, 90, 37, 92, 94, 97]
+VERA_ANSI_BG = [40, 47, 41, 46, 45, 42, 44, 43, 43, 43, 101, 100, 47, 102, 104, 107]
+
+# ─── layout constants ────────────────────────────────────────────────────────
+
+COLS        = 80
+ROWS        = 30
+CELL_W      = 8         # font pixel width (always 8)
+CELL_SCALE  = 2         # 2× rendering of each glyph
+CELL_BORDER = 2         # black gap between adjacent cells (pixels)
+SWATCH_SZ   = 20        # color swatch pixels in palette
+PICKER_COLS = 16        # chars per row in the glyph picker
+PICKER_SCALE = 1        # scale factor for picker glyphs (1 = actual size)
+
+C_BG      = '#1C1C2E'
+C_PANEL   = '#14141E'
+C_SEL     = '#FF8800'
+C_BORDER  = '#444444'
+
+# ─── Cell ────────────────────────────────────────────────────────────────────
+
+class Cell:
+    __slots__ = ('char', 'fg', 'bg', 'inv')
+
+    def __init__(self, char=0x20, fg=1, bg=6, inv=False):
+        self.char = char
+        self.fg   = fg
+        self.bg   = bg
+        self.inv  = inv
+
+    def copy(self):
+        return Cell(self.char, self.fg, self.bg, self.inv)
+
+    def to_dict(self):
+        return {'ch': self.char, 'fg': self.fg, 'bg': self.bg, 'inv': int(self.inv)}
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(d.get('ch', 0x20), d.get('fg', 1), d.get('bg', 6), bool(d.get('inv', 0)))
+
+    def equals(self, other):
+        return (self.char == other.char and self.fg == other.fg
+                and self.bg == other.bg and self.inv == other.inv)
+
+# ─── Font loading ─────────────────────────────────────────────────────────────
+
+def load_font(path):
+    """Load a binary font file.
+
+    Sizes (matching vera_font_editor.py convention):
+        1024 B  →  128 chars × 8 B  →  8-pixel tall glyphs
+        2048 B  →  128 chars × 16 B →  16-pixel tall glyphs
+        2048 B  →  256 chars × 8 B  →  only if explicitly flagged (rare)
+
+    The two 128-char files (font8x8.bin / font8x16.bin) cover chars 0-127.
+    Chars 128-255 are padded with blank glyphs.
+    """
+    data = Path(path).read_bytes()
+    size = len(data)
+    if size == 1024:
+        n_chars, glyph_h = 128, 8
+    elif size == 2048:
+        n_chars, glyph_h = 128, 16
+    elif size == 4096:
+        n_chars, glyph_h = 256, 16
+    else:
+        # Fallback: treat as 128-char font
+        glyph_h = size // 128
+        n_chars  = 128
+        print(f'Warning: unusual font size {size} B; guessing {n_chars} chars × {glyph_h} B')
+    glyphs = [data[i * glyph_h:(i + 1) * glyph_h] for i in range(n_chars)]
+    # Pad to 256: chars not in the file render as blank
+    blank = bytes(glyph_h)
+    while len(glyphs) < 256:
+        glyphs.append(blank)
+    return glyphs, glyph_h
+
+# ─── Glyph rendering (PIL) ────────────────────────────────────────────────────
+
+def render_cell(glyphs, glyph_h, char_idx, fg, bg, inv, scale=1):
+    """Return a PIL Image of size (8*scale, glyph_h*scale)."""
+    fg_rgb = VERA_RGB[bg if inv else fg]
+    bg_rgb = VERA_RGB[fg if inv else bg]
+    w = CELL_W * scale
+    h = glyph_h * scale
+    img = Image.new('RGB', (w, h), bg_rgb)
+    draw = ImageDraw.Draw(img)
+    for row, byte in enumerate(glyphs[char_idx]):
+        for col in range(8):
+            if byte & (0x80 >> col):
+                x0, y0 = col * scale, row * scale
+                draw.rectangle([x0, y0, x0 + scale - 1, y0 + scale - 1], fill=fg_rgb)
+    return img
+
+# ─── LogoEditor ───────────────────────────────────────────────────────────────
+
+class LogoEditor:
+    PICKER_ROWS = 256 // PICKER_COLS  # 16
+
+    def __init__(self, root, font_path, project_path=None):
+        self.root = root
+        root.title('VeraX16 Logo Editor — 80×30')
+        root.configure(bg=C_BG)
+
+        self.glyphs, self.glyph_h = load_font(font_path)
+        self.cell_h = self.glyph_h
+
+        # Displayed cell stride: glyph at 2× + 2px black border gap
+        self.stride_w = CELL_W    * CELL_SCALE + CELL_BORDER  # e.g. 18 px
+        self.stride_h = self.cell_h * CELL_SCALE + CELL_BORDER  # 18 or 34 px
+
+        # Full canvas pixel size (black background = borders)
+        self.canvas_w = COLS * self.stride_w
+        self.canvas_h = ROWS * self.stride_h
+
+        # Grid + undo
+        self.grid  = [[Cell() for _ in range(COLS)] for _ in range(ROWS)]
+        self._undo = None   # single-level undo snapshot
+
+        # Editor state
+        self.cur_char  = 0x41  # 'A'
+        self.cur_fg    = 1     # white
+        self.cur_bg    = 6     # blue
+        self.cur_inv   = tk.BooleanVar(value=False)
+
+        self.project_file = None
+        self.dirty = False
+        self._dragging = False
+
+        # PIL image cache for the canvas (full 640×N image)
+        self._canvas_img  = None   # PIL Image
+        self._canvas_tk   = None   # ImageTk.PhotoImage
+        self._dirty_cells = set()  # (row, col) to redraw
+
+        # PIL image for the glyph picker
+        self._picker_img  = None
+        self._picker_tk   = None
+        self._picker_dirty = True
+
+        self._build_ui()
+        self._rebuild_canvas_full()
+        self._rebuild_picker()
+        self._update_preview()
+
+        root.bind('<Control-s>', lambda e: self._cmd_save())
+        root.bind('<Control-e>', lambda e: self._cmd_export())
+        root.bind('<F5>',        lambda e: self._cmd_export())
+        root.bind('<Control-z>', lambda e: self._cmd_undo())
+        root.bind('f',           lambda e: self._cmd_fill())
+        root.bind('F',           lambda e: self._cmd_fill())
+
+        if project_path:
+            self._load_project(project_path)
+
+    # ── UI construction ───────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = self.root
+
+        # ── Menu ──────────────────────────────────────────────────────────────
+        menubar = tk.Menu(root)
+        root.config(menu=menubar)
+        fm = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='File', menu=fm)
+        fm.add_command(label='New',        command=self._cmd_new,     accelerator='')
+        fm.add_command(label='Open…',      command=self._cmd_open,    accelerator='')
+        fm.add_command(label='Save',       command=self._cmd_save,    accelerator='Ctrl+S')
+        fm.add_command(label='Save As…',   command=self._cmd_save_as, accelerator='')
+        fm.add_separator()
+        fm.add_command(label='Export C header (logo-ansi.h)…',
+                       command=self._cmd_export, accelerator='Ctrl+E / F5')
+        fm.add_separator()
+        fm.add_command(label='Quit', command=root.quit)
+
+        em = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='Edit', menu=em)
+        em.add_command(label='Undo',            command=self._cmd_undo, accelerator='Ctrl+Z')
+        em.add_command(label='Fill canvas',     command=self._cmd_fill, accelerator='F')
+        em.add_command(label='Clear canvas',    command=self._cmd_clear)
+
+        # ── Main layout ───────────────────────────────────────────────────────
+        # Left: canvas.  Right: sidebar.
+        main = tk.Frame(root, bg=C_BG)
+        main.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # Canvas frame — with scrollbars (canvas may be >screen size at 2x)
+        cf = tk.LabelFrame(main, text='Canvas  80×30  (2× + 2px border)',
+                           bg=C_BG, fg='#AAAAAA', font=('monospace', 9))
+        cf.pack(side='left', anchor='nw', fill='both', expand=True)
+
+        # Viewport: cap display size so the window fits on screen
+        scr_w = self.root.winfo_screenwidth()
+        scr_h = self.root.winfo_screenheight()
+        view_w = min(self.canvas_w, scr_w - 280)
+        view_h = min(self.canvas_h, scr_h - 120)
+
+        cf_inner = tk.Frame(cf, bg=C_BG)
+        cf_inner.pack(fill='both', expand=True)
+
+        hbar = tk.Scrollbar(cf_inner, orient='horizontal')
+        hbar.pack(side='bottom', fill='x')
+        vbar = tk.Scrollbar(cf_inner, orient='vertical')
+        vbar.pack(side='right', fill='y')
+
+        self.tk_canvas = tk.Canvas(
+            cf_inner,
+            width=view_w, height=view_h,
+            scrollregion=(0, 0, self.canvas_w, self.canvas_h),
+            xscrollcommand=hbar.set, yscrollcommand=vbar.set,
+            bg='black', cursor='crosshair',
+            highlightthickness=1, highlightbackground=C_BORDER)
+        self.tk_canvas.pack(side='left', fill='both', expand=True)
+
+        hbar.config(command=self.tk_canvas.xview)
+        vbar.config(command=self.tk_canvas.yview)
+
+        self.tk_canvas.bind('<ButtonPress-1>',   self._on_canvas_press)
+        self.tk_canvas.bind('<ButtonRelease-1>', self._on_canvas_release)
+        self.tk_canvas.bind('<B1-Motion>',       self._on_canvas_drag)
+        self.tk_canvas.bind('<Button-3>',        self._on_canvas_pick)
+        # Mouse-wheel scroll
+        self.tk_canvas.bind('<MouseWheel>',
+            lambda e: self.tk_canvas.yview_scroll(-1 if e.delta > 0 else 1, 'units'))
+        self.tk_canvas.bind('<Shift-MouseWheel>',
+            lambda e: self.tk_canvas.xview_scroll(-1 if e.delta > 0 else 1, 'units'))
+
+        # Sidebar
+        sb = tk.Frame(main, bg=C_PANEL, padx=6, pady=4)
+        sb.pack(side='left', fill='y', padx=(6, 0))
+
+        self._build_sidebar(sb)
+
+        # Status bar
+        self.status_var = tk.StringVar(value='Ready')
+        status = tk.Label(root, textvariable=self.status_var, anchor='w',
+                          bg='#111111', fg='#888888', font=('monospace', 9))
+        status.pack(fill='x', side='bottom', padx=4, pady=(0, 2))
+
+    def _build_sidebar(self, parent):
+        # ── Char picker ───────────────────────────────────────────────────────
+        tk.Label(parent, text='CHARACTER', bg=C_PANEL, fg='#AAAAAA',
+                 font=('sans', 8, 'bold')).pack(anchor='w')
+
+        picker_w = PICKER_COLS * CELL_W * PICKER_SCALE
+        picker_h = self.PICKER_ROWS * self.cell_h * PICKER_SCALE
+        # Show at most 10 rows in the picker widget; scroll via scrollbar
+        vis_rows   = min(self.PICKER_ROWS, 10)
+        vis_h      = vis_rows * self.cell_h * PICKER_SCALE
+
+        pf = tk.Frame(parent, bg=C_PANEL)
+        pf.pack(anchor='w')
+
+        pbar = tk.Scrollbar(pf, orient='vertical')
+        pbar.pack(side='right', fill='y')
+
+        self.tk_picker = tk.Canvas(pf, width=picker_w, height=vis_h,
+                                   bg='#111111', yscrollcommand=pbar.set,
+                                   scrollregion=(0, 0, picker_w, picker_h),
+                                   highlightthickness=1, highlightbackground=C_BORDER,
+                                   cursor='hand2')
+        self.tk_picker.pack(side='left')
+        pbar.config(command=self.tk_picker.yview)
+        self.tk_picker.bind('<Button-1>', self._on_picker_click)
+        self.tk_picker.bind('<MouseWheel>',
+                            lambda e: self.tk_picker.yview_scroll(-1 if e.delta > 0 else 1, 'units'))
+
+        # Highlight rect for selected char
+        self._picker_sel_rect = self.tk_picker.create_rectangle(
+            0, 0, 0, 0, outline=C_SEL, width=2)
+
+        tk.Frame(parent, height=6, bg=C_PANEL).pack()
+
+        # ── FG / BG palettes ──────────────────────────────────────────────────
+        for label, attr in (('FOREGROUND', 'fg'), ('BACKGROUND', 'bg')):
+            tk.Label(parent, text=label, bg=C_PANEL, fg='#AAAAAA',
+                     font=('sans', 8, 'bold')).pack(anchor='w')
+            pf2 = tk.Frame(parent, bg=C_PANEL)
+            pf2.pack(anchor='w')
+            btns = []
+            for i, hex_col in enumerate(VERA_HEX):
+                col = i % 8
+                row = i // 8
+                b = tk.Label(pf2, bg=hex_col, width=2, height=1,
+                             relief='flat', cursor='hand2')
+                b.grid(row=row, column=col, padx=1, pady=1)
+                idx = i
+                b.bind('<Button-1>', lambda e, a=attr, n=idx: self._set_color(a, n))
+                btns.append(b)
+            setattr(self, f'_{attr}_btns', btns)
+            self._update_palette_sel(attr)
+            tk.Frame(parent, height=4, bg=C_PANEL).pack()
+
+        # ── Inverse ───────────────────────────────────────────────────────────
+        inv_cb = tk.Checkbutton(parent, text=' Inverse', variable=self.cur_inv,
+                                bg=C_PANEL, fg='#CCCCCC', selectcolor='#333355',
+                                activebackground=C_PANEL, font=('monospace', 10),
+                                command=self._update_preview)
+        inv_cb.pack(anchor='w')
+        tk.Frame(parent, height=4, bg=C_PANEL).pack()
+
+        # ── Preview ───────────────────────────────────────────────────────────
+        tk.Label(parent, text='PREVIEW', bg=C_PANEL, fg='#AAAAAA',
+                 font=('sans', 8, 'bold')).pack(anchor='w')
+        self._prev_scale = 4
+        pw = CELL_W * self._prev_scale
+        ph = self.glyph_h * self._prev_scale
+        self.tk_preview = tk.Canvas(parent, width=pw, height=ph,
+                                    bg='black', highlightthickness=1,
+                                    highlightbackground=C_BORDER)
+        self.tk_preview.pack(anchor='w')
+        self.tk_preview_img = None
+
+        tk.Frame(parent, height=4, bg=C_PANEL).pack()
+        self.preview_info = tk.Label(parent, text='', bg=C_PANEL, fg='#AAAAAA',
+                                     font=('monospace', 9), justify='left')
+        self.preview_info.pack(anchor='w')
+
+    # ── PIL rendering ─────────────────────────────────────────────────────────
+
+    def _render_cell_pil(self, img, row, col, cell):
+        """Paint one cell into the PIL Image at 2× scale with border gap."""
+        x = col * self.stride_w
+        y = row * self.stride_h
+        cell_img = render_cell(self.glyphs, self.glyph_h,
+                               cell.char, cell.fg, cell.bg, cell.inv,
+                               scale=CELL_SCALE)
+        img.paste(cell_img, (x, y))
+
+    def _rebuild_canvas_full(self):
+        """Redraw the entire canvas PIL image."""
+        img = Image.new('RGB', (self.canvas_w, self.canvas_h), (0, 0, 0))
+        for row in range(ROWS):
+            for col in range(COLS):
+                self._render_cell_pil(img, row, col, self.grid[row][col])
+        self._canvas_img = img
+        self._flush_canvas()
+
+    def _redraw_dirty(self):
+        """Redraw only cells in _dirty_cells."""
+        if not self._dirty_cells:
+            return
+        img = self._canvas_img
+        for (row, col) in self._dirty_cells:
+            self._render_cell_pil(img, row, col, self.grid[row][col])
+        self._dirty_cells.clear()
+        self._flush_canvas()
+
+    def _flush_canvas(self):
+        """Push PIL image to tk canvas."""
+        self._canvas_tk = ImageTk.PhotoImage(self._canvas_img)
+        self.tk_canvas.delete('img')
+        self.tk_canvas.create_image(0, 0, anchor='nw', image=self._canvas_tk, tags='img')
+
+    def _rebuild_picker(self):
+        """Render the character picker."""
+        cw = CELL_W * PICKER_SCALE
+        ch = self.cell_h * PICKER_SCALE
+        img = Image.new('RGB', (PICKER_COLS * cw, self.PICKER_ROWS * ch), (17, 17, 17))
+        for ci in range(256):
+            row = ci // PICKER_COLS
+            col = ci  % PICKER_COLS
+            cell_img = render_cell(self.glyphs, self.glyph_h,
+                                   ci, self.cur_fg, self.cur_bg,
+                                   self.cur_inv.get(), scale=PICKER_SCALE)
+            img.paste(cell_img, (col * cw, row * ch))
+        self._picker_img = img
+        self._picker_tk = ImageTk.PhotoImage(img)
+        self.tk_picker.delete('img')
+        self.tk_picker.create_image(0, 0, anchor='nw', image=self._picker_tk, tags='img')
+        self._update_picker_sel()
+        self._picker_dirty = False
+
+    def _update_picker_sel(self):
+        cw = CELL_W * PICKER_SCALE
+        ch = self.cell_h * PICKER_SCALE
+        ci = self.cur_char
+        col = ci % PICKER_COLS
+        row = ci // PICKER_COLS
+        x0, y0 = col * cw, row * ch
+        self.tk_picker.coords(self._picker_sel_rect, x0, y0, x0 + cw, y0 + ch)
+
+    def _update_preview(self):
+        img = render_cell(self.glyphs, self.glyph_h,
+                          self.cur_char, self.cur_fg, self.cur_bg,
+                          self.cur_inv.get(), scale=self._prev_scale)
+        self._prev_tk = ImageTk.PhotoImage(img)
+        self.tk_preview.delete('all')
+        self.tk_preview.create_image(0, 0, anchor='nw', image=self._prev_tk)
+        ch = self.cur_char
+        label = f'#{ch:02X}  {chr(ch) if 0x20 <= ch < 0x7F else "?"}'
+        self.preview_info.config(
+            text=f'{label}\nfg:{self.cur_fg} {VERA_NAMES[self.cur_fg]}\n'
+                 f'bg:{self.cur_bg} {VERA_NAMES[self.cur_bg]}\n'
+                 f'inv:{self.cur_inv.get()}')
+
+    def _update_palette_sel(self, attr):
+        btns = getattr(self, f'_{attr}_btns')
+        cur  = self.cur_fg if attr == 'fg' else self.cur_bg
+        for i, b in enumerate(btns):
+            b.config(relief='sunken' if i == cur else 'flat',
+                     bd=3 if i == cur else 1)
+
+    def _update_status(self):
+        self.status_var.set(
+            f'char:#{ self.cur_char:02X}  '
+            f'fg:{self.cur_fg}({VERA_NAMES[self.cur_fg]})  '
+            f'bg:{self.cur_bg}({VERA_NAMES[self.cur_bg]})  '
+            f'inv:{self.cur_inv.get()}  '
+            f'{"*modified*" if self.dirty else ""}')
+
+    # ── canvas interaction ────────────────────────────────────────────────────
+
+    def _cell_from_pos(self, x, y):
+        """Convert widget mouse coords → (row, col), accounting for scroll."""
+        cx = int(self.tk_canvas.canvasx(x))
+        cy = int(self.tk_canvas.canvasy(y))
+        col = cx // self.stride_w
+        row = cy // self.stride_h
+        # Reject clicks that land on the border gap (not on the glyph area)
+        cell_x = cx % self.stride_w
+        cell_y = cy % self.stride_h
+        glyph_pw = CELL_W    * CELL_SCALE
+        glyph_ph = self.cell_h * CELL_SCALE
+        if cell_x >= glyph_pw or cell_y >= glyph_ph:
+            return None
+        if 0 <= col < COLS and 0 <= row < ROWS:
+            return row, col
+        return None
+
+    def _on_canvas_press(self, e):
+        rc = self._cell_from_pos(e.x, e.y)
+        if rc:
+            self._save_undo()
+            self._dragging = True
+            self._paint(*rc)
+
+    def _on_canvas_release(self, e):
+        self._dragging = False
+
+    def _on_canvas_drag(self, e):
+        if not self._dragging:
+            return
+        rc = self._cell_from_pos(e.x, e.y)
+        if rc:
+            self._paint(*rc)
+
+    def _on_canvas_pick(self, e):
+        rc = self._cell_from_pos(e.x, e.y)
+        if rc:
+            cell = self.grid[rc[0]][rc[1]]
+            self.cur_char = cell.char
+            self.cur_fg   = cell.fg
+            self.cur_bg   = cell.bg
+            self.cur_inv.set(cell.inv)
+            self._update_palette_sel('fg')
+            self._update_palette_sel('bg')
+            self._update_picker_sel()
+            self._update_preview()
+            self._rebuild_picker()
+
+    def _paint(self, row, col):
+        cell = self.grid[row][col]
+        new_char = self.cur_char
+        new_fg   = self.cur_fg
+        new_bg   = self.cur_bg
+        new_inv  = self.cur_inv.get()
+        if (cell.char == new_char and cell.fg == new_fg
+                and cell.bg == new_bg and cell.inv == new_inv):
+            return
+        cell.char = new_char
+        cell.fg   = new_fg
+        cell.bg   = new_bg
+        cell.inv  = new_inv
+        self._dirty_cells.add((row, col))
+        self._redraw_dirty()
+        self.dirty = True
+        self._update_status()
+
+    def _on_picker_click(self, e):
+        cw = CELL_W * PICKER_SCALE
+        ch = self.cell_h * PICKER_SCALE
+        # Account for scroll offset
+        cy = int(self.tk_picker.canvasy(e.y))
+        col = e.x // cw
+        row = cy  // ch
+        ci  = row * PICKER_COLS + col
+        if 0 <= ci < 256:
+            self.cur_char = ci
+            self._update_picker_sel()
+            self._update_preview()
+            self._update_status()
+
+    def _set_color(self, attr, idx):
+        if attr == 'fg':
+            self.cur_fg = idx
+        else:
+            self.cur_bg = idx
+        self._update_palette_sel(attr)
+        self._update_preview()
+        self._rebuild_picker()
+        self._update_status()
+
+    # ── undo ─────────────────────────────────────────────────────────────────
+
+    def _save_undo(self):
+        self._undo = [[c.copy() for c in row] for row in self.grid]
+
+    def _cmd_undo(self):
+        if self._undo is None:
+            return
+        self.grid = self._undo
+        self._undo = None
+        self._rebuild_canvas_full()
+        self.dirty = True
+        self._update_status()
+
+    # ── commands ──────────────────────────────────────────────────────────────
+
+    def _cmd_new(self):
+        if self.dirty and not messagebox.askyesno('New', 'Discard changes?'):
+            return
+        self.grid = [[Cell() for _ in range(COLS)] for _ in range(ROWS)]
+        self._undo = None
+        self.project_file = None
+        self.dirty = False
+        self._rebuild_canvas_full()
+        self.root.title('VeraX16 Logo Editor — 80×30')
+        self._update_status()
+
+    def _cmd_open(self):
+        path = filedialog.askopenfilename(
+            title='Open project',
+            filetypes=[('Logo project', '*.logo.json *.json'), ('All', '*')])
+        if path:
+            self._load_project(path)
+
+    def _cmd_save(self):
+        if self.project_file:
+            self._save_project(self.project_file)
+        else:
+            self._cmd_save_as()
+
+    def _cmd_save_as(self):
+        path = filedialog.asksaveasfilename(
+            title='Save project',
+            defaultextension='.logo.json',
+            initialfile='logo.logo.json',
+            filetypes=[('Logo project', '*.logo.json'), ('All', '*')])
+        if path:
+            self._save_project(path)
+
+    def _cmd_export(self):
+        default = (Path(self.project_file).stem + '.h'
+                   if self.project_file else 'logo-ansi.h')
+        path = filedialog.asksaveasfilename(
+            title='Export C header',
+            defaultextension='.h',
+            initialfile=default,
+            filetypes=[('C header', '*.h'), ('All', '*')])
+        if path:
+            self._export_c_header(path)
+            self.status_var.set(f'Exported → {path}')
+
+    def _cmd_fill(self):
+        self._save_undo()
+        for row in range(ROWS):
+            for col in range(COLS):
+                c = self.grid[row][col]
+                c.char = self.cur_char
+                c.fg   = self.cur_fg
+                c.bg   = self.cur_bg
+                c.inv  = self.cur_inv.get()
+        self._rebuild_canvas_full()
+        self.dirty = True
+        self._update_status()
+
+    def _cmd_clear(self):
+        self._save_undo()
+        self.grid = [[Cell() for _ in range(COLS)] for _ in range(ROWS)]
+        self._rebuild_canvas_full()
+        self.dirty = True
+        self._update_status()
+
+    # ── project file ──────────────────────────────────────────────────────────
+
+    def _save_project(self, path):
+        data = {
+            'version': 1, 'cols': COLS, 'rows': ROWS,
+            'grid': [[cell.to_dict() for cell in row] for row in self.grid],
+        }
+        Path(path).write_text(json.dumps(data, separators=(',', ':')))
+        self.project_file = path
+        self.dirty = False
+        self.root.title(f'VeraX16 Logo Editor — {Path(path).name}')
+        self.status_var.set(f'Saved → {path}')
+
+    def _load_project(self, path):
+        data = json.loads(Path(path).read_text())
+        saved = data.get('grid', [])
+        for r in range(ROWS):
+            for c in range(COLS):
+                if r < len(saved) and c < len(saved[r]):
+                    self.grid[r][c] = Cell.from_dict(saved[r][c])
+                else:
+                    self.grid[r][c] = Cell()
+        self.project_file = path
+        self.dirty = False
+        self._rebuild_canvas_full()
+        self.root.title(f'VeraX16 Logo Editor — {Path(path).name}')
+        self._update_status()
+
+    # ── C header export ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _c_esc(ch):
+        """Escape one character for a C string literal."""
+        if ch == 0x1B:   return '\\x1B'
+        if ch == 0x5C:   return '\\\\'
+        if ch == 0x22:   return '\\"'
+        if 0x20 <= ch < 0x7F:
+            return chr(ch)
+        return f'\\x{ch:02X}'
+
+    def _build_ansi_string(self):
+        """Return a list of C string-literal fragments."""
+        parts = ['"\\x1B[2J\\x1B[H"  /* clear screen, home cursor */']
+
+        prev_ansi_fg = None
+        prev_ansi_bg = None
+
+        for row in range(ROWS):
+            # Absolute cursor position for each row (skip unchanged rows later)
+            parts.append(f'"\\x1B[{row + 1};1H"')
+            col = 0
+            while col < COLS:
+                cell = self.grid[row][col]
+                eff_fg = cell.bg if cell.inv else cell.fg
+                eff_bg = cell.fg if cell.inv else cell.bg
+                ansi_fg = VERA_ANSI_FG[eff_fg]
+                ansi_bg = VERA_ANSI_BG[eff_bg]
+
+                # Emit color change only when needed
+                if ansi_fg != prev_ansi_fg or ansi_bg != prev_ansi_bg:
+                    parts.append(f'"\\x1B[{ansi_fg};{ansi_bg}m"')
+                    prev_ansi_fg = ansi_fg
+                    prev_ansi_bg = ansi_bg
+
+                # Gather run of same-color cells
+                run = ''
+                while col < COLS:
+                    c = self.grid[row][col]
+                    ef = c.bg if c.inv else c.fg
+                    eb = c.fg if c.inv else c.bg
+                    if VERA_ANSI_FG[ef] != prev_ansi_fg or VERA_ANSI_BG[eb] != prev_ansi_bg:
+                        break
+                    run += self._c_esc(c.char)
+                    col += 1
+                if run:
+                    # Split long runs to avoid very long C string literals
+                    for i in range(0, len(run), 64):
+                        parts.append(f'"{run[i:i+64]}"')
+
+        return parts
+
+    def _export_c_header(self, path):
+        guard = Path(path).name.upper().replace('.', '_').replace('-', '_')
+        parts = self._build_ansi_string()
+
+        lines = []
+        lines.append(f'/* {Path(path).name} — generated by vera_logo_editor.py */')
+        lines.append(f'/* VeraX16 80\xd7{ROWS} ASCII-art logo, ANSI/VT100 encoded.      */')
+        lines.append(f'#ifndef {guard}')
+        lines.append(f'#define {guard}')
+        lines.append('')
+        lines.append(f'#define LOGO_COLS {COLS}')
+        lines.append(f'#define LOGO_ROWS {ROWS}')
+        lines.append('')
+        lines.append('/* Feed each byte to your VT100 terminal output function.          */')
+        lines.append('/* In runcpm: draw_logo(terminal_putc);                            */')
+        lines.append('static const char logo_ansi[] =')
+        for p in parts:
+            lines.append(f'    {p}')
+        lines.append('    "\\x1B[0m"  /* reset attributes */')
+        lines.append('    ;')
+        lines.append('')
+        lines.append('/* Emit the logo via a single-byte callback. */')
+        lines.append('static void draw_logo(void (*emit)(unsigned char))')
+        lines.append('{')
+        lines.append('    const char *p = logo_ansi;')
+        lines.append('    while (*p) emit((unsigned char)*p++);')
+        lines.append('}')
+        lines.append('')
+        lines.append(f'#endif /* {guard} */')
+
+        Path(path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+
+# ─── entry point ─────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(
+        description='VeraX16 80×30 logo/ASCII-art editor')
+    ap.add_argument('font',    help='Binary font file (1024/2048/4096 B)')
+    ap.add_argument('project', nargs='?', help='Project file to open (.logo.json)')
+    args = ap.parse_args()
+
+    root = tk.Tk()
+    root.resizable(False, False)
+    app = LogoEditor(root, args.font, args.project)
+    root.protocol('WM_DELETE_WINDOW', root.quit)
+    root.mainloop()
+
+
+if __name__ == '__main__':
+    main()
