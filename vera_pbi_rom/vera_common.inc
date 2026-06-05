@@ -236,6 +236,8 @@ VERACTL_PARAM0          = 6                         ; API parameter 0 (character
 VERACTL_PARAM1          = 7                         ; API parameter 1
 VERACTL_CURSOR_X        = 8                         ; cursor column (0-based)
 VERACTL_CURSOR_Y        = 9                         ; cursor row    (0-based)
+VERACTL_SCREEN_COLS     = 16                        ; viewport width  in chars (set by loader)
+VERACTL_SCREEN_ROWS     = 17                        ; viewport height in chars (set by loader)
 
 VCTL_FLAG_METRONOME     = $01                       ; metronome tick enabled
 VCTL_FLAG_ESCAPE        = $02                       ; next byte treated as literal (ATASCII ESC)
