@@ -395,9 +395,11 @@ unsigned char atascii_to_ascii(unsigned char c)
 
 typedef enum
 {
-    VT_ST_NORM = 0,
-    VT_ST_ESC  = 1,
-    VT_ST_CSI  = 2
+    VT_ST_NORM    = 0,
+    VT_ST_ESC     = 1,
+    VT_ST_CSI     = 2,
+    VT_ST_VT52Y_R = 3,   /* ESC Y — waiting for row byte  */
+    VT_ST_VT52Y_C = 4    /* ESC Y row — waiting for col byte */
 } vt_parse_state_t;
 
 static struct
@@ -415,6 +417,7 @@ static struct
 
     unsigned char    scroll_top;    /* 0-based */
     unsigned char    scroll_bottom; /* 0-based */
+    unsigned char    vt52_row;      /* pending row for ESC Y r c */
 
     unsigned char    last_was_cr;
 } vt;
@@ -1030,6 +1033,22 @@ static void vt_feed(unsigned char c)
         return;
     }
 
+    if (vt.st == VT_ST_VT52Y_R)
+    {
+        vt.vt52_row = (unsigned char)(c - 32);
+        vt.st       = VT_ST_VT52Y_C;
+        return;
+    }
+
+    if (vt.st == VT_ST_VT52Y_C)
+    {
+        unsigned char col = (unsigned char)(c - 32);
+        term_move_abs((unsigned char)(vt.vt52_row + 1u),
+                      (unsigned char)(col + 1u));
+        vt.st = VT_ST_NORM;
+        return;
+    }
+
     if (vt.st == VT_ST_ESC)
     {
         if (c == '[')
@@ -1039,6 +1058,83 @@ static void vt_feed(unsigned char c)
             vt.curparam   = 0;
             vt.have_param = 0;
             memset(vt.params, 0, sizeof(vt.params));
+            return;
+        }
+
+        /* VT52 single-char sequences */
+        if (c == 'A')
+        {
+            term_sync_cursor();
+            term_cursor_up(1);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'B')
+        {
+            term_sync_cursor();
+            term_cursor_down(1);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'C')
+        {
+            term_sync_cursor();
+            term_cursor_right(1);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'D')
+        {
+            term_sync_cursor();
+            term_cursor_left(1);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'H') /* cursor home */
+        {
+            term_move_abs(1, 1);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'E') /* erase screen + home */
+        {
+            term_out_atascii(ATASCII_CLEAR);
+            vt.cur_x = 0;
+            vt.cur_y = 0;
+            vt.st    = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'J') /* erase to end of screen */
+        {
+            term_erase_in_display(0);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'K') /* erase to end of line */
+        {
+            term_erase_in_line(0);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'I') /* reverse line feed */
+        {
+            term_sync_cursor();
+            term_cursor_up(1);
+            vt.st = VT_ST_NORM;
+            return;
+        }
+
+        if (c == 'Y') /* direct cursor address: ESC Y row+32 col+32 */
+        {
+            vt.st = VT_ST_VT52Y_R;
             return;
         }
 
