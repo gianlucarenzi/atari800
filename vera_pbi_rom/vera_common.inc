@@ -62,6 +62,8 @@ DEVICE_ID_MASK          = $80                       ; PBI card-ID bit (bit 7 of 
 
 VERA_INC0               = $00                       ; ADDR_H: no auto-increment
 VERA_INC1               = $10                       ; ADDR_H: auto-increment by 1
+VERA_INC2               = $20                       ; ADDR_H: auto-increment by 2
+VERA_INC4               = $30                       ; ADDR_H: auto-increment by 4
 VERA_INCN1              = $18                       ; ADDR_H: auto-decrement by 1 (step -1)
 
 VERA_DCSEL0             = $00                       ; CTRL: select display composer bank 0
