@@ -16,6 +16,13 @@
 #include "../logo.x16.h"
 
 
+/* --- Critical section: NMI (VBI) + IRQ protection ---
+ * CRITIC ($42) must be modified with a single INC/DEC opcode; a C expression
+ * like OS.critic++ can emit LDA/ADC/STA which an NMI can tear.  SEI/CLI
+ * additionally blocks maskable IRQs. */
+#define ENTER_CRITICAL  do { asm("inc $42"); asm("sei"); } while(0)
+#define EXIT_CRITICAL   do { asm("cli"); asm("dec $42"); } while(0)
+
 /* --- SIO Constants --- */
 #define DFUJI           0x71
 #define DREAD           0x40
@@ -323,23 +330,27 @@ unsigned char nwrite(unsigned char* buf, unsigned short len)
 
 void ring_put(unsigned char c)
 {
+    ENTER_CRITICAL;
     if (count < RING_SIZE)
     {
         ring_buf[head] = c;
         head = (head + 1) % RING_SIZE;
         count++;
     }
+    EXIT_CRITICAL;
 }
 
 unsigned char ring_get(void)
 {
     unsigned char c = 0;
+    ENTER_CRITICAL;
     if (count > 0)
     {
         c = ring_buf[tail];
         tail = (tail + 1) % RING_SIZE;
         count--;
     }
+    EXIT_CRITICAL;
     return c;
 }
 
@@ -1360,17 +1371,18 @@ int main(void)
     vt_reset();
 
     /* Disable ATARI ANTIC display — VERA/VGA is our output; prevents ANTIC
-     * screen RAM from being dirtied by the OS cursor/E: handler. */
+     * screen RAM from being dirtied by the OS cursor/E: handler.
+     * ONLY do this if VERA is detected, otherwise we need ANTIC for fallback. */
     if (vctl)
     {
-		*(volatile unsigned char*)0x022F = 0x00;   /* SDMCTL = 0 */
-	}
-	else
-	{
-		/* White Characters on Blue Background */
-		*(volatile unsigned char*)0x02C5 = 0xFF;
-		*(volatile unsigned char*)0x02C6 = 0x84;
-	}
+        *(volatile unsigned char*)0x022F = 0x00;   /* SDMCTL = 0 */
+    }
+    else
+    {
+        /* White Characters on Blue Background */
+        *(volatile unsigned char*)0x02C5 = 0xFF;
+        *(volatile unsigned char*)0x02C6 = 0x84;
+    }
 
     /* Helper: set VERA text color directly (fg/bg are VERA palette indices). */
 #define SET_COLOR(fg, bg) do { if (vctl) vctl[VCTL_PARAM1] = (unsigned char)(((bg)<<4)|(fg)); } while(0)
@@ -1385,43 +1397,43 @@ int main(void)
      * draw_logo writes cursor+color directly to the VCTL block and calls
      * putchar() for each glyph — no VT100 parsing, full 256-char VERA set. */
     if (vctl)
-	{
-		draw_logo(vctl);
-	}
-	else
-	{
-		P("  ****  ATARI COMPUTERS ****\n");
-	}
+    {
+        draw_logo(vctl);
+    }
+    else
+    {
+        P("  ****  ATARI COMPUTERS ****\n");
+    }
     /* atari@VERA-X16 header */
     SET_COLOR(1, 6);   P("  atari");
     SET_COLOR(14, 6);  P("@");
     if (vctl)
     {
-		SET_COLOR(3, 6);   P("VERA-X16\r\n");
-	}
-	else
-	{
-		P("ANTIC VIDEO MODE\n");
-	}
+        SET_COLOR(3, 6);   P("VERA-X16\r\n");
+    }
+    else
+    {
+        P("ANTIC VIDEO MODE\n");
+    }
 
     SET_COLOR(11, 6);  P("  --------------------------\r\n");
 
     /* Color swatches — 8 normal + 8 bright backgrounds */
     if (vctl)
     {
-		unsigned char ci;
-		SET_COLOR(14, 6);  P("  Colors:   ");
-		for (ci = 0; ci < 8; ++ci)
-		{
-			SET_COLOR(1, ci);
-			P(" ");
-		}
-		P(" ");
-		for (ci = 8; ci < 16; ++ci)
-		{
-			SET_COLOR(0, ci);
-			P(" ");
-		}
+        unsigned char ci;
+        SET_COLOR(14, 6);  P("  Colors:   ");
+        for (ci = 0; ci < 8; ++ci)
+        {
+            SET_COLOR(1, ci);
+            P(" ");
+        }
+        P(" ");
+        for (ci = 8; ci < 16; ++ci)
+        {
+            SET_COLOR(0, ci);
+            P(" ");
+        }
     }
     SET_COLOR(1, 6);   P("\r\n\r\n");
 
