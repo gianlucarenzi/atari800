@@ -1361,7 +1361,16 @@ int main(void)
 
     /* Disable ATARI ANTIC display — VERA/VGA is our output; prevents ANTIC
      * screen RAM from being dirtied by the OS cursor/E: handler. */
-    *(volatile unsigned char*)0x022F = 0x00;   /* SDMCTL = 0 */
+    if (vctl)
+    {
+		*(volatile unsigned char*)0x022F = 0x00;   /* SDMCTL = 0 */
+	}
+	else
+	{
+		/* White Characters on Blue Background */
+		*(volatile unsigned char*)0x02C5 = 0xFF;
+		*(volatile unsigned char*)0x02C6 = 0x84;
+	}
 
     /* Helper: set VERA text color directly (fg/bg are VERA palette indices). */
 #define SET_COLOR(fg, bg) do { if (vctl) vctl[VCTL_PARAM1] = (unsigned char)(((bg)<<4)|(fg)); } while(0)
@@ -1375,26 +1384,44 @@ int main(void)
     /* Logo from vera_logo_editor (logo.x16.h).
      * draw_logo writes cursor+color directly to the VCTL block and calls
      * putchar() for each glyph — no VT100 parsing, full 256-char VERA set. */
-    draw_logo(vctl);
-
+    if (vctl)
+	{
+		draw_logo(vctl);
+	}
+	else
+	{
+		P("  ****  ATARI COMPUTERS ****\n");
+	}
     /* atari@VERA-X16 header */
     SET_COLOR(1, 6);   P("  atari");
     SET_COLOR(14, 6);  P("@");
-    SET_COLOR(3, 6);   P("VERA-X16\r\n");
+    if (vctl)
+    {
+		SET_COLOR(3, 6);   P("VERA-X16\r\n");
+	}
+	else
+	{
+		P("ANTIC VIDEO MODE\n");
+	}
+
     SET_COLOR(11, 6);  P("  --------------------------\r\n");
 
-    SET_COLOR(14, 6);  P("  Host:     "); SET_COLOR(1, 6); P("Atari 800XL / 130XE\r\n");
-    SET_COLOR(14, 6);  P("  Display:  "); SET_COLOR(1, 6); P("VERA X16 PBI  80x30  VGA\r\n");
-    SET_COLOR(14, 6);  P("  CPU:      "); SET_COLOR(1, 6); P("MOS 6502 @ 1.77 MHz\r\n");
-    SET_COLOR(14, 6);  P("  Terminal: "); SET_COLOR(1, 6); P("VT52 / VT100 / ANSI\r\n");
-    SET_COLOR(14, 6);  P("  Network:  "); SET_COLOR(1, 6); P("FujiNet SIO  N:CPM:///\r\n");
-
     /* Color swatches — 8 normal + 8 bright backgrounds */
-    SET_COLOR(14, 6);  P("  Colors:   ");
-    { unsigned char ci;
-      for (ci = 0; ci < 8; ++ci)  { SET_COLOR(1, ci);    P(" "); }
-      P(" ");
-      for (ci = 8; ci < 16; ++ci) { SET_COLOR(0, ci);    P(" "); }
+    if (vctl)
+    {
+		unsigned char ci;
+		SET_COLOR(14, 6);  P("  Colors:   ");
+		for (ci = 0; ci < 8; ++ci)
+		{
+			SET_COLOR(1, ci);
+			P(" ");
+		}
+		P(" ");
+		for (ci = 8; ci < 16; ++ci)
+		{
+			SET_COLOR(0, ci);
+			P(" ");
+		}
     }
     SET_COLOR(1, 6);   P("\r\n\r\n");
 
