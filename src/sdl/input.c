@@ -602,6 +602,7 @@ static struct INPUT_joystick_button* JoyButtonPress(SDL_JoystickID id, int butto
 
 static int lastkey = SDLK_UNKNOWN, key_pressed = 0, key_control = 0;
 static int lastuni = 0;
+static int previous_caps_state = -1;
 
 #if HAVE_WINDOWS_H
 /* On Windows 7 rapidly changing the window size invokes a bug in SDL
@@ -669,7 +670,8 @@ int PLATFORM_Keyboard(void)
 				|| (event.key.keysym.sym == SDLK_LSHIFT)
 				|| (event.key.keysym.sym == SDLK_RSHIFT)
 				|| (event.key.keysym.sym == SDLK_LCTRL)
-				|| (event.key.keysym.sym == SDLK_RCTRL))
+				|| (event.key.keysym.sym == SDLK_RCTRL)
+			        || (event.key.keysym.sym == SDLK_CAPSLOCK))
 				break;
 
 			lastkey = event.key.keysym.sym;
@@ -690,7 +692,8 @@ int PLATFORM_Keyboard(void)
 				|| (event.key.keysym.sym == SDLK_LSHIFT)
 				|| (event.key.keysym.sym == SDLK_RSHIFT)
 				|| (event.key.keysym.sym == SDLK_LCTRL)
-				|| (event.key.keysym.sym == SDLK_RCTRL))
+				|| (event.key.keysym.sym == SDLK_RCTRL)
+			        || (event.key.keysym.sym == SDLK_CAPSLOCK))
 				break;
 
 			lastkey = event.key.keysym.sym;
@@ -1125,6 +1128,18 @@ int PLATFORM_Keyboard(void)
 			return AKEY_5200_START;
 	}
 
+	/* CAPSLOCK Handling via Modifier State Sync */
+	{
+	  int current_caps_state = (SDL_GetModState() & KMOD_CAPS) != 0;
+	  if (previous_caps_state == -1) {
+	    previous_caps_state = current_caps_state;
+	  }
+	  else if (current_caps_state != previous_caps_state) {
+	    previous_caps_state = current_caps_state;
+	    return AKEY_CAPSTOGGLE | shiftctrl;
+	  }
+	}
+
 	if (key_pressed == 0)
 		return AKEY_NONE;
 
@@ -1343,6 +1358,17 @@ int PLATFORM_Keyboard(void)
 
 	/* Handle CTRL-0 to CTRL-9 and other control characters */
 	if (key_control) {
+		if (lastuni == 0 && lastkey >= SDLK_a && lastkey <= SDLK_z)
+			lastuni = lastkey - SDLK_a + 1;
+		/* lastuni is set 0 only in SDL2 even when Ctrl key
+		   is pressed along with another key but we know that
+		   the control key is currently down so we set lastuni
+		   to the ASCII equivalent for control code (1-26)
+		   only for alpha keys so that they can be handled
+		   properly below.
+		   in SDL1.2, lastuni is set properly already, so it
+		   will have a non-zero value.
+		*/
 		switch(lastuni) {
 		case '.':
 			return AKEY_FULLSTOP|shiftctrl;
