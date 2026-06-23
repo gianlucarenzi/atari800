@@ -411,11 +411,11 @@ static void UpdateSyncBuffer(void)
 
 	/* produce samples from the sound emulation */
 	samples_written = POKEYSND_UpdateProcessBuffer();
+	bytes_written = Sound_out.sample_size * samples_written;
 #ifdef PBI_VERAX16
 	if (PBI_VERAX16_enabled && samples_written > 0)
 		PBI_VERAX16_SoundMix(POKEYSND_process_buffer, samples_written, Sound_out.channels, Sound_out.sample_size);
 #endif
-	bytes_written = Sound_out.sample_size * samples_written;
 
 	/* if there isn't enough room... */
 	if (bytes_written > sync_buffer_size - fill) {

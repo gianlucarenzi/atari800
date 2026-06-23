@@ -22,7 +22,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
-package name.nick.jubanka.colleen;
+package cz.pstehlik.colleen;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -33,7 +33,6 @@ import android.graphics.Bitmap.Config;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.graphics.Region;
 import android.util.Log;
 import android.widget.Toast;
 import android.content.Context;
@@ -49,6 +48,7 @@ public final class A800Renderer implements GLSurfaceView.Renderer
 	private int[] _pix;
 	private Toast _crashtoast;
 	private int _frameret;
+	private float _density = 1.0f;
 	private Handler _handler = null;
 
 	@Override
@@ -61,7 +61,7 @@ public final class A800Renderer implements GLSurfaceView.Renderer
 	@Override
 	public void onSurfaceChanged(GL10 gl, int w, int h) {
 		gl.glViewport(0, 0, w, h);
-		NativeResize(w, h);
+		NativeResize(w, h, _density);
 	}
 
 	@Override
@@ -84,6 +84,10 @@ public final class A800Renderer implements GLSurfaceView.Renderer
 		_handler = h;
 	}
 
+	public void setDensity(float d) {
+		_density = d;
+	}
+
 	private void generateOverlays() {
 		RectF  r;
 
@@ -101,17 +105,22 @@ public final class A800Renderer implements GLSurfaceView.Renderer
 
 		// Joystick area
 		r = new RectF(0, 0, 63, 63);
-		can.clipRect(0, 0, 64, 64, Region.Op.REPLACE);
+		can.save();
+		can.clipRect(0, 0, 64, 64);
 		can.drawRoundRect(r, 6, 6, fill);
 		can.drawRoundRect(r, 6, 6, stroke);
+		can.restore();
 
 		// Fire/Joy point
 		r = new RectF(67, 3, 77, 13);
-		can.clipRect(64, 0, 79, 15, Region.Op.REPLACE);
+		can.save();
+		can.clipRect(64, 0, 79, 15);
 		can.drawOval(r, fill);
+		can.restore();
 
 		// El texto
-		can.clipRect(64, 16, 128, 64, Region.Op.REPLACE);
+		can.save();
+		can.clipRect(64, 16, 128, 64);
 		Paint t = new Paint(Paint.ANTI_ALIAS_FLAG);
 		t.setColor(0xFF001976);
 		t.setTextSize(10);
@@ -121,6 +130,7 @@ public final class A800Renderer implements GLSurfaceView.Renderer
 		can.drawText("OPTION", 65, 44, t);
 		can.drawText("RESET", 65, 54, t);
 		can.drawText("HELP", 65, 64, t);
+		can.restore();
 
 		bmp.getPixels(_pix, 0, OVL_TEXW, 0, 0, OVL_TEXW, OVL_TEXH);
 		bmp.recycle();
@@ -129,5 +139,5 @@ public final class A800Renderer implements GLSurfaceView.Renderer
 	// Native function declarations
 	private native void NativeGetOverlays();
 	private native int  NativeRunFrame();
-	private native void NativeResize(int w, int h);
+	private native void NativeResize(int w, int h, float density);
 }

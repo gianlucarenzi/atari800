@@ -64,7 +64,7 @@ int Android_Split;
 int Android_Paddle = FALSE;
 SWORD Android_POTX = 0;
 SWORD Android_POTY = 0;
-int Android_PlanetaryDefense = FALSE;
+int Android_KoalaPad = FALSE;
 UBYTE Android_ReversePddle = 0;
 
 struct joy_overlay_state AndroidInput_JoyOvl;
@@ -376,7 +376,7 @@ int Android_TouchEvent(int x1, int y1, int s1, int x2, int y2, int s2)
 	/* trigger */
 	newtrig = 1;
 	if ( (newtc[PTRTRG].s > 0 && conptr != PTRTRG) ||	/* normal trigger */
-		 (newtc[PTRJOY].s > 0 && conptr != PTRJOY && Android_PlanetaryDefense) ) {
+		 (newtc[PTRJOY].s > 0 && conptr != PTRJOY && Android_KoalaPad) ) {
 		newtrig = 0;
 		jovl->fire.x = newtc[PTRTRG].x;
 		jovl->fire.y = newtc[PTRTRG].y;
@@ -385,7 +385,7 @@ int Android_TouchEvent(int x1, int y1, int s1, int x2, int y2, int s2)
 
 	/* thread unsafe => "no" problem */
 	if (!Android_Paddle){
-		Android_PortStatus = 0xFFF0 | newjoy;
+		Android_PortStatus = (Android_PortStatus & 0xFFF0) | newjoy;
 		Android_TrigStatus = 0xE | newtrig;
 	} else {
 		POKEY_POT_input[INPUT_mouse_port << 1] = Android_POTX;
@@ -484,6 +484,16 @@ void Android_KeyEvent(int k, int s)
 			Keyboard_Enqueue( (s) ? (skeyxlat[k] | Android_key_control | shft) : AKEY_NONE );
 		}
 	}
+}
+
+void Android_JoystickAxesEvent(int port, int dir_bits)
+{
+	Android_PortStatus = (Android_PortStatus & ~(0x0F << (port * 4))) | ((dir_bits & 0x0F) << (port * 4));
+}
+
+void Android_JoystickFireEvent(int port, int index, int trig)
+{
+	Android_TrigStatus = (Android_TrigStatus & ~(1 << port)) | ((trig & 1) << port);
 }
 
 void Input_Initialize(void)

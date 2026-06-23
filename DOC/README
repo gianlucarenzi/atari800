@@ -1,8 +1,8 @@
-  Free and portable Atari 800 Emulator for everybody, Version 5.2.0
+  Free and portable Atari 800 Emulator for everybody, Version 6.1.0
   -----------------------------------------------------------------
 
     Copyright (C) 1995 David Firth. E-Mail: david@signus.demon.co.uk
-    Copyright (C) 1998-2023 Atari800 Development Team.
+    Copyright (C) 1998-2026 Atari800 Development Team.
                             http://atari800.github.io/
 
     This program is free software; you can redistribute it and/or modify
@@ -59,6 +59,10 @@ The SDL version should compile on Unix, Win32, BeOS, etc... It's optimized for
 8, 16 and 32 color depth. Of course it will work fastest in 8bit. If you use it
 in XFree86 - please set "Depth=8" in XF86Config to gain maximum speed.
 Includes support for joystick and mouse.
+
+SDL2 is the primary SDL target with full feature support (paddle emulation,
+per-button remapping, analog axis tuning, joystick hotplug). SDL1 builds are
+limited to basic functionality.
 
 All versions supporting bitmapped graphics have a User Interface implemented
 on the emulator's "screen". The User Interface is enter by pressing F1 at any
