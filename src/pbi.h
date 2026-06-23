@@ -17,11 +17,9 @@ UBYTE PBI_D7GetByte(UWORD addr, int no_side_effects);
 void PBI_D7PutByte(UWORD addr, UBYTE byte);
 extern int PBI_IRQ;
 extern int PBI_D6D7ram;
+extern int PBI_debug;
 void PBI_StateSave(void);
 void PBI_StateRead(void);
-void PBI_VSync(void);
-void PBI_Scanline(void);
 #define PBI_NOT_HANDLED -1
 /* #define PBI_DEBUG */
-extern int PBI_debug;
 #endif /* PBI_H_ */

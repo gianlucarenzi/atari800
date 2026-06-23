@@ -52,7 +52,9 @@ int Android_ScreenH = 0;
 int Android_Aspect;
 int Android_CropScreen[] = {0, SCREEN_HEIGHT, SCANLINE_LEN, -SCREEN_HEIGHT};
 int Android_PortPad;
+int Android_TopInset;
 int Android_CovlHold;
+float Android_DisplayDensity = 1.0f;
 static struct RECT screenrect;
 static int screenclear;
 int Android_Bilinear;
@@ -165,6 +167,7 @@ int Android_InitGraphics(void)
 		tmp2 = tmp3;
 	if (tmp2 < 2.0f)
 		tmp2 = 2.0f;
+	tmp2 *= (1.0f + (Android_DisplayDensity - 1.0f) * 0.30f);
 	for (i = 0; i < CONK_VERT_MAX; i += 2) {
 		/* generate & scale */
 		conkey_vrt[i    ] = poly[i % 8] * tmp2 +
@@ -175,7 +178,7 @@ int Android_InitGraphics(void)
 	for (i = 0; i < CONK_VERT_MAX; i += 2) {
 		/* translate */
 		conkey_vrt[i    ] += tmp;
-		conkey_vrt[i + 1] += (4 + ((Android_ScreenW < Android_ScreenH) ? Android_PortPad : 0));
+		conkey_vrt[i + 1] += (4 + ((Android_ScreenW < Android_ScreenH) ? (Android_PortPad + Android_TopInset) : 0));
 	}
 
 	/* Determine location of console keys' labels. */
@@ -210,7 +213,19 @@ int Android_InitGraphics(void)
 	conkey_shadow[6] = r->l - COVL_SHADOW_OFF;
 	conkey_shadow[7] = r->t - COVL_SHADOW_OFF;
 
+	/* Force console keys visible in portrait if previously hidden */
+	if (Android_ScreenW < Android_ScreenH) {
+		if (AndroidInput_ConOvl.ovl_visible == COVL_HIDDEN || AndroidInput_ConOvl.ovl_visible == COVL_FADEOUT) {
+			AndroidInput_ConOvl.ovl_visible = COVL_READY;
+			AndroidInput_ConOvl.opacity = COVL_MAX_OPACITY;
+			AndroidInput_ConOvl.statecnt = COVL_HOLD_TIME << 1;
+			AndroidInput_ConOvl.hitkey = CONK_NOKEY;
+		}
+	}
+
 	/* Scale joystick overlays */
+	if (AndroidInput_JoyOvl.anchor)
+		AndroidInput_JoyOvl.joyarea.t = AndroidInput_JoyOvl.anchor_saved_y;
 	Joyovl_Scale();
 	Joy_Reposition();
 
@@ -237,7 +252,7 @@ int Android_InitGraphics(void)
 		tmp = (h - screenrect.b + 1) / 2;
 		if (tmp < 0)
 			tmp = 0;
-		tmp = (Android_ScreenH - h) + tmp - ((Android_ScreenW < Android_ScreenH) ? Android_PortPad : 0);
+		tmp = (Android_ScreenH - h) + tmp - ((Android_ScreenW < Android_ScreenH) ? (Android_PortPad + Android_TopInset) : 0);
 		screenrect.t += tmp;
 		screenclear = TRUE;
 	} else {
@@ -246,7 +261,6 @@ int Android_InitGraphics(void)
 		screenrect.h = Android_ScreenH;
 		screenclear = FALSE;
 	}
-
 	/* Initialize palette */
 	Android_PaletteUpdate();
 
@@ -263,7 +277,7 @@ void Joyovl_Scale(void)
 		AndroidInput_JoyOvl.joyarea.r = AndroidInput_JoyOvl.joyarea.l + tmp;
 		AndroidInput_JoyOvl.joyarea.b = AndroidInput_JoyOvl.joyarea.t + tmp;
 	} else {
-		if (!Android_PlanetaryDefense) {
+		if (!Android_KoalaPad) {
 			AndroidInput_JoyOvl.joyarea.l = Android_Joyleft ? BORDER_PCT * Android_ScreenW : Android_Split;
 			AndroidInput_JoyOvl.joyarea.r = Android_Joyleft ? Android_Split : (1.0f - BORDER_PCT) * Android_ScreenW;
 			AndroidInput_JoyOvl.joyarea.b = AndroidInput_JoyOvl.joyarea.t + 8 + (tmp >> 3);
@@ -480,6 +494,7 @@ void Update_Overlays(void)
 		;
 	}
 	if (c->hitkey == CONK_RESET) {
+		c->resetcnt_grace = 0;
 		if (c->resetcnt >= RESET_HARD) {
 			Atari800_Coldstart();
 		} else if (c->resetcnt >= RESET_SOFT) {
@@ -488,7 +503,11 @@ void Update_Overlays(void)
 		}
 		c->resetcnt++;
 	} else {
-		c->resetcnt = 0;
+		if (c->resetcnt > 0 && c->resetcnt_grace < 5) {
+			c->resetcnt_grace++;
+		} else if (c->resetcnt > 0) {
+			c->resetcnt = 0;
+		}
 	}
 }
 

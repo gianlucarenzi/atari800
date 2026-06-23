@@ -72,25 +72,11 @@ int PBI_debug = FALSE;
 #ifdef PBI_DEBUG
 #define D(a) a
 #else
-#define D(a) if (PBI_debug) a
+#define D(a) do{}while(0)
 #endif
-
-#define Log_D(format, ...) D(Log_print(format, ##__VA_ARGS__))
 
 int PBI_Initialise(int *argc, char *argv[])
 {
-	int i, j;
-	for (i = j = 1; i < *argc; i++) {
-		if (strcmp(argv[i], "-pbi-debug") == 0) {
-			PBI_debug = TRUE;
-		} else {
-			if (strcmp(argv[i], "-help") == 0)
-				Log_print("\t-pbi-debug         Enable runtime PBI D1xx access logging");
-			argv[j++] = argv[i];
-		}
-	}
-	*argc = j;
-
 	return TRUE
 #ifdef PBI_XLD
 		&& PBI_XLD_Initialise(argc, argv)
@@ -229,7 +215,7 @@ UBYTE PBI_D1GetByte(UWORD addr, int no_side_effects)
 		return result;
 	}
 	/* addr was not handled: */
-	Log_D("PBI_GetByte:%4x:%2x PC:%4x IRQ:%d",addr,result,CPU_regPC,CPU_IRQ);
+	D(printf("PBI_GetByte:%4x:%2x PC:%4x IRQ:%d\n",addr,result,CPU_regPC,CPU_IRQ));
 	return result; /* 0xff */
 }
 
@@ -250,7 +236,7 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 #endif
 	/* Remaining PBI devices cooperate, following spec */
 	if (addr != 0xd1ff) {
-		Log_D("PBI_PutByte:%4x <- %2x", addr, byte);
+		D(printf("PBI_PutByte:%4x <- %2x\n", addr, byte));
 #ifdef PBI_XLD
 		if (PBI_XLD_enabled) PBI_XLD_D1PutByte(addr, byte);
 #endif
@@ -264,11 +250,11 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 	}
 	else if (addr == 0xd1ff) {
 		/* D1FF pbi rom bank select */
-		Log_D("D1FF write:%x", byte);
+		D(printf("D1FF write:%x\n", byte));
 		if (D1FF_LATCH != byte) {
 			/* if it's not valid, ignore it */
 			if (byte != 0 && byte != 1 && byte != 2 && byte != 4 && byte != 8 && byte != 0x10 && byte !=0x20 && byte != 0x40 && byte != 0x80){
-				Log_D("*****INVALID d1ff write:%2x********",byte);
+				D(printf("*****INVALID d1ff write:%2x********\n",byte));
 				return;
 			}
 			/* otherwise, update the latch */
@@ -298,7 +284,7 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 			/* reactivate the floating point rom */
 			if (!fp_active) {
 				memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
-				Log_D("%s", "Floating point rom activated");
+				D(printf("Floating point rom activated\n"));
 				fp_active = TRUE;
 			}
 		}
@@ -360,7 +346,7 @@ void PBI_D6PutByte(UWORD addr, UBYTE byte)
 /* XLD/1090 has ram here */
 UBYTE PBI_D7GetByte(UWORD addr, int no_side_effects)
 {
-	Log_D("PBI_D7GetByte:%4x",addr);
+	D(printf("PBI_D7GetByte:%4x\n",addr));
 	if (PBI_D6D7ram) return MEMORY_mem[addr];
 	else return 0xff;
 }
@@ -369,24 +355,8 @@ UBYTE PBI_D7GetByte(UWORD addr, int no_side_effects)
 /* XLD/1090 has ram here */
 void PBI_D7PutByte(UWORD addr, UBYTE byte)
 {
-	Log_D("PBI_D7PutByte:%4x <- %2x",addr,byte);
+	D(printf("PBI_D7PutByte:%4x <- %2x\n",addr,byte));
 	if (PBI_D6D7ram) MEMORY_mem[addr]=byte;
-}
-
-void PBI_VSync(void)
-{
-#ifdef PBI_VERAX16
-    if (PBI_VERAX16_enabled)
-        PBI_VERAX16_VSync();
-#endif
-}
-
-void PBI_Scanline(void)
-{
-#ifdef PBI_VERAX16
-	if (PBI_VERAX16_enabled)
-		PBI_VERAX16_Scanline();
-#endif
 }
 
 #ifndef BASIC

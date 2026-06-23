@@ -51,7 +51,7 @@
 #include "graphics.h"
 #include "androidinput.h"
 
-#define PD2012_FNAME "PD2012.com"
+static int Android_CovlHoldPref = 2;
 
 /* exports/imports */
 int *ovl_texpix;
@@ -98,12 +98,14 @@ static void JNICALL NativeGetOverlays(JNIEnv *env, jobject this)
 	Log_print("Overlays texture initialized: %dx%d", ovl_texw, ovl_texh);
 }
 
-static void JNICALL NativeResize(JNIEnv *env, jobject this, jint w, jint h)
+static void JNICALL NativeResize(JNIEnv *env, jobject this, jint w, jint h, jfloat density)
 {
-	Log_print("Screen resize: %dx%d", w, h);
+	Log_print("Screen resize: %dx%d density=%.2f", w, h, density);
 	Android_ScreenW = w;
 	Android_ScreenH = h;
+	Android_DisplayDensity = density;
 	Android_SplitCalc();
+	Android_CovlHold = (Android_ScreenW < Android_ScreenH) ? 0 : Android_CovlHoldPref;
 	Android_InitGraphics();
 }
 
@@ -111,6 +113,11 @@ static void JNICALL NativeClearDevB(JNIEnv *env, jobject this)
 {
 	dev_b_status.ready = FALSE;
 	memset(devb_url, 0, sizeof(devb_url));
+}
+
+static void JNICALL NativeSetTopInset(JNIEnv *env, jobject this, jint topInset)
+{
+	Android_TopInset = topInset;
 }
 
 static jstring JNICALL NativeInit(JNIEnv *env, jobject this)
@@ -129,24 +136,6 @@ static jstring JNICALL NativeInit(JNIEnv *env, jobject this)
 	return (*env)->NewStringUTF(env, Atari800_TITLE);
 }
 
-static jobjectArray JNICALL NativeGetDrvFnames(JNIEnv *env, jobject this)
-{
-	jobjectArray arr;
-	int i;
-	char tmp[FILENAME_MAX + 3], fname[FILENAME_MAX];
-	jstring str;
-
-	arr = (*env)->NewObjectArray(env, 4, (*env)->FindClass(env, "java/lang/String"), NULL);
-	for (i = 0; i < 4; i++) {
-		Util_splitpath(SIO_filename[i], NULL, fname);
-		sprintf(tmp, "D%d:%s", i + 1, fname);
-		str = (*env)->NewStringUTF(env, tmp);
-		(*env)->SetObjectArrayElement(env, arr, i, str);
-		(*env)->DeleteLocalRef(env, str);
-	}
-
-	return arr;
-}
 
 static void JNICALL NativeUnmountAll(JNIEnv *env, jobject this)
 {
@@ -154,28 +143,6 @@ static void JNICALL NativeUnmountAll(JNIEnv *env, jobject this)
 
 	for (i = 1; i <= 4; i++)
 		SIO_DisableDrive(i);
-}
-
-static jboolean JNICALL NativeIsDisk(JNIEnv *env, jobject this, jstring img)
-{
-	const char *img_utf = NULL;
-	int type;
-
-	img_utf = (*env)->GetStringUTFChars(env, img, NULL);
-	type = AFILE_DetectFileType(img_utf);
-	(*env)->ReleaseStringUTFChars(env, img, img_utf);
-	switch (type) {
-	case AFILE_ATR:
-	case AFILE_ATX:
-	case AFILE_XFD:
-	case AFILE_ATR_GZ:
-	case AFILE_XFD_GZ:
-	case AFILE_DCM:
-	case AFILE_PRO:
-		return JNI_TRUE;
-	default:
-		return JNI_FALSE;
-	}
 }
 
 static jboolean JNICALL NativeSaveState(JNIEnv *env, jobject this, jstring fname)
@@ -186,6 +153,18 @@ static jboolean JNICALL NativeSaveState(JNIEnv *env, jobject this, jstring fname
 	fname_utf = (*env)->GetStringUTFChars(env, fname, NULL);
 	ret = StateSav_SaveAtariState(fname_utf, "wb", TRUE);
 	Log_print("Saved state %s with return %d", fname_utf, ret);
+	(*env)->ReleaseStringUTFChars(env, fname, fname_utf);
+	return ret;
+}
+
+static jboolean JNICALL NativeLoadState(JNIEnv *env, jobject this, jstring fname)
+{
+	const char *fname_utf = NULL;
+	int ret;
+
+	fname_utf = (*env)->GetStringUTFChars(env, fname, NULL);
+	ret = StateSav_ReadAtariState(fname_utf, "rb");
+	Log_print("Loaded state %s with return %d", fname_utf, ret);
 	(*env)->ReleaseStringUTFChars(env, fname, fname_utf);
 	return ret;
 }
@@ -349,6 +328,15 @@ static int JNICALL NativeTouch(JNIEnv *env, jobject this, int x1, int y1, int s1
 	return Android_TouchEvent(x1, y1, s1, x2, y2, s2);
 }
 
+static void JNICALL NativeJoystickAxes(JNIEnv *env, jobject this, int port, int dir_bits)
+{
+	Android_JoystickAxesEvent(port, dir_bits);
+}
+
+static void JNICALL NativeJoystickFire(JNIEnv *env, jobject this, int port, int index, int state)
+{
+	Android_JoystickFireEvent(port, index, state);
+}
 
 static void JNICALL NativePrefGfx(JNIEnv *env, jobject this, int aspect, jboolean bilinear,
 								  int artifact, int frameskip, jboolean collisions, int crophoriz,
@@ -375,7 +363,7 @@ static void JNICALL NativePrefGfx(JNIEnv *env, jobject this, int aspect, jboolea
 	Screen_visible_y1 = SCREEN_HEIGHT - Android_CropScreen[1];
 	Screen_visible_y2 = Screen_visible_y1 + cropvert;
 	Android_PortPad = portpad;
-	Android_CovlHold = covlhold;
+	Android_CovlHoldPref = covlhold;
 }
 
 static jboolean JNICALL NativePrefMachine(JNIEnv *env, jobject this, int nummac, jboolean ntsc)
@@ -473,19 +461,19 @@ static void JNICALL NativePrefSoftjoy(JNIEnv *env, jobject this, jboolean softjo
 	}
 }
 
-static void config_PD(void)
+static void config_KoalaPad(void)
 {
 	INPUT_mouse_mode = INPUT_MOUSE_PAD;
 	Android_Splitpct = 1.0f;
 	AndroidInput_JoyOvl.ovl_visible = FALSE;
-	Android_PlanetaryDefense = TRUE;
+	Android_KoalaPad = TRUE;
 	Android_Paddle = TRUE;
 	Android_ReversePddle = 3;
 }
 
 static void JNICALL NativePrefJoy(JNIEnv *env, jobject this, jboolean visible, int size, int opacity,
 								  jboolean righth, int deadband, jboolean midx, int anchor, int anchorx,
-								  int anchory, int grace, jboolean paddle, jboolean plandef)
+								  int anchory, int grace, jboolean paddle, jboolean koalapad)
 {
 	AndroidInput_JoyOvl.ovl_visible = visible;
 	AndroidInput_JoyOvl.areaopacityset = 0.01f * opacity;
@@ -498,13 +486,15 @@ static void JNICALL NativePrefJoy(JNIEnv *env, jobject this, jboolean visible, i
 	if (anchor) {
 		AndroidInput_JoyOvl.joyarea.l = anchorx;
 		AndroidInput_JoyOvl.joyarea.t = anchory;
+		AndroidInput_JoyOvl.anchor_saved_x = anchorx;
+		AndroidInput_JoyOvl.anchor_saved_y = anchory;
 	}
 	Android_Paddle = paddle;
 	INPUT_mouse_mode = paddle ? INPUT_MOUSE_PAD : INPUT_MOUSE_OFF;
-	Android_PlanetaryDefense = FALSE;
+	Android_KoalaPad = FALSE;
 	Android_ReversePddle = 0;
-	if (plandef)
-		config_PD();
+	if (koalapad)
+		config_KoalaPad();
 
 	Android_SplitCalc();
 	Joyovl_Scale();
@@ -522,6 +512,11 @@ static void JNICALL NativePrefKbd(JNIEnv *env, jobject this, jboolean a800fns)
 	Android_A800Fns = a800fns;
 }
 
+static void JNICALL NativePrefMultijoy(JNIEnv *env, jobject this, jboolean enable)
+{
+	INPUT_joy_multijoy = enable;
+}
+
 static jboolean JNICALL NativeSetROMPath(JNIEnv *env, jobject this, jstring path)
 {
 	const char *utf = NULL;
@@ -529,10 +524,8 @@ static jboolean JNICALL NativeSetROMPath(JNIEnv *env, jobject this, jstring path
 
 	utf = (*env)->GetStringUTFChars(env, path, NULL);
 	SYSROM_FindInDir(utf, FALSE);
-    Log_print("sysrom %s %d", utf, SYSROM_FindInDir(utf, FALSE));
-	ret |= chdir(utf);
-    Log_print("sysrom %s %d", utf, SYSROM_FindInDir(utf, FALSE));
-	ret |= Atari800_InitialiseMachine();
+	SYSROM_FindInDir(utf, FALSE);
+	ret = Atari800_InitialiseMachine();
 	(*env)->ReleaseStringUTFChars(env, path, utf);
 
 	return ret;
@@ -548,27 +541,6 @@ static jstring JNICALL NativeGetJoypos(JNIEnv *env, jobject this)
 static jstring JNICALL NativeGetURL(JNIEnv *env, jobject this)
 {
 	return (*env)->NewStringUTF(env, dev_b_status.url);
-}
-
-static jboolean JNICALL NativeBootPD(JNIEnv *env, jobject this, jobjectArray img, jint sz)
-{
-	FILE *fp;
-	void *src;
-
-	fp = fopen(PD2012_FNAME, "wb");
-	if (!fp) {
-		Log_print("ERROR: Cannot open PD2012 for write");
-		return FALSE;
-	}
-	src = (*env)->GetByteArrayElements(env, img, NULL);
-	fwrite(src, 1, sz, fp);
-	fclose(fp);
-	(*env)->ReleaseByteArrayElements(env, img, src, JNI_ABORT);
-
-	config_PD();
-	NativeUnmountAll(env, this);
-	CARTRIDGE_Remove();
-	return AFILE_OpenFile(PD2012_FNAME, TRUE, 1, FALSE);
 }
 
 static jboolean JNICALL NativeOSLSound(JNIEnv *env, jobject this)
@@ -595,7 +567,7 @@ static void JNICALL NativeOSLSoundExit(JNIEnv *env, jobject this)
 }
 
 
-jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved)
+	jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved)
 {
 	JNINativeMethod main_methods[] = {
 		{ "NativeExit",				"()V",								NativeExit			  },
@@ -607,16 +579,20 @@ jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved)
 		{ "NativePrefJoy",			"(ZIIZIIZIIIZZ)V",					NativePrefJoy		  },
 		{ "NativePrefSound",		"(IIZZZ)V",							NativePrefSound		  },
 		{ "NativePrefKbd",			"(Z)V",								NativePrefKbd		  },
+		{ "NativePrefMultijoy",		"(Z)V",								NativePrefMultijoy	  },
 		{ "NativeSetROMPath",		"(Ljava/lang/String;)Z",			NativeSetROMPath	  },
 		{ "NativeGetJoypos",		"()Ljava/lang/String;",				NativeGetJoypos		  },
 		{ "NativeInit",				"()Ljava/lang/String;",				NativeInit			  },
 		{ "NativeGetURL",			"()Ljava/lang/String;",				NativeGetURL		  },
 		{ "NativeClearDevB",		"()V",								NativeClearDevB		  },
 		{ "NativeBootCartType",		"(I)V",								NativeBootCartType	  },
+		{ "NativeSetTopInset",		"(I)V",								NativeSetTopInset	  },
 	};
 	JNINativeMethod view_methods[] = {
 		{ "NativeTouch", 			"(IIIIII)I", 						NativeTouch			  },
 		{ "NativeKey",				"(II)V",							NativeKey			  },
+		{ "NativeJoystickAxes",		"(II)V",							NativeJoystickAxes	  },
+		{ "NativeJoystickFire",		"(III)V",							NativeJoystickFire	  },
 	};
 	JNINativeMethod snd_methods[] = {
 		{ "NativeSoundInit",		"(I)V",								NativeSoundInit		  },
@@ -630,17 +606,11 @@ jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved)
 	JNINativeMethod render_methods[] = {
 		{ "NativeRunFrame",			"()I",								NativeRunFrame		  },
 		{ "NativeGetOverlays",		"()V",								NativeGetOverlays	  },
-		{ "NativeResize",			"(II)V",							NativeResize		  },
-	};
-	JNINativeMethod fsel_methods[] = {
-		{ "NativeIsDisk",			"(Ljava/lang/String;)Z",			NativeIsDisk		  },
-		{ "NativeRunAtariProgram",	"(Ljava/lang/String;II)I",			NativeRunAtariProgram },
-		{ "NativeGetDrvFnames",		"()[Ljava/lang/String;",			NativeGetDrvFnames	  },
-		{ "NativeUnmountAll",		"()V",								NativeUnmountAll	  },
+		{ "NativeResize",			"(IIF)V",							NativeResize		  },
 	};
 	JNINativeMethod pref_methods[] = {
 		{ "NativeSaveState",		"(Ljava/lang/String;)Z",			NativeSaveState		  },
-		{ "NativeBootPD",			"([BI)Z",							NativeBootPD		  },
+		{ "NativeLoadState",		"(Ljava/lang/String;)Z",			NativeLoadState		  },
 		{ "NativeOSLSound",			"()Z",								NativeOSLSound		  },
 	};
 	JNIEnv *env;
@@ -649,17 +619,15 @@ jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved)
 	if ((*jvm)->GetEnv(jvm, (void **) &env, JNI_VERSION_1_2))
 		return JNI_ERR;
 
-	cls = (*env)->FindClass(env, "name/nick/jubanka/colleen/MainActivity");
+	cls = (*env)->FindClass(env, "cz/pstehlik/colleen/MainActivity");
 	(*env)->RegisterNatives(env, cls, main_methods, sizeof(main_methods)/sizeof(JNINativeMethod));
-	cls = (*env)->FindClass(env, "name/nick/jubanka/colleen/A800view");
+	cls = (*env)->FindClass(env, "cz/pstehlik/colleen/A800view");
 	(*env)->RegisterNatives(env, cls, view_methods, sizeof(view_methods)/sizeof(JNINativeMethod));
-	cls = (*env)->FindClass(env, "name/nick/jubanka/colleen/AudioThread");
+	cls = (*env)->FindClass(env, "cz/pstehlik/colleen/AudioThread");
 	(*env)->RegisterNatives(env, cls, snd_methods, sizeof(snd_methods)/sizeof(JNINativeMethod));
-	cls = (*env)->FindClass(env, "name/nick/jubanka/colleen/A800Renderer");
+	cls = (*env)->FindClass(env, "cz/pstehlik/colleen/A800Renderer");
 	(*env)->RegisterNatives(env, cls, render_methods, sizeof(render_methods)/sizeof(JNINativeMethod));
-	cls = (*env)->FindClass(env, "name/nick/jubanka/colleen/FileSelector");
-	(*env)->RegisterNatives(env, cls, fsel_methods, sizeof(fsel_methods)/sizeof(JNINativeMethod));
-	cls = (*env)->FindClass(env, "name/nick/jubanka/colleen/Preferences");
+	cls = (*env)->FindClass(env, "cz/pstehlik/colleen/Preferences");
 	(*env)->RegisterNatives(env, cls, pref_methods, sizeof(pref_methods)/sizeof(JNINativeMethod));
 
 	return JNI_VERSION_1_2;

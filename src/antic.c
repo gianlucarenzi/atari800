@@ -34,9 +34,11 @@
 #include "gtia.h"
 #include "log.h"
 #include "memory.h"
-#include "pbi.h"
 #include "platform.h"
 #include "pokey.h"
+#ifdef PBI_VERAX16
+#include "pbi_verax16.h"
+#endif
 #include "util.h"
 #if !defined(BASIC) && !defined(CURSES_BASIC)
 #include "input.h"
@@ -2871,7 +2873,9 @@ void ANTIC_Frame(int draw_display)
 	ANTIC_ypos = 0;
 	do {
 		POKEY_Scanline();		/* check and generate IRQ */
-		PBI_Scanline();
+#ifdef PBI_VERAX16
+		PBI_VERAX16_Scanline();
+#endif
 		OVERSCREEN_LINE;
 	} while (ANTIC_ypos < 8);
 
@@ -2889,7 +2893,9 @@ void ANTIC_Frame(int draw_display)
 		}
 
 		POKEY_Scanline();		/* check and generate IRQ */
-		PBI_Scanline();
+#ifdef PBI_VERAX16
+		PBI_VERAX16_Scanline();
+#endif
 		pmg_dma();
 
 #ifdef USE_CURSES
@@ -3183,7 +3189,9 @@ void ANTIC_Frame(int draw_display)
 
 /* TODO: cycle-exact overscreen lines */
 	POKEY_Scanline();		/* check and generate IRQ */
-	PBI_Scanline();
+#ifdef PBI_VERAX16
+	PBI_VERAX16_Scanline();
+#endif
 	CPU_GO(ANTIC_NMIST_C);
 	ANTIC_NMIST = 0x5f;				/* Set VBLANK */
 	if (ANTIC_NMIEN & 0x40) {
@@ -3195,7 +3203,9 @@ void ANTIC_Frame(int draw_display)
 
 	do {
 		POKEY_Scanline();		/* check and generate IRQ */
-		PBI_Scanline();
+#ifdef PBI_VERAX16
+		PBI_VERAX16_Scanline();
+#endif
 		OVERSCREEN_LINE;
 	} while (ANTIC_ypos < Atari800_tv_mode);
 	ANTIC_ypos = 0; /* just for monitor.c */
