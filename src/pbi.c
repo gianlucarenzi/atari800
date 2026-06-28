@@ -67,8 +67,6 @@ int PBI_D6D7ram = FALSE;
  * figure it out*/
 int PBI_IRQ = 0;
 
-int PBI_debug = FALSE;
-
 #ifdef PBI_DEBUG
 #define D(a) a
 #else

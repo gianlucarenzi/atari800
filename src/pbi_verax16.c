@@ -324,14 +324,6 @@ static const UBYTE *vera_sd_response = NULL;
 static int vera_sd_response_length = 0;
 static int vera_sd_response_counter = 0;
 
-#ifdef PBI_DEBUG
-#define D(a) a
-#else
-#define D(a) if (PBI_debug) a
-#endif
-
-#define Log_D(format, ...) D(Log_print(format, ##__VA_ARGS__))
-
 /* ------------------------------------------------------------------ */
 /* VERA internal helpers                                                */
 /* ------------------------------------------------------------------ */
@@ -2369,7 +2361,7 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
     if (offset >= 0 && offset < (int)VERA_REG_COUNT)
     {
         UBYTE val = vera_read_reg(offset, no_side_effects);
-        Log_D("PBI_GetByte: %04X -> %02X", addr, val);
+        VERAX16_LOG(2, "PBI_GetByte: %04X -> %02X", addr, val);
         return (int)val;
     }
     return PBI_NOT_HANDLED;
@@ -2384,7 +2376,7 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
     int offset = (int)addr - (int)VERA_REG_BASE;
     if (offset >= 0 && offset < (int)VERA_REG_COUNT)
     {
-        Log_D("PBI_PutByte: %04X <- %02X", addr, byte);
+        VERAX16_LOG(2, "PBI_PutByte: %04X <- %02X", addr, byte);
         vera_write_reg(offset, byte);
     }
 }

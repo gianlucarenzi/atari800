@@ -69,6 +69,7 @@ atari800_SOURCES = \
 	cfg.c cfg.h \
 	cpu.c cpu.h \
 	crc32.c crc32.h \
+	download.c download.h \
 	devices.c devices.h \
 	esc.c esc.h \
 	gtia.c gtia.h \
@@ -96,8 +97,6 @@ atari800_SOURCES += sdl/init.c sdl/init.h
 if CONFIGURE_HOST_WIN
 atari800_SOURCES += sdl/SDL_win32_main.c
 atari800_CPPFLAGS += -Dmain=SDL_main
-atari800_SOURCES += atari800_res.rc
-AM_WINDRESFLAGS = -I $(top_srcdir)
 endif
 endif
 
