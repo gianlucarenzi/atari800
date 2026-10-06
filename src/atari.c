@@ -89,6 +89,9 @@
 #include "pokey.h"
 #include "rtime.h"
 #include "pbi.h"
+#ifdef PBI_VERAX16
+#include "pbi_verax16.h"
+#endif
 #include "sio.h"
 #include "sysrom.h"
 #include "util.h"
@@ -264,6 +267,9 @@ void Atari800_Warmstart(void)
 void Atari800_Coldstart(void)
 {
 	PBI_Reset();
+#ifdef PBI_VERAX16
+	PBI_VERAX16_PowerCycle();
+#endif
 	PIA_Reset();
 	ANTIC_Reset();
 	/* CPU_Reset() must be after PIA_Reset(),

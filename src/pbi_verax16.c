@@ -77,6 +77,9 @@
 #include "util.h"
 #include "log.h"
 #include "memory.h"
+#include "cpu.h"
+#include "pokey.h"
+#include "pia.h"
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -159,13 +162,6 @@ static const int vera_step_lut[32] = {
     160, -160,
     320, -320,
     640, -640
-};
-
-static const UBYTE vera_version_string[4] = {
-    (UBYTE)'V',
-    (UBYTE)VERA_VERSION_MAJOR,
-    (UBYTE)VERA_VERSION_MINOR,
-    (UBYTE)VERA_VERSION_PATCH
 };
 
 /* ------------------------------------------------------------------ */
@@ -662,9 +658,18 @@ static void vera_fx_2bit_poke(UBYTE value)
     fx_2bit_poke_mode = FALSE;
 }
 
+/* Value returned by the real VERA (47.0.2 HDL, top.v rddata mux) for any
+ * DCSEL-muxed register ($09-$0C) that has no read path: 'V', 47, 0, 0.
+ * Hardware does NOT return minor/patch here, and the FX registers are
+ * write-only. */
 static UBYTE vera_version_byte_for_offset(int offset)
 {
-    return vera_version_string[(offset - 0x09) & 0x03];
+    switch (offset)
+    {
+    case 0x09: return (UBYTE)'V';
+    case 0x0A: return (UBYTE)VERA_VERSION_MAJOR;
+    default:   return 0;
+    }
 }
 
 static void vera_sd_clear_response(void)
@@ -1045,10 +1050,22 @@ static void vera_spi_step(int cycles)
 
 static void vera_update_irq(void)
 {
-    if (vera_isr & vera_ien)
-        PBI_IRQ |= verax16_pbi_mask;
-    else
+    /* IRQ_N is level-sensitive: asserted while (ISR & IEN) != 0 */
+    if (vera_isr & vera_ien & 0x0Fu)
+    {
+        if (!(PBI_IRQ & verax16_pbi_mask))
+        {
+            PBI_IRQ |= verax16_pbi_mask;
+            CPU_GenerateIRQ();
+        }
+    }
+    else if (PBI_IRQ & verax16_pbi_mask)
+    {
         PBI_IRQ &= ~verax16_pbi_mask;
+        /* drop the CPU line unless another source still holds it */
+        if ((~POKEY_IRQST & POKEY_IRQEN) == 0 && PBI_IRQ == 0 && PIA_IRQ == 0)
+            CPU_IRQ = 0;
+    }
 }
 
 static void vera_audio_update_aflow(void)
@@ -1061,6 +1078,13 @@ static void vera_audio_update_aflow(void)
 }
 
 #define VERA_SCANLINES_PER_FRAME 525u
+#define VERA_LINE_RATE_X100 3146875u    /* 25.175 MHz / 800 px, x100 */
+
+/* Atari scanline rate (x100): 114 cycles/line at the CPU clock */
+static unsigned int atari_line_rate_x100(void)
+{
+    return (Atari800_tv_mode == Atari800_TV_PAL) ? 1555563u : 1569977u;
+}
 #define VERA_SCANLINE_CLAMP_START 512u
 #define VERA_SCANLINE_CLAMP_VALUE 0x01FFu
 #define VERA_MIDLINE_X_SCALE 256
@@ -1116,7 +1140,7 @@ static void vera_midline_sync_cursor(void)
         return;
 
     base_x_fp = (int)(((unsigned long)vera_scanline_accum * 640u * VERA_MIDLINE_X_SCALE) /
-                      (unsigned int)Atari800_tv_mode);
+                      atari_line_rate_x100());
     if (base_x_fp < 0)
         base_x_fp = 0;
     if (base_x_fp > 640 * VERA_MIDLINE_X_SCALE)
@@ -1592,6 +1616,64 @@ static void vera_chip_reset(const char *caller)
     VERAX16_LOG(1, "VeraX16: VERA chip soft-reset");
 }
 
+/* Dead-bus window after FPGA (re)configuration, in Atari scanlines.
+ * The iCE40 reloads its bitstream from flash (~100 ms); during that time
+ * the VERA does not drive the data bus and ignores writes. */
+#define VERA_CONFIG_DEAD_MS 100u
+static unsigned int vera_dead_lines = 0;
+
+/* Power-on configuration time (-verax16-config-ms).  0 emulates a board
+ * that holds the Atari RESET until the FPGA reports CONFIG_DONE.  A
+ * reconfigure triggered by CTRL bit 7 always uses VERA_CONFIG_DEAD_MS. */
+static int verax16_config_ms = VERA_CONFIG_DEAD_MS;
+
+static void vera_start_config_delay(unsigned int ms)
+{
+    unsigned int lines_per_sec = (Atari800_tv_mode == Atari800_TV_PAL) ? 15556u : 15700u;
+    vera_dead_lines = (lines_per_sec * ms) / 1000u;
+}
+
+/* Hardware power-on / FPGA reconfigure (CTRL bit 7): everything is lost,
+ * VRAM included, palette is reloaded from the bitstream defaults. */
+static void vera_power_on(const char *caller, unsigned int config_ms)
+{
+    memset(vera_vram, 0, sizeof(vera_vram));
+
+    /* Pre-load the standard Commander X16 default palette.
+     * Format: byte0 = GGGGBBBB, byte1 = 0000RRRR  (12-bit colour). */
+    {
+        static const UWORD default_palette[256] = {
+            0x000,0xfff,0x800,0xafe,0xc4c,0x0c5,0x00a,0xee7,0xd85,0x640,0xf77,0x333,0x777,0xaf6,0x08f,0xbbb,
+            0x000,0x111,0x222,0x333,0x444,0x555,0x666,0x777,0x888,0x999,0xaaa,0xbbb,0xccc,0xddd,0xeee,0xfff,
+            0x211,0x433,0x644,0x866,0xa88,0xc99,0xfbb,0x211,0x422,0x633,0x844,0xa55,0xc66,0xf77,0x200,0x411,
+            0x611,0x822,0xa22,0xc33,0xf33,0x200,0x400,0x600,0x800,0xa00,0xc00,0xf00,0x221,0x443,0x664,0x886,
+            0xaa8,0xcc9,0xfeb,0x211,0x432,0x653,0x874,0xa95,0xcb6,0xfd7,0x210,0x431,0x651,0x862,0xa82,0xca3,
+            0xfc3,0x210,0x430,0x640,0x860,0xa80,0xc90,0xfb0,0x121,0x343,0x564,0x786,0x9a8,0xbc9,0xdfb,0x121,
+            0x342,0x463,0x684,0x8a5,0x9c6,0xbf7,0x120,0x241,0x461,0x582,0x6a2,0x8c3,0x9f3,0x120,0x240,0x360,
+            0x480,0x5a0,0x6c0,0x7f0,0x121,0x343,0x465,0x686,0x8a8,0x9ca,0xbfc,0x121,0x242,0x364,0x485,0x5a6,
+            0x6c8,0x7f9,0x020,0x141,0x162,0x283,0x2a4,0x3c5,0x3f6,0x020,0x041,0x061,0x082,0x0a2,0x0c3,0x0f3,
+            0x122,0x344,0x466,0x688,0x8aa,0x9cc,0xbff,0x122,0x244,0x366,0x488,0x5aa,0x6cc,0x7ff,0x022,0x144,
+            0x166,0x288,0x2aa,0x3cc,0x3ff,0x022,0x044,0x066,0x088,0x0aa,0x0cc,0x0ff,0x112,0x334,0x456,0x668,
+            0x88a,0x9ac,0xbcf,0x112,0x224,0x346,0x458,0x56a,0x68c,0x79f,0x002,0x114,0x126,0x238,0x24a,0x35c,
+            0x36f,0x002,0x014,0x016,0x028,0x02a,0x03c,0x03f,0x112,0x334,0x546,0x768,0x98a,0xb9c,0xdbf,0x112,
+            0x324,0x436,0x648,0x85a,0x96c,0xb7f,0x102,0x214,0x416,0x528,0x62a,0x83c,0x93f,0x102,0x204,0x306,
+            0x408,0x50a,0x60c,0x70f,0x212,0x434,0x646,0x868,0xa8a,0xc9c,0xfbe,0x211,0x423,0x635,0x847,0xa59,
+            0xc6b,0xf7d,0x201,0x413,0x615,0x826,0xa28,0xc3a,0xf3c,0x201,0x403,0x604,0x806,0xa08,0xc09,0xf0b
+        };
+        unsigned int i;
+
+        for (i = 0; i < 256u; i++)
+        {
+            UWORD entry = default_palette[i];
+            vera_vram[0x1FA00u + i * 2u] = (UBYTE)(entry & 0xFFu);
+            vera_vram[0x1FA00u + i * 2u + 1u] = (UBYTE)(entry >> 8);
+        }
+    }
+
+    vera_chip_reset(caller);
+    vera_start_config_delay(config_ms);
+}
+
 static UBYTE vera_ien_read(void)
 {
     return (UBYTE)(((vera_irqline >> 8) & 0x01u) << 7) |
@@ -1724,57 +1806,15 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
                                    (fx_16bit_hop << 3) |
                                    (fx_4bit_mode << 2) |
                                    (fx_addr1_mode & 0x03u));
-                /* FX_TILEBASE */
-                if (offset == 0x0A)
-                    return (UBYTE)((fx_tiledata_base_address << 2) |
-                                   (fx_apply_clip << 1) |
-                                   fx_2bit_polygon_pixels);
-                /* FX_MAPBASE */
-                if (offset == 0x0B)
-                    return (UBYTE)((fx_map_base_address << 2) | fx_map_size);
-                /* FX_MULT — ResetAccum (bit 7) is a write-only trigger, always reads 0 */
-                return (UBYTE)((fx_accumulate << 6) |
-                               (fx_add_or_sub << 5) |
-                               (fx_mult_enabled << 4) |
-                               (fx_cache_byte_index << 2) |
-                               (fx_cache_nibble_index << 1) |
-                               fx_cache_increment_mode);
-            case 0x03:
-                /* FX_X_INCR_L/H, FX_Y_INCR_L/H — 6.9 fixed point, 15 bits + 32x flag */
-                if (offset == 0x09)
-                    return (UBYTE)(fx_pixel_incr_x & 0xFF);
-                if (offset == 0x0A)
-                    return (UBYTE)((fx_pixel_incr_x_times_32 ? 0x80u : 0u) |
-                                   ((fx_pixel_incr_x >> 8) & 0x7F));
-                if (offset == 0x0B)
-                    return (UBYTE)(fx_pixel_incr_y & 0xFF);
-                /* offset == 0x0C */
-                return (UBYTE)((fx_pixel_incr_y_times_32 ? 0x80u : 0u) |
-                               ((fx_pixel_incr_y >> 8) & 0x7F));
-            case 0x04:
-                /* FX_X/Y_POS_L/H — integer part of the 11.9 fixed-point position.
-                 * Internal layout of fx_pixel_pos_x (20 bits):
-                 *   bit  0   : X_Pos[-9]  (subpixel sign extension)
-                 *   bits 8:1 : X_Pos[-8:-1] (subpixel, written by DCSEL=5)
-                 *   bits16:9 : X_Pos[7:0]  (integer low byte, POS_L)
-                 *   bits19:17: X_Pos[10:8] (integer high 3 bits, POS_H[2:0])
-                 * POS_H[7] = X_Pos[-9] = bit 0 of fx_pixel_pos_x. */
-                if (offset == 0x09)
-                    return (UBYTE)((fx_pixel_pos_x >> 9) & 0xFF);
-                if (offset == 0x0A)
-                    return (UBYTE)(((fx_pixel_pos_x & 0x01u) << 7) |
-                                   ((fx_pixel_pos_x >> 17) & 0x07u));
-                if (offset == 0x0B)
-                    return (UBYTE)((fx_pixel_pos_y >> 9) & 0xFF);
-                /* offset == 0x0C */
-                return (UBYTE)(((fx_pixel_pos_y & 0x01u) << 7) |
-                               ((fx_pixel_pos_y >> 17) & 0x07u));
+                /* FX_TILEBASE/MAPBASE/MULT are write-only on hardware */
+                return vera_version_byte_for_offset(offset);
+            case 0x03:    /* FX_X/Y_INCR: write-only */
+            case 0x04:    /* FX_X/Y_POS : write-only */
+                return vera_version_byte_for_offset(offset);
             case 0x05:
                 /* FX_X/Y_POS_S — subpixel fraction bytes (bits[-1:-8]), at pos bits[8:1] */
-                if (offset == 0x09)
-                    return (UBYTE)((fx_pixel_pos_x >> 1) & 0xFF);
-                if (offset == 0x0A)
-                    return (UBYTE)((fx_pixel_pos_y >> 1) & 0xFF);
+                if (offset == 0x09 || offset == 0x0A)
+                    return vera_version_byte_for_offset(offset);   /* POS_S write-only */
                 if (offset == 0x0B)
                 {
                     /* FX_POLY_FILL_L */
@@ -1811,22 +1851,21 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
             case 0x06:
                 /* Reading FX_ACCUM_RESET ($D109) resets the accumulator (side effect).
                  * Reading FX_ACCUM ($D10A) triggers an accumulate step (side effect).
-                 * All four reads return the corresponding cache byte. */
+                 * Reads return the hardware identity bytes (cache is write-only). */
                 if (offset == 0x09)
                 {
                     if (!no_side_effects)
                         fx_mult_accumulator = 0;
-                    return (UBYTE)(ib_cache32 & 0xFFu);
+                    return vera_version_byte_for_offset(offset);
                 }
                 if (offset == 0x0A)
                 {
                     if (!no_side_effects)
                         vera_fx_accumulate_step();
-                    return (UBYTE)((ib_cache32 >> 8) & 0xFFu);
+                    return vera_version_byte_for_offset(offset);
                 }
-                if (offset == 0x0B)
-                    return (UBYTE)((ib_cache32 >> 16) & 0xFFu);
-                return (UBYTE)((ib_cache32 >> 24) & 0xFFu);
+                /* cache bytes are write-only */
+                return vera_version_byte_for_offset(offset);
             case 0x3F:
                 return vera_version_byte_for_offset(offset);
             }
@@ -1957,7 +1996,7 @@ static void vera_write_reg(int offset, UBYTE byte)
     case 0x05:  /* CTRL */
         if (byte & 0x80u)
         {
-            vera_chip_reset("CTRL_REG_RESET_BIT");      /* RESET bit: soft-reset, VRAM intact */
+            vera_power_on("CTRL_REG_RECONFIGURE", VERA_CONFIG_DEAD_MS);     /* bit 7 = FPGA reconfigure on real HW */
         }
         else
         {
@@ -2190,6 +2229,18 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
             recognized = TRUE;
         }
         else
+        if (strcmp(argv[i], "-verax16-config-ms") == 0 && i + 1 < *argc)
+        {
+            int ms = atoi(argv[i + 1]);
+            if (ms >= 0 && ms <= 5000)
+                verax16_config_ms = ms;
+            else
+                VERAX16_LOG(0, "VeraX16: invalid config-ms %d, keeping %d",
+                          ms, verax16_config_ms);
+            i++;
+            recognized = TRUE;
+        }
+        else
         if (strcmp(argv[i], "-verax16-debuglevel") == 0 && i + 1 < *argc)
         {
             verax16_debuglevel = atoi(argv[i + 1]);
@@ -2213,6 +2264,8 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
                 Log_print("\t--use-verax16       Alias for -verax16");
                 Log_print("\t-verax16-rom F      OS handler ROM (2KB, $D800-$DFFF)");
                 Log_print("\t-verax16-pbi-id N   PBI device bit 0-7 (default: 7, mask=$80)");
+                Log_print("\t-verax16-config-ms N  FPGA power-on configuration time, bus dead meanwhile (default: 100)");
+                Log_print("\t                    0 = board holds Atari RESET until CONFIG_DONE");
                 Log_print("\t-verax16-debuglevel N Set debug level (default: 0)");
                 Log_print("\t-verax16-sdcard F   Raw SD image file (for example from dd) exposed through VERA SPI");
                 Log_print("\t                    The Atari driver handles MBR/GPT/filesystems on top of the raw 512-byte blocks");
@@ -2225,41 +2278,7 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
     if (!PBI_VERAX16_enabled)
         return TRUE;
 
-    /* Power-on: clear VRAM and reset all registers */
-    memset(vera_vram, 0, sizeof(vera_vram));
-
-    /* Pre-load the standard Commander X16 default palette.
-     * Format: byte0 = GGGGBBBB, byte1 = 0000RRRR  (12-bit colour). */
-    {
-        static const UWORD default_palette[256] = {
-            0x000,0xfff,0x800,0xafe,0xc4c,0x0c5,0x00a,0xee7,0xd85,0x640,0xf77,0x333,0x777,0xaf6,0x08f,0xbbb,
-            0x000,0x111,0x222,0x333,0x444,0x555,0x666,0x777,0x888,0x999,0xaaa,0xbbb,0xccc,0xddd,0xeee,0xfff,
-            0x211,0x433,0x644,0x866,0xa88,0xc99,0xfbb,0x211,0x422,0x633,0x844,0xa55,0xc66,0xf77,0x200,0x411,
-            0x611,0x822,0xa22,0xc33,0xf33,0x200,0x400,0x600,0x800,0xa00,0xc00,0xf00,0x221,0x443,0x664,0x886,
-            0xaa8,0xcc9,0xfeb,0x211,0x432,0x653,0x874,0xa95,0xcb6,0xfd7,0x210,0x431,0x651,0x862,0xa82,0xca3,
-            0xfc3,0x210,0x430,0x640,0x860,0xa80,0xc90,0xfb0,0x121,0x343,0x564,0x786,0x9a8,0xbc9,0xdfb,0x121,
-            0x342,0x463,0x684,0x8a5,0x9c6,0xbf7,0x120,0x241,0x461,0x582,0x6a2,0x8c3,0x9f3,0x120,0x240,0x360,
-            0x480,0x5a0,0x6c0,0x7f0,0x121,0x343,0x465,0x686,0x8a8,0x9ca,0xbfc,0x121,0x242,0x364,0x485,0x5a6,
-            0x6c8,0x7f9,0x020,0x141,0x162,0x283,0x2a4,0x3c5,0x3f6,0x020,0x041,0x061,0x082,0x0a2,0x0c3,0x0f3,
-            0x122,0x344,0x466,0x688,0x8aa,0x9cc,0xbff,0x122,0x244,0x366,0x488,0x5aa,0x6cc,0x7ff,0x022,0x144,
-            0x166,0x288,0x2aa,0x3cc,0x3ff,0x022,0x044,0x066,0x088,0x0aa,0x0cc,0x0ff,0x112,0x334,0x456,0x668,
-            0x88a,0x9ac,0xbcf,0x112,0x224,0x346,0x458,0x56a,0x68c,0x79f,0x002,0x114,0x126,0x238,0x24a,0x35c,
-            0x36f,0x002,0x014,0x016,0x028,0x02a,0x03c,0x03f,0x112,0x334,0x546,0x768,0x98a,0xb9c,0xdbf,0x112,
-            0x324,0x436,0x648,0x85a,0x96c,0xb7f,0x102,0x214,0x416,0x528,0x62a,0x83c,0x93f,0x102,0x204,0x306,
-            0x408,0x50a,0x60c,0x70f,0x212,0x434,0x646,0x868,0xa8a,0xc9c,0xfbe,0x211,0x423,0x635,0x847,0xa59,
-            0xc6b,0xf7d,0x201,0x413,0x615,0x826,0xa28,0xc3a,0xf3c,0x201,0x403,0x604,0x806,0xa08,0xc09,0xf0b
-        };
-        unsigned int i;
-
-        for (i = 0; i < 256u; i++)
-        {
-            UWORD entry = default_palette[i];
-            vera_vram[0x1FA00u + i * 2u] = (UBYTE)(entry & 0xFFu);
-            vera_vram[0x1FA00u + i * 2u + 1u] = (UBYTE)(entry >> 8);
-        }
-    }
-
-    vera_chip_reset("INITIAL_SETUP");
+    vera_power_on("INITIAL_SETUP", (unsigned int)verax16_config_ms);
 
     /* Loading OS handler ROM is MANDATORY */
     if (verax16_rom_filename[0] != '\0')
@@ -2316,10 +2335,19 @@ void PBI_VERAX16_Reset(void)
 {
     if (PBI_VERAX16_enabled)
     {
+        /* The VERA has no reset input (only an internal POR): the Atari
+         * RESET key leaves all VERA state untouched.  Only the PBI latch
+         * is cleared (done by the bus), which re-enables the Math Pack. */
         verax16_cs = FALSE;
         memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
-        vera_chip_reset("PBI_RESET");
     }
+}
+
+/* Atari cold start == power cycle: the VERA FPGA reconfigures from scratch. */
+void PBI_VERAX16_PowerCycle(void)
+{
+    if (PBI_VERAX16_enabled)
+        vera_power_on("COLDSTART", (unsigned int)verax16_config_ms);
 }
 
 int PBI_VERAX16_ReadConfig(char *string, char *ptr)
@@ -2329,6 +2357,13 @@ int PBI_VERAX16_ReadConfig(char *string, char *ptr)
     else
     if (strcmp(string, "VERAX16_SDCARD") == 0)
         Util_strlcpy(verax16_sdcard_filename, ptr, sizeof(verax16_sdcard_filename));
+    else
+    if (strcmp(string, "VERAX16_CONFIG_MS") == 0)
+    {
+        int ms = atoi(ptr);
+        if (ms >= 0 && ms <= 5000)
+            verax16_config_ms = ms;
+    }
     else
     if (strcmp(string, "VERAX16_PBI_ID") == 0)
     {
@@ -2349,6 +2384,7 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
     fprintf(fp, "VERAX16_ROM=%s\n", verax16_rom_filename);
     fprintf(fp, "VERAX16_SDCARD=%s\n", verax16_sdcard_filename);
     fprintf(fp, "VERAX16_PBI_ID=%d\n", verax16_pbi_num);
+    fprintf(fp, "VERAX16_CONFIG_MS=%d\n", verax16_config_ms);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2360,6 +2396,8 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
     int offset = (int)addr - (int)VERA_REG_BASE;
     if (offset >= 0 && offset < (int)VERA_REG_COUNT)
     {
+        if (vera_dead_lines)
+            return 0xFF;    /* bus not driven while FPGA configures */
         UBYTE val = vera_read_reg(offset, no_side_effects);
         VERAX16_LOG(2, "PBI_GetByte: %04X -> %02X", addr, val);
         return (int)val;
@@ -2376,6 +2414,8 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
     int offset = (int)addr - (int)VERA_REG_BASE;
     if (offset >= 0 && offset < (int)VERA_REG_COUNT)
     {
+        if (vera_dead_lines)
+            return;
         VERAX16_LOG(2, "PBI_PutByte: %04X <- %02X", addr, byte);
         vera_write_reg(offset, byte);
     }
@@ -2388,9 +2428,9 @@ void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 
 int PBI_VERAX16_D1ffPutByte(UBYTE byte)
 {
-    //Log_D("PBI_D1FF PutByte %02X", byte);
-    
-    if (byte == verax16_pbi_mask)
+    /* Real hardware: every device latches only its own data bit of the
+     * $D1FF write; other bits are ignored. */
+    if (byte & verax16_pbi_mask)
     {
         if (!verax16_cs)
         {
@@ -2411,13 +2451,12 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
         return 0;
     }
 
-    if (verax16_cs && byte == 0x00)
+    if (verax16_cs)
     {
         verax16_cs = FALSE;
-        /* Ripristino Math Pack spostato in pbi.c */
+        /* Math Pack restore is done in pbi.c */
         VERAX16_LOG(1, "VeraX16: Latch DISABLED");
     }
-    //Log_D("PBI_D1FF PutByte NOT HANDLED");
     return PBI_NOT_HANDLED;
 }
 
@@ -2442,11 +2481,22 @@ void PBI_VERAX16_Scanline(void)
     if (!PBI_VERAX16_enabled)
         return;
 
-    vera_scanline_accum += VERA_SCANLINES_PER_FRAME;
-    while (vera_scanline_accum >= (unsigned int)Atari800_tv_mode)
+    if (vera_dead_lines)
     {
-        vera_advance_scanline_once();
-        vera_scanline_accum -= (unsigned int)Atari800_tv_mode;
+        vera_dead_lines--;
+        return;
+    }
+
+    /* VERA runs free at 31468.75 lines/s (25.175 MHz / 800 = 59.94 Hz),
+     * asynchronous to the Atari: advance it by the ratio of line rates. */
+    vera_scanline_accum += VERA_LINE_RATE_X100;
+    {
+        unsigned int atari_rate = atari_line_rate_x100();
+        while (vera_scanline_accum >= atari_rate)
+        {
+            vera_advance_scanline_once();
+            vera_scanline_accum -= atari_rate;
+        }
     }
     vera_midline_sync_cursor();
 }

@@ -251,7 +251,12 @@ void PBI_D1PutByte(UWORD addr, UBYTE byte)
 		D(printf("D1FF write:%x\n", byte));
 		if (D1FF_LATCH != byte) {
 			/* if it's not valid, ignore it */
-			if (byte != 0 && byte != 1 && byte != 2 && byte != 4 && byte != 8 && byte != 0x10 && byte !=0x20 && byte != 0x40 && byte != 0x80){
+			/* The VERA latches only its own bit, so multi-bit writes are legal for it */
+			int valid_onehot = (byte == 0 || byte == 1 || byte == 2 || byte == 4 || byte == 8 || byte == 0x10 || byte == 0x20 || byte == 0x40 || byte == 0x80);
+#ifdef PBI_VERAX16
+			if (PBI_VERAX16_enabled) valid_onehot = TRUE;
+#endif
+			if (!valid_onehot){
 				D(printf("*****INVALID d1ff write:%2x********\n",byte));
 				return;
 			}
