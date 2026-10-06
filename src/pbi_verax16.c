@@ -79,6 +79,7 @@
 #include "memory.h"
 #include "cpu.h"
 #include "pokey.h"
+#include "pokeysnd.h"
 #include "pia.h"
 #include <math.h>
 #include <stdlib.h>
@@ -283,6 +284,16 @@ typedef struct {
 
 static VERA_PSGState vera_psg_state[VERA_PSG_VOICE_COUNT];
 static UWORD vera_psg_noise_state = 1;
+static double vera_psg_phase = 0.0;
+static int vera_psg_last_left = 0;
+static int vera_psg_last_right = 0;
+
+/* PSG level relative to POKEY, in percent. 100 = a voice at full volume
+   (63, 50% pulse) has the same RMS as a POKEY channel playing a pure tone
+   at volume 15: measured on mzpokeysnd (NONLINEAR_MIXING, 16 bit) ~5500,
+   VERA voice with the x16emu scale below ~2010. */
+static int verax16_psg_volume = 100;
+#define VERA_PSG_POKEY_MATCH   2.74
 
 static const UWORD vera_psg_volume_lut[64] = {
       0,                                           4,   8,  12,
@@ -1385,6 +1396,9 @@ static void vera_audio_reset_state(void)
     for (i = 0; i < VERA_PSG_VOICE_COUNT; i++)
         vera_psg_state[i].noiseval = 0;
     vera_psg_noise_state = 1;
+    vera_psg_phase = 0.0;
+    vera_psg_last_left = 0;
+    vera_psg_last_right = 0;
 }
 
 static int vera_pcm_read_byte(UBYTE *byte)
@@ -2286,6 +2300,17 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
             recognized = TRUE;
         }
         else
+        if (strcmp(argv[i], "-verax16-psg-volume") == 0 && i + 1 < *argc)
+        {
+            int n = atoi(argv[i + 1]);
+            if (n >= 0 && n <= 400)
+                verax16_psg_volume = n;
+            else
+                Log_print("VERAX16: invalid -verax16-psg-volume %s (0-400)", argv[i + 1]);
+            i++;
+            recognized = TRUE;
+        }
+        else
         if (strcmp(argv[i], "-verax16-sdcard") == 0 && i + 1 < *argc)
         {
             Util_strlcpy(verax16_sdcard_filename, argv[i + 1],
@@ -2305,6 +2330,8 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
                 Log_print("\t-verax16-config-ms N  FPGA power-on configuration time, bus dead meanwhile (default: 100)");
                 Log_print("\t                    0 = board holds Atari RESET until CONFIG_DONE");
                 Log_print("\t-verax16-debuglevel N Set debug level (default: 0)");
+                Log_print("\t-verax16-psg-volume N VERA PSG level in percent, 0-400 (default: 100)");
+                Log_print("\t                    100 = full volume voice as loud as a POKEY channel at volume 15");
                 Log_print("\t-verax16-sdcard F   Raw SD image file (for example from dd) exposed through VERA SPI");
                 Log_print("\t                    The Atari driver handles MBR/GPT/filesystems on top of the raw 512-byte blocks");
             }
@@ -2403,6 +2430,13 @@ int PBI_VERAX16_ReadConfig(char *string, char *ptr)
             verax16_config_ms = ms;
     }
     else
+    if (strcmp(string, "VERAX16_PSG_VOLUME") == 0)
+    {
+        int n = atoi(ptr);
+        if (n >= 0 && n <= 400)
+            verax16_psg_volume = n;
+    }
+    else
     if (strcmp(string, "VERAX16_PBI_ID") == 0)
     {
         int n = atoi(ptr);
@@ -2423,6 +2457,7 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
     fprintf(fp, "VERAX16_SDCARD=%s\n", verax16_sdcard_filename);
     fprintf(fp, "VERAX16_PBI_ID=%d\n", verax16_pbi_num);
     fprintf(fp, "VERAX16_CONFIG_MS=%d\n", verax16_config_ms);
+    fprintf(fp, "VERAX16_PSG_VOLUME=%d\n", verax16_psg_volume);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2583,18 +2618,85 @@ void PBI_VERAX16_SoundInit(unsigned int playback_freq, unsigned int channels, in
     vera_host_sample_size = sample_size;
 }
 
+typedef struct {
+    UWORD freq;
+    UBYTE vol_route;
+    UBYTE wave_pulse;
+} VERA_PSGVoice;
+
+/* One PSG step at the VERA DAC rate (25 MHz / 512) */
+static void vera_psg_tick(const VERA_PSGVoice *voices, int *left, int *right)
+{
+    int voice;
+    int mix_left = 0;
+    int mix_right = 0;
+
+    for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++)
+    {
+        VERA_PSGState *state = &vera_psg_state[voice];
+        UBYTE vol = voices[voice].vol_route & 0x3Fu;
+        UBYTE waveform = (UBYTE)(voices[voice].wave_pulse >> 6);
+        UBYTE pulse_width = voices[voice].wave_pulse & 0x3Fu;
+        UWORD volume = vera_psg_volume_lut[vol];
+        uint32_t new_phase;
+        uint32_t v = 0;
+        int16_t sv;
+        int16_t val;
+
+        vera_psg_noise_state = (UWORD)((vera_psg_noise_state << 1) |
+                             (((vera_psg_noise_state >> 1) ^
+                               (vera_psg_noise_state >> 2) ^
+                               (vera_psg_noise_state >> 4) ^
+                               (vera_psg_noise_state >> 15)) & 1u));
+
+        new_phase = (voices[voice].vol_route & 0xC0u) ?
+                    ((state->phase + voices[voice].freq) & 0x1FFFFu) : 0u;
+        if ((state->phase & 0x10000u) && !(new_phase & 0x10000u))
+            state->noiseval = (UWORD)((vera_psg_noise_state >> 1) & 0x3Fu);
+        state->phase = new_phase;
+
+        switch (waveform & 0x03u)
+        {
+        case 0:
+            v = ((state->phase >> 10) > pulse_width) ? 0u : 0x3Fu;
+            break;
+        case 1:
+            v = (state->phase >> 11) ^ ((pulse_width ^ 0x3Fu) & 0x3Fu);
+            break;
+        case 2:
+            v = ((state->phase & 0x10000u) ?
+                 (~(state->phase >> 10) & 0x3Fu) :
+                 ((state->phase >> 10) & 0x3Fu)) ^ ((pulse_width ^ 0x3Fu) & 0x3Fu);
+            break;
+        default:
+            v = state->noiseval & 0x3Fu;
+            break;
+        }
+
+        sv = (int16_t)(v ^ 0x20u);
+        if (sv & 0x20)
+            sv |= (int16_t)0xFFC0u;
+        val = (int16_t)(sv * (int16_t)volume);
+
+        if (voices[voice].vol_route & 0x40u)
+            mix_left += val >> 3;
+        if (voices[voice].vol_route & 0x80u)
+            mix_right += val >> 3;
+    }
+
+    *left = mix_left;
+    *right = mix_right;
+}
+
 void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sample_size)
 {
-    typedef struct {
-        UWORD freq;
-        UBYTE vol_route;
-        UBYTE wave_pulse;
-    } VERA_PSGVoice;
-
     VERA_PSGVoice voices[VERA_PSG_VOICE_COUNT];
     int frames;
     int frame;
     int voice;
+    double psg_step;
+    double psg_gain;
+    double master;
     UBYTE *buffer8;
     SWORD *buffer16;
 
@@ -2619,6 +2721,13 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
         voices[voice].wave_pulse = vera_vram[base + 3u];
     }
 
+    /* The PSG runs at the DAC rate, not at the host rate: average the PSG
+       steps that fall in each host sample (hold the last one if none) */
+    psg_step = VERA_DAC_RATE / (double)vera_host_playback_freq;
+    psg_gain = VERA_PSG_POKEY_MATCH * (double)verax16_psg_volume / 100.0;
+    /* same master volume as POKEY (-volume) */
+    master = (double)POKEYSND_volume / 256.0;
+
     buffer8 = (UBYTE *)buffer;
     buffer16 = (SWORD *)buffer;
 
@@ -2628,63 +2737,30 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
         int pcm_right = 0;
         int mix_left;
         int mix_right;
+        int ticks = 0;
+        long sum_left = 0;
+        long sum_right = 0;
 
         vera_pcm_render_sample(&pcm_left, &pcm_right);
-        mix_left = pcm_left;
-        mix_right = pcm_right;
 
-        for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++)
+        vera_psg_phase += psg_step;
+        while (vera_psg_phase >= 1.0)
         {
-            VERA_PSGState *state = &vera_psg_state[voice];
-            UBYTE vol = voices[voice].vol_route & 0x3Fu;
-            UBYTE waveform = (UBYTE)(voices[voice].wave_pulse >> 6);
-            UBYTE pulse_width = voices[voice].wave_pulse & 0x3Fu;
-            UWORD volume = vera_psg_volume_lut[vol];
-            uint32_t new_phase;
-            uint32_t v = 0;
-            int16_t sv;
-            int16_t val;
-
-            vera_psg_noise_state = (UWORD)((vera_psg_noise_state << 1) |
-                                 (((vera_psg_noise_state >> 1) ^
-                                   (vera_psg_noise_state >> 2) ^
-                                   (vera_psg_noise_state >> 4) ^
-                                   (vera_psg_noise_state >> 15)) & 1u));
-
-            new_phase = (voices[voice].vol_route & 0xC0u) ?
-                        ((state->phase + voices[voice].freq) & 0x1FFFFu) : 0u;
-            if ((state->phase & 0x10000u) && !(new_phase & 0x10000u))
-                state->noiseval = (UWORD)((vera_psg_noise_state >> 1) & 0x3Fu);
-            state->phase = new_phase;
-
-            switch (waveform & 0x03u)
-            {
-            case 0:
-                v = ((state->phase >> 10) > pulse_width) ? 0u : 0x3Fu;
-                break;
-            case 1:
-                v = (state->phase >> 11) ^ ((pulse_width ^ 0x3Fu) & 0x3Fu);
-                break;
-            case 2:
-                v = ((state->phase & 0x10000u) ?
-                     (~(state->phase >> 10) & 0x3Fu) :
-                     ((state->phase >> 10) & 0x3Fu)) ^ ((pulse_width ^ 0x3Fu) & 0x3Fu);
-                break;
-            default:
-                v = state->noiseval & 0x3Fu;
-                break;
-            }
-
-            sv = (int16_t)(v ^ 0x20u);
-            if (sv & 0x20)
-                sv |= (int16_t)0xFFC0u;
-            val = (int16_t)(sv * (int16_t)volume);
-
-            if (voices[voice].vol_route & 0x40u)
-                mix_left += val >> 3;
-            if (voices[voice].vol_route & 0x80u)
-                mix_right += val >> 3;
+            int l, r;
+            vera_psg_phase -= 1.0;
+            vera_psg_tick(voices, &l, &r);
+            sum_left += l;
+            sum_right += r;
+            ticks++;
         }
+        if (ticks > 0)
+        {
+            vera_psg_last_left = (int)(sum_left / ticks);
+            vera_psg_last_right = (int)(sum_right / ticks);
+        }
+
+        mix_left = (int)(((double)vera_psg_last_left * psg_gain + (double)pcm_left) * master);
+        mix_right = (int)(((double)vera_psg_last_right * psg_gain + (double)pcm_right) * master);
 
         if (sample_size == 2)
         {
