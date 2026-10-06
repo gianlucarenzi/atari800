@@ -279,6 +279,17 @@ void POKEY_PutByte(UWORD addr, UBYTE byte)
 		printf("WR: IRQEN = %x, PC = %x\n", POKEY_IRQEN, PC);
 #endif
 		POKEY_IRQST |= ~byte & 0xf7;	/* Reset disabled IRQs except XMTDONE */
+#ifdef NEW_CYCLE_EXACT
+		/* A timer IRQ already latched on the last scanline but not yet asserted
+		   (deferred to its exact cycle, see cpu.c) is dropped too when its
+		   enable bit goes off: on the real chip clearing IRQEN releases the
+		   line at once. Without this the deferred CPU_GenerateIRQ() fires after
+		   the source is gone and nobody can clear CPU_IRQ: an endless IRQ loop.
+		   The OS IRQ handler acknowledges with EOR #$FF / STA IRQEN, so for a
+		   few cycles every other source, timers included, is enabled: any
+		   program with POKEY timers running (music) can hit that window. */
+		POKEY_irq_pending_mask &= byte;
+#endif
 		if ((~POKEY_IRQST & POKEY_IRQEN) == 0 && PBI_IRQ == 0 && PIA_IRQ == 0)
 			CPU_IRQ = 0;
 		else
