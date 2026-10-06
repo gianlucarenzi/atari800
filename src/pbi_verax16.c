@@ -237,7 +237,8 @@ static UBYTE vera_l1[7];        /* CONFIG, MAPBASE, TILEBASE, HSCROLL_L/H, VSCRO
 
 /* Audio */
 static UBYTE vera_audio_ctrl = 0;
-static UBYTE vera_audio_rate = 0;
+static UBYTE vera_audio_rate = 0;      /* effective step (256-x above 128) */
+static UBYTE vera_audio_rate_raw = 0;  /* value written, read back as is */
 
 #define VERA_AUDIO_FIFO_SIZE   4096u
 #define VERA_AUDIO_FIFO_MASK   (VERA_AUDIO_FIFO_SIZE - 1u)
@@ -252,7 +253,6 @@ static UBYTE vera_pcm_fifo[VERA_AUDIO_FIFO_SIZE];
 static unsigned int vera_pcm_fifo_read = 0;
 static unsigned int vera_pcm_fifo_write = 0;
 static unsigned int vera_pcm_fifo_count = 0;
-static int vera_pcm_loop = FALSE;
 static double vera_pcm_phase = 0.0;
 static int vera_pcm_current_left = 0;
 static int vera_pcm_current_right = 0;
@@ -1029,10 +1029,25 @@ static void vera_sdcard_detach(void)
 
 static void vera_spi_begin_transfer(UBYTE byte)
 {
-    if (!vera_spi_ss || vera_spi_busy)
+    if (vera_spi_busy)
         return;
 
+    if (!vera_spi_ss)
+    {
+        /* Clock runs anyway, nobody drives MISO: reads back $FF */
+        vera_spi_data = 0xFF;
+        return;
+    }
+
     vera_spi_tx = byte;
+    if (!(vera_spi_ctrl & 0x02u))
+    {
+        /* spictrl.v fast mode: 8 bits in ~16 clk25 cycles (~0.64 us),
+         * about one 6502 cycle: complete at once */
+        vera_spi_data = vera_sd_handle(vera_spi_tx);
+        return;
+    }
+    /* slow mode (clock / 32, ~20 us): done at the next VERA line (~32 us) */
     vera_spi_busy = TRUE;
     vera_spi_cycles_until_done = 10;
 }
@@ -1186,7 +1201,8 @@ static void vera_maybe_trigger_line_irq(void)
     if (vera_scanline_raw > 0x01FFu)
         return;
 
-    if ((vera_dc[0][0] & 0x08u) != 0)
+    /* composer.v: interlaced = video_output_mode[1] (DC_VIDEO bit 1) */
+    if ((vera_dc[0][0] & 0x02u) != 0)
     {
         if ((vera_scanline_raw >> 1) == (vera_irqline >> 1))
             vera_isr |= 0x02u;
@@ -1326,7 +1342,6 @@ static void vera_audio_reset_state(void)
     vera_pcm_fifo_read = 0;
     vera_pcm_fifo_write = 0;
     vera_pcm_fifo_count = 0;
-    vera_pcm_loop = FALSE;
     vera_pcm_phase = 0.0;
     vera_pcm_current_left = 0;
     vera_pcm_current_right = 0;
@@ -1356,19 +1371,11 @@ static void vera_pcm_reset_fifo(void)
     vera_pcm_fifo_read = 0;
     vera_pcm_fifo_write = 0;
     vera_pcm_fifo_count = 0;
-    vera_pcm_loop = FALSE;
     vera_pcm_phase = 0.0;
     vera_pcm_current_left = 0;
     vera_pcm_current_right = 0;
     vera_pcm_current_valid = FALSE;
     memset(vera_pcm_fifo, 0, sizeof(vera_pcm_fifo));
-    vera_audio_update_aflow();
-}
-
-static void vera_pcm_restart_fifo(void)
-{
-    vera_pcm_fifo_read = 0;
-    vera_pcm_fifo_count = vera_pcm_fifo_write;
     vera_audio_update_aflow();
 }
 
@@ -1387,16 +1394,9 @@ static void vera_audio_ctrl_write(UBYTE byte)
 {
     int old_format = vera_audio_ctrl & 0x30u;
 
-    if ((byte & 0xC0u) == 0xC0u)
-        vera_pcm_loop = TRUE;
-    else
-    {
-        vera_pcm_loop = FALSE;
-        if (byte & 0x80u)
-            vera_pcm_reset_fifo();
-    }
-    if (byte & 0x40u)
-        vera_pcm_restart_fifo();
+    /* top.v: bit 7 = FIFO reset; bit 6 (restart/loop) does not exist */
+    if (byte & 0x80u)
+        vera_pcm_reset_fifo();
 
     vera_audio_ctrl = byte & 0x3Fu;
     if ((old_format ^ vera_audio_ctrl) & 0x30u)
@@ -1424,8 +1424,6 @@ static int vera_pcm_load_current_sample(void)
         {
             if (vera_pcm_fifo_count < 4u)
             {
-                if (vera_pcm_loop)
-                    vera_pcm_restart_fifo();
                 if (vera_pcm_fifo_count < 4u)
                 {
                     vera_pcm_fifo_count = 0;
@@ -1445,8 +1443,6 @@ static int vera_pcm_load_current_sample(void)
             SWORD mono;
             if (vera_pcm_fifo_count < 2u)
             {
-                if (vera_pcm_loop)
-                    vera_pcm_restart_fifo();
                 if (vera_pcm_fifo_count < 2u)
                 {
                     vera_pcm_fifo_count = 0;
@@ -1468,8 +1464,6 @@ static int vera_pcm_load_current_sample(void)
         {
             if (vera_pcm_fifo_count < 2u)
             {
-                if (vera_pcm_loop)
-                    vera_pcm_restart_fifo();
                 if (vera_pcm_fifo_count < 2u)
                 {
                     vera_pcm_fifo_count = 0;
@@ -1488,8 +1482,6 @@ static int vera_pcm_load_current_sample(void)
             int mono;
             if (vera_pcm_fifo_count < 1u)
             {
-                if (vera_pcm_loop)
-                    vera_pcm_restart_fifo();
                 if (vera_pcm_fifo_count < 1u)
                     return FALSE;
             }
@@ -1501,8 +1493,6 @@ static int vera_pcm_load_current_sample(void)
         }
     }
 
-    if (vera_pcm_loop && vera_pcm_fifo_count == 0u)
-        vera_pcm_restart_fifo();
 
     vera_pcm_current_valid = TRUE;
     return TRUE;
@@ -1561,6 +1551,7 @@ static void vera_chip_reset(const char *caller)
 
     /* DC defaults */
     memset(vera_dc, 0, sizeof(vera_dc));
+    vera_dc[0][0] = 0x08;   /* DC_VIDEO: line_interlace_mode resets to 1 (top.v) */
     vera_dc[0][1] = 128;    /* DC_HSCALE = 128 (1:1) */
     vera_dc[0][2] = 128;    /* DC_VSCALE = 128 (1:1) */
     /* DC secondary defaults (DCSEL=1 bank) */
@@ -1600,6 +1591,7 @@ static void vera_chip_reset(const char *caller)
 
     vera_audio_ctrl = 0;
     vera_audio_rate = 0;
+    vera_audio_rate_raw = 0;
     vera_audio_reset_state();
     vera_spi_data   = 0xFF;
     vera_spi_ctrl   = 0;
@@ -1697,8 +1689,10 @@ static UBYTE vera_dc_video_read(void)
 
 static UBYTE vera_spi_ctrl_read(void)
 {
+    /* HDL: {busy, 4'b0, autotx, slow, select} */
     return (UBYTE)((vera_spi_busy ? 0x80u : 0x00u) |
                    (vera_spi_autotx ? 0x04u : 0x00u) |
+                   (vera_spi_ctrl & 0x02u) |
                    (vera_spi_ss ? 0x01u : 0x00u));
 }
 
@@ -1882,7 +1876,7 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
         if (offset >= 0x14 && offset <= 0x1A)
             return vera_l1[offset - 0x14];
         if (offset == 0x1B) return vera_audio_ctrl_read();
-        if (offset == 0x1C) return vera_audio_rate;
+        if (offset == 0x1C) return vera_audio_rate_raw;
         if (offset == 0x1D) return 0x00;    /* AUDIO_DATA write-only */
         if (offset == 0x1E)
         {
@@ -2149,6 +2143,9 @@ static void vera_write_reg(int offset, UBYTE byte)
         else
         if (offset == 0x1C)
         {
+            vera_audio_rate_raw = byte;
+            /* pcm.v: 8-bit accumulator, a sample on every bit-7 toggle, so
+             * x > 128 plays like 256-x */
             vera_audio_rate = (byte > 128u) ? (UBYTE)(256u - (unsigned int)byte) : byte;
             vera_audio_update_aflow();
         }
@@ -2171,12 +2168,8 @@ static void vera_write_reg(int offset, UBYTE byte)
             {
                 vera_spi_ss = (byte & 0x01u) != 0u;
                 vera_sd_select(vera_spi_ss);
-                if (!vera_spi_ss)
-                {
-                    vera_spi_busy = FALSE;
-                    vera_spi_cycles_until_done = 0;
-                    vera_spi_data = 0xFF;
-                }
+                /* spictrl.v: deselecting does not touch rx data or a
+                 * transfer in progress */
             }
         }
         break;
@@ -2448,8 +2441,11 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
             }
             else
             {
-                VERAX16_LOG(0, "VeraX16: No ROM Found. Disabling...");
-                PBI_VERAX16_enabled = 0;
+                /* No ROM image: nothing to map at $D800 (the Math Pack
+                 * stays), but the VERA registers keep answering, as on
+                 * the real card. */
+                VERAX16_LOG(0, "VeraX16: no ROM loaded, $D800 not mapped");
+                verax16_cs = FALSE;
                 return PBI_NOT_HANDLED;
             }
         }
@@ -2468,7 +2464,10 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
 /* Returns this device's IRQ status bit for the $D1FF read */
 int PBI_VERAX16_D1ffGetByte(void)
 {
-    return (PBI_IRQ & verax16_pbi_mask) ? verax16_pbi_mask : 0;
+    /* The real card cannot drive only its own bit of a $D1FF read (the
+     * data-bus transceiver enables all eight lines), so it reports nothing:
+     * VERA IRQs are identified by software via VIMIRQ (vera_irq.s). */
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2529,13 +2528,6 @@ void PBI_VERAX16_GetRegSnap(VERA_RegSnap *s)
     memcpy(s->dc, vera_dc, sizeof(s->dc));
     memcpy(s->l0,  vera_l0,    7);
     memcpy(s->l1,  vera_l1,    7);
-    s->fx_x_pos = fx_pixel_pos_x;
-    s->fx_y_pos = fx_pixel_pos_y;
-    s->fx_x_incr = fx_pixel_incr_x;
-    s->fx_y_incr = fx_pixel_incr_y;
-    /* Inizializza temporaneamente a 0 finché non vengono definiti i registri dedicati */
-    s->fx_x_incr_y = 0;
-    s->fx_y_incr_y = 0;
 }
 
 const UBYTE *PBI_VERAX16_GetVRAMPtr(void)

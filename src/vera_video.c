@@ -174,7 +174,8 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
     if (hscale == 0 || vscale == 0) return;
 
     int color_depth = l_config & 0x03;
-    int text_mode_256c = (color_depth == 0) && ((l_config & 0x08) != 0);
+    int t256c = (l_config & 0x08) != 0;
+    int text_mode_256c = (color_depth == 0) && t256c;
     int map_w = 32 << ((l_config >> 4) & 0x03);
     int map_h = 32 << ((l_config >> 6) & 0x03);
     int tile_w = (l_tilebase & 1) ? 16 : 8;
@@ -233,67 +234,16 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
                 shift = (pixels_per_byte - 1 - (tfx % pixels_per_byte)) * bpp;
                 color_idx = (b >> shift) & ((1 << bpp) - 1);
 
-                if (color_idx != 0 && color_depth != 3)
-                    color_idx += (attr >> 4) << 4;
+                /* layer_renderer.v "Apply palette offset": for 2/4/8 bpp,
+                 * pixels 1-15 take attr[7:4] as high nibble, with bit 7
+                 * forced by T256C (Lx_CONFIG bit 3); 8 bpp included. */
+                if (color_idx >= 1 && color_idx <= 15)
+                    color_idx |= (int)((attr & 0xF0u) | (t256c ? 0x80u : 0u));
             }
 
             if (color_idx != 0)
                 row[px] = (UBYTE)color_idx;
         }
-    }
-}
-
-/* ------------------------------------------------------------------
- * Render an affine layer.
- * ------------------------------------------------------------------ */
-static void render_affine_layer(UBYTE *row, const UBYTE *vram, int layer,
-                                const VERA_RegSnap *rs, int py, int start, int end)
-{
-    const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
-    UBYTE l_config = l[0];
-    UBYTE l_mapbase = l[1];
-    UBYTE l_tilebase = l[2];
-    
-    int color_depth = l_config & 0x03;
-    int bpp = 1 << color_depth;
-    int map_w_log2 = 5 + ((l_config >> 4) & 0x03); /* 32, 64, 128, 256 tiles width */
-    int map_h_log2 = 5 + ((l_config >> 6) & 0x03);
-    int tile_w_log2 = (l_tilebase & 1) ? 4 : 3;    /* 16 or 8 */
-    int tile_h_log2 = (l_tilebase & 2) ? 4 : 3;
-    ULONG map_base = (ULONG)l_mapbase * 512u;
-    ULONG tile_base = (ULONG)(l_tilebase & 0xFCu) * 512u;
-
-    int32_t curr_x = rs->fx_x_pos + (py * rs->fx_x_incr_y);
-    int32_t curr_y = rs->fx_y_pos + (py * rs->fx_y_incr_y);
-
-    for (int px = start; px < end; px++) {
-        int map_x = (curr_x >> 9) & ((1 << (map_w_log2 + tile_w_log2)) - 1);
-        int map_y = (curr_y >> 9) & ((1 << (map_h_log2 + tile_h_log2)) - 1);
-
-        int tile_x = map_x >> tile_w_log2;
-        int tile_y = map_y >> tile_h_log2;
-        int pixel_x = map_x & ((1 << tile_w_log2) - 1);
-        int pixel_y = map_y & ((1 << tile_h_log2) - 1);
-
-        ULONG map_addr = map_base + (ULONG)((tile_y * (1 << map_w_log2) + tile_x)) * 2u;
-        UBYTE ch_l = vram[map_addr & 0x1FFFFu];
-        UBYTE attr = vram[(map_addr + 1) & 0x1FFFFu];
-        
-        int tile_idx = ch_l | ((attr & 0x03) << 8);
-        ULONG glyph_addr = tile_base + (ULONG)tile_idx * ((1 << (tile_w_log2 + tile_h_log2)) * bpp / 8) + 
-                          (pixel_y * (1 << tile_w_log2) * bpp / 8) + (pixel_x * bpp / 8);
-        
-        UBYTE b = vram[glyph_addr & 0x1FFFFu];
-        int shift = (8 / bpp - 1 - (pixel_x % (8 / bpp))) * bpp;
-        int color_idx = (b >> shift) & ((1 << bpp) - 1);
-
-        if (color_idx != 0) {
-            if (color_depth != 3) color_idx += (attr & 0xF0);
-            row[px] = (UBYTE)color_idx;
-        }
-
-        curr_x += rs->fx_x_incr;
-        curr_y += rs->fx_y_incr;
     }
 }
 
@@ -305,7 +255,6 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
 {
     const UBYTE *l = (layer == 0) ? rs->l0 : rs->l1;
     UBYTE l_config = l[0];
-    UBYTE l_mapbase = l[1];
     UBYTE l_tilebase = l[2];
     
     int hscale = rs->dc[0][1];
@@ -315,8 +264,10 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
     int color_depth = l_config & 0x03;
     int bpp = 1 << color_depth;
     int bitmap_w = (l_tilebase & 1) ? 640 : 320;
-    ULONG bitmap_base = (ULONG)l_mapbase * 512u;
-    int palette_offset = (l_tilebase & 0x0F) << 4;
+    /* layer_renderer.v: bitmap data from TILEBASE[7:2] (MAPBASE unused);
+     * palette offset from HSCROLL_H[3:0], bit 7 forced by T256C */
+    ULONG bitmap_base = (ULONG)(l_tilebase & 0xFCu) * 512u;
+    int palette_offset = ((l[4] & 0x0F) << 4) | ((l_config & 0x08) ? 0x80 : 0);
 
     {
         int ly = ((py - ay0) * vscale) >> 7;
@@ -339,7 +290,9 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
             color_idx = (b >> bit_offset) & ((1 << bpp) - 1);
             if (color_idx == 0) continue;
 
-            if (color_depth != 3) color_idx += palette_offset;
+            /* no offset at 1 bpp; at 2/4/8 bpp only for pixels 1-15 */
+            if (color_depth != 0 && color_idx <= 15)
+                color_idx = (color_idx & 0x0F) | palette_offset;
             row[px] = (UBYTE)color_idx;
         }
     }
@@ -482,18 +435,16 @@ static void render_scanline_range(int py, int xstart, int xend)
     if (end <= start)
         return;
 
+    /* Lx_CONFIG bit 3 is T256C (attr_mode in layer_renderer.v), not an
+     * affine mode: VERA has no affine layer.  Bit 2 selects bitmap mode. */
     if (rs.dc[0][0] & 0x10) {
-        if (rs.l0[0] & 0x08)
-            render_affine_layer(layer0_row, vram, 0, &rs, py, start, end);
-        else if (rs.l0[0] & 0x04)
+        if (rs.l0[0] & 0x04)
             render_bitmap_layer(layer0_row, vram, 0, &rs, py, ax0, ay0, start, end);
         else
             render_tile_layer(layer0_row, vram, 0, &rs, py, ax0, ay0, start, end);
     }
     if (rs.dc[0][0] & 0x20) {
-        if (rs.l1[0] & 0x08)
-            render_affine_layer(layer1_row, vram, 1, &rs, py, start, end);
-        else if (rs.l1[0] & 0x04)
+        if (rs.l1[0] & 0x04)
             render_bitmap_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
         else
             render_tile_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
