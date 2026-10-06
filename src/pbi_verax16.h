@@ -61,6 +61,9 @@ void PBI_VERAX16_Scanline(void);
 UBYTE PBI_VERAX16_GetVRAM(ULONG addr);
 void  PBI_VERAX16_PutVRAM(ULONG addr, UBYTE byte);
 
+/* Counter bumped by any write that can change the picture */
+unsigned int PBI_VERAX16_GetVideoVersion(void);
+
 /* Register snapshot for the VERA video renderer */
 typedef struct {
     UBYTE dc[8][4]; /* DC banks: 0=Video/Scale, 1=Start/Stop, 2=FX Ctrl, 3=FX Incr, 4=FX Pos, 5=FX Pos, 6=FX Cache */

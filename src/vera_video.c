@@ -30,6 +30,8 @@ static Uint32        vera_fb[VERA_W * VERA_H];
 static UBYTE         vera_layer_fb[2][VERA_W * VERA_H];
 static UBYTE         vera_sprite_col_fb[VERA_W * VERA_H];
 static UBYTE         vera_sprite_z_fb[VERA_W * VERA_H];
+/* PBI_VERAX16_GetVideoVersion() value used by the last full render of each line */
+static unsigned int  vera_line_version[VERA_H];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
 
@@ -469,11 +471,68 @@ void VERA_VIDEO_Reset(void)
     memset(vera_sprite_col_fb, 0, sizeof(vera_sprite_col_fb));
     memset(vera_sprite_z_fb, 0, sizeof(vera_sprite_z_fb));
     memset(vera_fb, 0, sizeof(vera_fb));
+    memset(vera_line_version, 0, sizeof(vera_line_version));
 }
 
 void VERA_VIDEO_Scanline(UWORD scanline)
 {
+    unsigned int version = PBI_VERAX16_GetVideoVersion();
+
+    if (scanline < VERA_H) {
+        /* Nothing that affects the picture was written since this line was
+         * last rendered: the buffers are still valid. */
+        if (vera_line_version[scanline] == version)
+            return;
+        vera_line_version[scanline] = version;
+    }
     render_scanline_range((int)scanline, 0, VERA_W);
+}
+
+/* Palette/border change mid-line: only the colour lookup is redone from the
+ * indices already rendered at line start, as the real chip reads the palette
+ * at pixel output time while layer data was fetched a line earlier. */
+void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart)
+{
+    VERA_RegSnap rs;
+    const UBYTE *vram;
+    int py = (int)scanline;
+    int ax0, ax1, ay0, ay1, start, end;
+    size_t row;
+
+    if (!PBI_VERAX16_enabled || py < 0 || py >= VERA_H)
+        return;
+
+    PBI_VERAX16_GetRegSnap(&rs);
+    vram = PBI_VERAX16_GetVRAMPtr();
+
+    ax0 = (int)rs.dc[1][0] * 4;
+    ax1 = (int)rs.dc[1][1] * 4;
+    ay0 = (int)rs.dc[1][2] * 2;
+    ay1 = (int)rs.dc[1][3] * 2;
+    if (ax0 < 0) ax0 = 0;
+    if (ax1 > VERA_W) ax1 = VERA_W;
+    if (ay0 < 0) ay0 = 0;
+    if (ay1 > VERA_H) ay1 = VERA_H;
+
+    start = (int)xstart;
+    if (start < 0) start = 0;
+    end = VERA_W;
+    if (end <= start)
+        return;
+
+    row = (size_t)py * VERA_W;
+    for (int px = start; px < end; px++) {
+        int inside = (py >= ay0 && py < ay1 && px >= ax0 && px < ax1);
+        UBYTE color_idx = 0;
+
+        if (inside)
+            color_idx = compose_pixel_index(vera_sprite_z_fb[row + px],
+                                            vera_sprite_col_fb[row + px],
+                                            vera_layer_fb[0][row + px],
+                                            vera_layer_fb[1][row + px]);
+        vera_fb[row + px] = get_output_color(vram, rs.dc[0][0],
+                                             color_idx ? color_idx : rs.dc[0][3]);
+    }
 }
 
 void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart)
@@ -508,6 +567,7 @@ int  VERA_VIDEO_Init(void) { return 1; }
 void VERA_VIDEO_Reset(void) {}
 void VERA_VIDEO_Scanline(UWORD scanline) { (void)scanline; }
 void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart) { (void)scanline; (void)xstart; }
+void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart) { (void)scanline; (void)xstart; }
 void VERA_VIDEO_Frame(void) {}
 void VERA_VIDEO_Exit(void) {}
 #endif

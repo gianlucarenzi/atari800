@@ -34,6 +34,9 @@ void VERA_VIDEO_Scanline(UWORD scanline);
 /* Re-render the tail of a VERA scanline after a mid-line register/VRAM change. */
 void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart);
 
+/* Redo only the colour lookup of a line tail (palette/border change). */
+void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart);
+
 /* Release all SDL resources. */
 void VERA_VIDEO_Exit(void);
 

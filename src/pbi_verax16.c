@@ -169,6 +169,16 @@ static const int vera_step_lut[32] = {
 /* VERA chip state                                                      */
 /* ------------------------------------------------------------------ */
 
+/* Bumped by every write that can change the picture (VRAM data, DC and layer
+ * registers, power-on/reset, direct VRAM pokes): the renderer skips lines
+ * whose last render used the current value. */
+static unsigned int vera_video_version = 1;
+
+unsigned int PBI_VERAX16_GetVideoVersion(void)
+{
+    return vera_video_version;
+}
+
 /* 128 KB VRAM — not cleared on soft chip reset, only on power-on */
 static UBYTE vera_vram[VERA_VRAM_SIZE];
 
@@ -1139,15 +1149,33 @@ static int vera_midline_write_cost(int offset, int dcsel)
     return VERA_MIDLINE_DATA_STEP_8BPP;
 }
 
+/* The real VERA renders layers and sprites into a double line buffer one
+ * line ahead, so register and VRAM writes made during a line take effect
+ * from the next line: the line-start render already covers them.  Only what
+ * is read at pixel output time shows up mid-line: the palette, the border
+ * colour, DC_VIDEO (output mode, layer/sprite enables) and the horizontal
+ * active window.  Those are the only writes that re-render the line tail. */
+#define VERA_MIDLINE_NONE    0
+#define VERA_MIDLINE_RECOLOR 1   /* palette/border: redo colour lookup only */
+#define VERA_MIDLINE_FULL    2   /* output mode/enables/window: re-render tail */
+
 static int vera_midline_affects_video(int offset, int dcsel)
 {
-    if (offset == 0x03 || offset == 0x04)
-        return TRUE;
-    if (offset >= 0x0D && offset <= 0x1A)
-        return TRUE;
-    if (offset >= 0x09 && offset <= 0x0C)
-        return (dcsel == 0x00 || dcsel == 0x01);
-    return FALSE;
+    if (offset == 0x09)
+        return (dcsel == 0x00 || dcsel == 0x01) ? VERA_MIDLINE_FULL : VERA_MIDLINE_NONE;  /* DC_VIDEO, DC_HSTART */
+    if (offset == 0x0A)
+        return (dcsel == 0x01) ? VERA_MIDLINE_FULL : VERA_MIDLINE_NONE;                   /* DC_HSTOP */
+    if (offset == 0x0C)
+        return (dcsel == 0x00) ? VERA_MIDLINE_RECOLOR : VERA_MIDLINE_NONE;                /* DC_BORDER */
+    return VERA_MIDLINE_NONE;
+}
+
+/* TRUE if a VRAM write at addr lands in the palette ($1FA00-$1FBFF).
+ * FX cache writes cover addr & $1FFFC .. +3, which stays inside the same
+ * 512-byte block. */
+static int vera_midline_palette_hit(ULONG addr)
+{
+    return (((addr & 0x1FFFFu) >> 9) == 0xFDu) ? VERA_MIDLINE_RECOLOR : VERA_MIDLINE_NONE;
 }
 
 static void vera_midline_sync_cursor(void)
@@ -1167,7 +1195,7 @@ static void vera_midline_sync_cursor(void)
         vera_midline_x_fp = base_x_fp;
 }
 
-static void vera_midline_rerender_tail(int offset, int dcsel)
+static void vera_midline_rerender_tail(int offset, int dcsel, int mode)
 {
     int cost;
     int x;
@@ -1188,7 +1216,10 @@ static void vera_midline_rerender_tail(int offset, int dcsel)
     if (x > 640)
         x = 640;
 
-    VERA_VIDEO_Midline(vera_scanline_raw, (UWORD)x);
+    if (mode == VERA_MIDLINE_FULL)
+        VERA_VIDEO_Midline(vera_scanline_raw, (UWORD)x);
+    else
+        VERA_VIDEO_Recolor(vera_scanline_raw, (UWORD)x);
 
     cost = vera_midline_write_cost(offset, dcsel);
     vera_midline_x_fp += cost;
@@ -1534,6 +1565,7 @@ static void vera_pcm_render_sample(int *left, int *right)
 /* Soft reset: registers to defaults, VRAM contents preserved */
 static void vera_chip_reset(const char *caller)
 {
+    vera_video_version++;
     VERAX16_LOG(1, "VeraX16: VERA chip soft-reset called by: %s", caller);
     memset(vera_addr_l, 0, sizeof(vera_addr_l));
     memset(vera_addr_m, 0, sizeof(vera_addr_m));
@@ -1893,9 +1925,11 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
 
 static void vera_write_reg(int offset, UBYTE byte)
 {
+    if (offset == 0x03 || offset == 0x04 || (offset >= 0x09 && offset <= 0x1A))
+        vera_video_version++;
     int addrsel = vera_ctrl & 0x01;
     int dcsel   = (vera_ctrl >> 1) & 0x3F;
-    int rerender_midline = FALSE;
+    int rerender_midline = VERA_MIDLINE_NONE;
 
     switch (offset)
     {
@@ -1925,22 +1959,23 @@ static void vera_write_reg(int offset, UBYTE byte)
     case 0x03:  /* DATA0 — VRAM write through port 0 */
         if (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL)
         {
+            rerender_midline = vera_midline_palette_hit(VERA_FULL_ADDR(1));
             vera_fx_2bit_poke(byte);
-            rerender_midline = TRUE;
             break;
         }
+        rerender_midline = vera_midline_palette_hit(VERA_FULL_ADDR(0));
         vera_fx_write_data(VERA_FULL_ADDR(0), vera_fx_addr_nibble(0), byte);
         vera_advance(0);
         vera_refresh_prefetch(0);
-        rerender_midline = TRUE;
         break;
     case 0x04:  /* DATA1 — VRAM write through port 1 */
         if (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL)
         {
+            rerender_midline = vera_midline_palette_hit(VERA_FULL_ADDR(1));
             vera_fx_2bit_poke(byte);
-            rerender_midline = TRUE;
             break;
         }
+        rerender_midline = vera_midline_palette_hit(VERA_FULL_ADDR(1));
         vera_fx_write_data(VERA_FULL_ADDR(1), vera_fx_addr_nibble(1), byte);
         if (fx_addr1_mode == FX_MODE_LINE_DRAW)
         {
@@ -1989,7 +2024,6 @@ static void vera_write_reg(int offset, UBYTE byte)
             vera_advance(1);
         }
         vera_refresh_prefetch(1);
-        rerender_midline = TRUE;
         break;
     case 0x05:  /* CTRL */
         if (byte & 0x80u)
@@ -2175,11 +2209,15 @@ static void vera_write_reg(int offset, UBYTE byte)
         break;
     }
 
-    if (vera_midline_affects_video(offset, dcsel))
-        rerender_midline = TRUE;
+    {
+        int m = vera_midline_affects_video(offset, dcsel);
 
-    if (rerender_midline)
-        vera_midline_rerender_tail(offset, dcsel);
+        if (m > rerender_midline)
+            rerender_midline = m;
+    }
+
+    if (rerender_midline != VERA_MIDLINE_NONE)
+        vera_midline_rerender_tail(offset, dcsel, rerender_midline);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2516,6 +2554,7 @@ UBYTE PBI_VERAX16_GetVRAM(ULONG addr)
 
 void PBI_VERAX16_PutVRAM(ULONG addr, UBYTE byte)
 {
+    vera_video_version++;
     vera_vram[addr & 0x1FFFFu] = byte;
 }
 
