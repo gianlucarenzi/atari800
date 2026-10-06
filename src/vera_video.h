@@ -25,6 +25,13 @@ struct SDL_Window *VERA_VIDEO_GetWindow(void);
 /* Called once per emulated frame to render the VERA display. */
 void VERA_VIDEO_Frame(void);
 
+/* Integer window size multiplier, for high-DPI screens.  Out-of-range
+ * values are ignored; an open window is resized at once. */
+#define VERA_VIDEO_SCALE_MIN 1
+#define VERA_VIDEO_SCALE_MAX 4
+void VERA_VIDEO_SetScale(int scale);
+int  VERA_VIDEO_GetScale(void);
+
 /* Reset the cached VERA output buffers. */
 void VERA_VIDEO_Reset(void);
 

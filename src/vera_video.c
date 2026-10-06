@@ -34,6 +34,8 @@ static UBYTE         vera_sprite_z_fb[VERA_W * VERA_H];
 static unsigned int  vera_line_version[VERA_H];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
+/* integer window size multiplier (-verax16-scale), for high-DPI screens */
+static int           vera_scale = 1;
 
 /* ------------------------------------------------------------------
  * Public interface.
@@ -41,6 +43,40 @@ static int           vera_open = 0;
 SDL_Window *VERA_VIDEO_GetWindow(void)
 {
     return vera_win;
+}
+
+/* Largest multiplier <= vera_scale whose window fits the usable area of
+ * the display the main window is on. */
+static int vera_fit_scale(void)
+{
+    SDL_Rect r;
+    int disp = SDL_VIDEO_wnd != NULL ? SDL_GetWindowDisplayIndex(SDL_VIDEO_wnd) : 0;
+    int scale = vera_scale;
+
+    if (disp < 0 || SDL_GetDisplayUsableBounds(disp, &r) != 0)
+        return scale;
+    while (scale > 1 && (VERA_W * scale > r.w || VERA_H * scale > r.h))
+        scale--;
+    if (scale != vera_scale)
+        Log_print("VERA_VIDEO: scale %d does not fit the %dx%d display, using %d",
+                  vera_scale, r.w, r.h, scale);
+    return scale;
+}
+
+void VERA_VIDEO_SetScale(int scale)
+{
+    if (scale < VERA_VIDEO_SCALE_MIN || scale > VERA_VIDEO_SCALE_MAX)
+        return;
+    vera_scale = scale;
+    if (vera_win != NULL) {
+        int s = vera_fit_scale();
+        SDL_SetWindowSize(vera_win, VERA_W * s, VERA_H * s);
+    }
+}
+
+int VERA_VIDEO_GetScale(void)
+{
+    return vera_scale;
 }
 
 /* ------------------------------------------------------------------
@@ -70,9 +106,11 @@ static int vera_open_window(void)
         wy = main_y;
     }
 
+    int scale = vera_fit_scale();
+
     vera_win = SDL_CreateWindow("VeraX16 Video",
                                 wx, wy,
-                                VERA_W, VERA_H,
+                                VERA_W * scale, VERA_H * scale,
                                 SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!vera_win) {
         Log_print("VERA_VIDEO: SDL_CreateWindow: %s", SDL_GetError());
@@ -102,7 +140,8 @@ static int vera_open_window(void)
         return 0;
     }
 
-    Log_print("VERA_VIDEO: window opened %dx%d (logical)", VERA_W, VERA_H);
+    Log_print("VERA_VIDEO: window opened %dx%d (logical %dx%d, scale %d)",
+              VERA_W * scale, VERA_H * scale, VERA_W, VERA_H, scale);
     vera_open = 1;
     return 1;
 }
@@ -564,6 +603,8 @@ void VERA_VIDEO_Exit(void)
 
 #else /* !SDL2 */
 int  VERA_VIDEO_Init(void) { return 1; }
+void VERA_VIDEO_SetScale(int scale) { (void)scale; }
+int  VERA_VIDEO_GetScale(void) { return 1; }
 void VERA_VIDEO_Reset(void) {}
 void VERA_VIDEO_Scanline(UWORD scanline) { (void)scanline; }
 void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart) { (void)scanline; (void)xstart; }

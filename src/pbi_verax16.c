@@ -2327,6 +2327,18 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
             recognized = TRUE;
         }
         else
+        if (strcmp(argv[i], "-verax16-scale") == 0 && i + 1 < *argc)
+        {
+            int n = atoi(argv[i + 1]);
+            if (n >= VERA_VIDEO_SCALE_MIN && n <= VERA_VIDEO_SCALE_MAX)
+                VERA_VIDEO_SetScale(n);
+            else
+                Log_print("VERAX16: invalid -verax16-scale %s (%d-%d)", argv[i + 1],
+                          VERA_VIDEO_SCALE_MIN, VERA_VIDEO_SCALE_MAX);
+            i++;
+            recognized = TRUE;
+        }
+        else
         if (strcmp(argv[i], "-verax16-sdcard") == 0 && i + 1 < *argc)
         {
             Util_strlcpy(verax16_sdcard_filename, argv[i + 1],
@@ -2348,6 +2360,8 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
                 Log_print("\t-verax16-debuglevel N Set debug level (default: 0)");
                 Log_print("\t-verax16-psg-volume N VERA PSG level in percent, 0-400 (default: 100)");
                 Log_print("\t                    100 = full volume voice as loud as a POKEY channel at volume 15");
+                Log_print("\t-verax16-scale N    VERA window size multiplier, 1-4 (default: 1)");
+                Log_print("\t                    for high-DPI screens; reduced if the window would not fit");
                 Log_print("\t-verax16-sdcard F   Raw SD image file (for example from dd) exposed through VERA SPI");
                 Log_print("\t                    The Atari driver handles MBR/GPT/filesystems on top of the raw 512-byte blocks");
             }
@@ -2473,6 +2487,13 @@ int PBI_VERAX16_ReadConfig(char *string, char *ptr)
             verax16_psg_volume = n;
     }
     else
+    if (strcmp(string, "VERAX16_SCALE") == 0)
+    {
+        int n = atoi(ptr);
+        if (n >= VERA_VIDEO_SCALE_MIN && n <= VERA_VIDEO_SCALE_MAX)
+            VERA_VIDEO_SetScale(n);
+    }
+    else
     if (strcmp(string, "VERAX16_PBI_ID") == 0)
     {
         int n = atoi(ptr);
@@ -2494,6 +2515,7 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
     fprintf(fp, "VERAX16_PBI_ID=%d\n", verax16_pbi_num);
     fprintf(fp, "VERAX16_CONFIG_MS=%d\n", verax16_config_ms);
     fprintf(fp, "VERAX16_PSG_VOLUME=%d\n", verax16_psg_volume);
+    fprintf(fp, "VERAX16_SCALE=%d\n", VERA_VIDEO_GetScale());
 }
 
 /* ------------------------------------------------------------------ */
