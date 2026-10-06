@@ -42,6 +42,7 @@ int  PBI_VERAX16_Initialise(int *argc, char *argv[]);
 void PBI_VERAX16_Exit(void);
 void PBI_VERAX16_Reset(void);
 void PBI_VERAX16_PowerCycle(void);   /* Atari cold start = VERA FPGA power-on */
+void PBI_VERAX16_ForceRAMbo(void);   /* card present => RAMbo 256K via PORTB */
 
 /* Config file support */
 int  PBI_VERAX16_ReadConfig(char *string, char *ptr);

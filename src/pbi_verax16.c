@@ -2359,20 +2359,6 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
     if (!PBI_VERAX16_enabled)
         return TRUE;
 
-    /* The VERA X16 board carries a RAMbo 256K expansion banked through
-     * PORTB, so enabling the card also brings in that RAM. */
-    if (Atari800_machine_type == Atari800_MACHINE_XLXE)
-    {
-        if (MEMORY_ram_size != MEMORY_RAM_320_RAMBO)
-        {
-            VERAX16_LOG(1, "VeraX16: RAM %dKB -> 320KB (RAMbo 256K via PORTB)",
-                      MEMORY_ram_size);
-            MEMORY_ram_size = MEMORY_RAM_320_RAMBO;
-        }
-    }
-    else
-        VERAX16_LOG(0, "VeraX16: not an XL/XE machine, RAMbo 256K expansion not enabled");
-
     vera_power_on("INITIAL_SETUP", (unsigned int)verax16_config_ms);
 
     /* Loading OS handler ROM is MANDATORY */
@@ -2435,6 +2421,26 @@ void PBI_VERAX16_Reset(void)
          * is cleared (done by the bus), which re-enables the Math Pack. */
         verax16_cs = FALSE;
         memcpy(MEMORY_mem + 0xd800, MEMORY_os + 0x1800, 0x800);
+    }
+}
+
+/* The VERA X16 board carries a RAMbo 256K expansion banked through PORTB,
+ * so with the card present the machine always has that RAM.  Called on
+ * every machine (re)initialisation, before the memory is set up. */
+void PBI_VERAX16_ForceRAMbo(void)
+{
+    if (!PBI_VERAX16_enabled)
+        return;
+    if (Atari800_machine_type != Atari800_MACHINE_XLXE)
+    {
+        VERAX16_LOG(1, "VeraX16: not an XL/XE machine, RAMbo 256K expansion not enabled");
+        return;
+    }
+    if (MEMORY_ram_size != MEMORY_RAM_320_RAMBO)
+    {
+        VERAX16_LOG(1, "VeraX16: RAM %dKB -> 320KB (RAMbo 256K via PORTB)",
+                  MEMORY_ram_size);
+        MEMORY_ram_size = MEMORY_RAM_320_RAMBO;
     }
 }
 

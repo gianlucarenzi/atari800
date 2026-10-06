@@ -360,6 +360,9 @@ int Atari800_InitialiseMachine(void)
 {
 	int have_roms;
 	ESC_ClearAll();
+#ifdef PBI_VERAX16
+	PBI_VERAX16_ForceRAMbo();
+#endif
 	have_roms = load_roms();
 	Atari800_UpdateKeyboardDetached();
 	Atari800_UpdateJumper();
