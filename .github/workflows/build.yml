@@ -7,11 +7,12 @@ on:
         description: 'Version for installer (e.g. 6.1.0). Empty = skip.'
         required: false
         type: string
-  push:
-    branches: [ "master" ]
-    tags:
-      - 'ATARI800_*_*_*'
-  pull_request:
+# Disabled for now: to be reviewed, only manual runs (workflow_dispatch)
+#  push:
+#    branches: [ "master" ]
+#    tags:
+#      - 'ATARI800_*_*_*'
+#  pull_request:
 
 jobs:
   build-amd64:
