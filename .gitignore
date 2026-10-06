@@ -50,3 +50,7 @@
 /.vscode
 /.claude/
 /GEMINI.md
+
+# Created at run time: ROMs downloaded by atari800 and its config file
+/src/rom/
+/src/.atari800.cfg

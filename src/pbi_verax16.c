@@ -1939,9 +1939,25 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
     }
 }
 
+/* TRUE if a register write can change the picture.  Not the PSG voice
+ * registers ($1F9C0-$1F9FF, a music player writes them every frame) nor the
+ * FX registers ($09-$0C with DCSEL >= 2): a new version re-renders every line. */
+static int vera_write_changes_picture(int offset)
+{
+    if (offset == 0x03 || offset == 0x04)
+    {
+        int port = (offset == 0x04 ||
+                    (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL)) ? 1 : 0;
+        return (VERA_FULL_ADDR(port) & ~0x3Fu) != VERA_PSG_REG_BASE;
+    }
+    if (offset >= 0x09 && offset <= 0x0C)
+        return ((vera_ctrl >> 1) & 0x3F) < 2;
+    return offset >= 0x0D && offset <= 0x1A;
+}
+
 static void vera_write_reg(int offset, UBYTE byte)
 {
-    if (offset == 0x03 || offset == 0x04 || (offset >= 0x09 && offset <= 0x1A))
+    if (vera_write_changes_picture(offset))
         vera_video_version++;
     int addrsel = vera_ctrl & 0x01;
     int dcsel   = (vera_ctrl >> 1) & 0x3F;
