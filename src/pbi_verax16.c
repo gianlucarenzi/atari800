@@ -2339,7 +2339,7 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
         {
             if (strcmp(argv[i], "-help") == 0)
             {
-                Log_print("\t-verax16            Enable VeraX16 FPGA PBI video card");
+                Log_print("\t-verax16            Enable VeraX16 FPGA PBI video card (also enables RAMbo 256K)");
                 Log_print("\t--use-verax16       Alias for -verax16");
                 Log_print("\t-verax16-rom F      OS handler ROM (2KB, $D800-$DFFF)");
                 Log_print("\t-verax16-pbi-id N   PBI device bit 0-7 (default: 7, mask=$80)");
@@ -2358,6 +2358,20 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
 
     if (!PBI_VERAX16_enabled)
         return TRUE;
+
+    /* The VERA X16 board carries a RAMbo 256K expansion banked through
+     * PORTB, so enabling the card also brings in that RAM. */
+    if (Atari800_machine_type == Atari800_MACHINE_XLXE)
+    {
+        if (MEMORY_ram_size != MEMORY_RAM_320_RAMBO)
+        {
+            VERAX16_LOG(1, "VeraX16: RAM %dKB -> 320KB (RAMbo 256K via PORTB)",
+                      MEMORY_ram_size);
+            MEMORY_ram_size = MEMORY_RAM_320_RAMBO;
+        }
+    }
+    else
+        VERAX16_LOG(0, "VeraX16: not an XL/XE machine, RAMbo 256K expansion not enabled");
 
     vera_power_on("INITIAL_SETUP", (unsigned int)verax16_config_ms);
 
