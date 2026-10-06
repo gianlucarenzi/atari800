@@ -1153,8 +1153,10 @@ static int vera_midline_write_cost(int offset, int dcsel)
  * line ahead, so register and VRAM writes made during a line take effect
  * from the next line: the line-start render already covers them.  Only what
  * is read at pixel output time shows up mid-line: the palette, the border
- * colour, DC_VIDEO (output mode, layer/sprite enables) and the horizontal
- * active window.  Those are the only writes that re-render the line tail. */
+ * colour, DC_VIDEO (output mode, layer/sprite enables), DC_HSCALE (the
+ * composer scales while reading the line buffer, frac_x_incr in composer.v)
+ * and the horizontal active window.  Those are the only writes that
+ * re-render the line tail. */
 #define VERA_MIDLINE_NONE    0
 #define VERA_MIDLINE_RECOLOR 1   /* palette/border: redo colour lookup only */
 #define VERA_MIDLINE_FULL    2   /* output mode/enables/window: re-render tail */
@@ -1164,7 +1166,7 @@ static int vera_midline_affects_video(int offset, int dcsel)
     if (offset == 0x09)
         return (dcsel == 0x00 || dcsel == 0x01) ? VERA_MIDLINE_FULL : VERA_MIDLINE_NONE;  /* DC_VIDEO, DC_HSTART */
     if (offset == 0x0A)
-        return (dcsel == 0x01) ? VERA_MIDLINE_FULL : VERA_MIDLINE_NONE;                   /* DC_HSTOP */
+        return (dcsel == 0x00 || dcsel == 0x01) ? VERA_MIDLINE_FULL : VERA_MIDLINE_NONE;  /* DC_HSCALE, DC_HSTOP */
     if (offset == 0x0C)
         return (dcsel == 0x00) ? VERA_MIDLINE_RECOLOR : VERA_MIDLINE_NONE;                /* DC_BORDER */
     return VERA_MIDLINE_NONE;
