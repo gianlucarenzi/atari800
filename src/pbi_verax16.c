@@ -134,9 +134,10 @@ static int verax16_cs    = FALSE;  /* chip select: TRUE after $D1FF written with
  * PBI_ADDR constant in ca65 source = $D100.                          */
 #define VERA_REG_BASE    0xD100u
 #define VERA_REG_COUNT   32u
-#define VERA_VERSION_MAJOR 47u
+/* Emulated VERA firmware: 48.0.1 (X16Community vera-module, top.v VERSION_*) */
+#define VERA_VERSION_MAJOR 48u
 #define VERA_VERSION_MINOR 0u
-#define VERA_VERSION_PATCH 2u
+#define VERA_VERSION_PATCH 1u
 
 /* FX coprocessor modes */
 #define FX_MODE_NORMAL     0
@@ -658,17 +659,19 @@ static void vera_fx_2bit_poke(UBYTE value)
     fx_2bit_poke_mode = FALSE;
 }
 
-/* Value returned by the real VERA (47.0.2 HDL, top.v rddata mux) for any
- * DCSEL-muxed register ($09-$0C) that has no read path: 'V', 47, 0, 0.
- * Hardware does NOT return minor/patch here, and the FX registers are
- * write-only. */
+/* Value returned by the real VERA (48.0.1 HDL, top.v rddata mux) for any
+ * DCSEL-muxed register ($09-$0C) that has no read path, DCSEL 63 included:
+ * 'V', major, minor, build = 'V', 48, 0, 1.  The FX registers are
+ * write-only, so their reads return these bytes too.  (47.0.2 returned
+ * 'V', 47, 0, 0: no minor/build.) */
 static UBYTE vera_version_byte_for_offset(int offset)
 {
     switch (offset)
     {
     case 0x09: return (UBYTE)'V';
     case 0x0A: return (UBYTE)VERA_VERSION_MAJOR;
-    default:   return 0;
+    case 0x0B: return (UBYTE)VERA_VERSION_MINOR;
+    default:   return (UBYTE)VERA_VERSION_PATCH;
     }
 }
 
