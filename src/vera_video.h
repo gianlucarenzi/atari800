@@ -25,6 +25,11 @@ struct SDL_Window *VERA_VIDEO_GetWindow(void);
 /* Called once per emulated frame to render the VERA display. */
 void VERA_VIDEO_Frame(void);
 
+/* A VRAM write to [lo, hi] is about to happen. Returns 1 when every line
+ * has to be rendered again (tile data, palette, sprites); otherwise it marks
+ * only the lines that read those bytes (map or bitmap rows) and returns 0. */
+int  VERA_VIDEO_VramWrite(ULONG lo, ULONG hi);
+
 /* Integer window size multiplier, for high-DPI screens.  Out-of-range
  * values are ignored; an open window is resized at once. */
 #define VERA_VIDEO_SCALE_MIN 1

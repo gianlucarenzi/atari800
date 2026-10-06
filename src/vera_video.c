@@ -32,6 +32,11 @@ static UBYTE         vera_sprite_col_fb[VERA_W * VERA_H];
 static UBYTE         vera_sprite_z_fb[VERA_W * VERA_H];
 /* PBI_VERAX16_GetVideoVersion() value used by the last full render of each line */
 static unsigned int  vera_line_version[VERA_H];
+/* VRAM each layer read on each line at its last render (one map row or one
+ * bitmap row): [lo, hi], lo > hi = nothing. A VRAM write outside the tile
+ * data, palette and sprites only re-renders the lines that read it. */
+static ULONG         vera_line_lo[2][VERA_H];
+static ULONG         vera_line_hi[2][VERA_H];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
 /* integer window size multiplier (-verax16-scale), for high-DPI screens */
@@ -229,6 +234,13 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
         int ly = (ly_raw + vscroll) & 0xFFF;
         int tile_row = (ly / tile_h) % map_h;
         int tile_fy = ly % tile_h;
+        ULONG row_lo = map_base + (ULONG)tile_row * (ULONG)map_w * 2u;
+
+        /* the whole map row: horizontal scroll wraps around it */
+        if (row_lo < vera_line_lo[layer][py])
+            vera_line_lo[layer][py] = row_lo;
+        if (row_lo + (ULONG)map_w * 2u - 1u > vera_line_hi[layer][py])
+            vera_line_hi[layer][py] = row_lo + (ULONG)map_w * 2u - 1u;
 
         for (int px = start; px < end; px++) {
             int lx_raw = ((px - ax0) * hscale) >> 7;
@@ -312,6 +324,13 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
 
     {
         int ly = ((py - ay0) * vscale) >> 7;
+        ULONG row_bytes = (ULONG)bitmap_w * (ULONG)bpp / 8u;
+        ULONG row_lo = bitmap_base + (ULONG)ly * row_bytes;
+
+        if (row_lo < vera_line_lo[layer][py])
+            vera_line_lo[layer][py] = row_lo;
+        if (row_lo + row_bytes - 1u > vera_line_hi[layer][py])
+            vera_line_hi[layer][py] = row_lo + row_bytes - 1u;
         for (int px = start; px < end; px++) {
             int lx = ((px - ax0) * hscale) >> 7;
             ULONG pixel_offset_bits;
@@ -454,6 +473,13 @@ static void render_scanline_range(int py, int xstart, int xend)
     if (end <= start)
         return;
 
+    /* a full render records afresh what the layers read; a partial one
+     * (mid-line change) adds to it */
+    if (start == 0 && end == VERA_W) {
+        vera_line_lo[0][py] = vera_line_lo[1][py] = 0xFFFFFFFFu;
+        vera_line_hi[0][py] = vera_line_hi[1][py] = 0;
+    }
+
     layer0_row = vera_layer_fb[0] + (size_t)py * VERA_W;
     layer1_row = vera_layer_fb[1] + (size_t)py * VERA_W;
     sprite_col_row = vera_sprite_col_fb + (size_t)py * VERA_W;
@@ -502,6 +528,57 @@ static void render_scanline_range(int py, int xstart, int xend)
 }
 
 /* ------------------------------------------------------------------
+ * VRAM write: which lines does it change?
+ * ------------------------------------------------------------------ */
+static int vera_ranges_overlap(ULONG lo, ULONG hi, ULONG a_lo, ULONG a_hi)
+{
+    return lo <= a_hi && a_lo <= hi;
+}
+
+int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
+{
+    VERA_RegSnap rs;
+    UBYTE video;
+    int layer, py;
+
+    PBI_VERAX16_GetRegSnap(&rs);
+    video = rs.dc[0][0];
+
+    /* palette: every pixel; sprites: attributes and data can be anywhere */
+    if (vera_ranges_overlap(lo, hi, 0x1FA00u, 0x1FBFFu) || (video & 0x40))
+        return 1;
+
+    /* tile data of an enabled tile layer: any line can show that tile */
+    for (layer = 0; layer < 2; layer++) {
+        const UBYTE *l = layer ? rs.l1 : rs.l0;
+        int depth, tile_w, tile_h;
+        ULONG base, size;
+
+        if (!(video & (0x10 << layer)) || (l[0] & 0x04))
+            continue;
+        depth = l[0] & 0x03;
+        tile_w = (l[2] & 1) ? 16 : 8;
+        tile_h = (l[2] & 2) ? 16 : 8;
+        base = (ULONG)(l[2] & 0xFCu) * 512u;
+        size = (ULONG)(depth ? 1024 : 256) * (ULONG)(tile_w * tile_h * (1 << depth) / 8);
+        if (vera_ranges_overlap(lo, hi, base, base + size - 1u))
+            return 1;
+    }
+
+    /* map or bitmap rows: only the lines that read them (a line that was not
+     * rendered since a register change is out of date anyway) */
+    for (py = 0; py < VERA_H; py++) {
+        for (layer = 0; layer < 2; layer++) {
+            if (vera_ranges_overlap(lo, hi, vera_line_lo[layer][py], vera_line_hi[layer][py])) {
+                vera_line_version[py] = 0;
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------
  * Public: compose and display one VERA frame.
  * ------------------------------------------------------------------ */
 void VERA_VIDEO_Reset(void)
@@ -511,6 +588,8 @@ void VERA_VIDEO_Reset(void)
     memset(vera_sprite_z_fb, 0, sizeof(vera_sprite_z_fb));
     memset(vera_fb, 0, sizeof(vera_fb));
     memset(vera_line_version, 0, sizeof(vera_line_version));
+    memset(vera_line_lo, 0xFF, sizeof(vera_line_lo));
+    memset(vera_line_hi, 0, sizeof(vera_line_hi));
 }
 
 void VERA_VIDEO_Scanline(UWORD scanline)
@@ -603,6 +682,7 @@ void VERA_VIDEO_Exit(void)
 
 #else /* !SDL2 */
 int  VERA_VIDEO_Init(void) { return 1; }
+int  VERA_VIDEO_VramWrite(ULONG lo, ULONG hi) { (void)lo; (void)hi; return 1; }
 void VERA_VIDEO_SetScale(int scale) { (void)scale; }
 int  VERA_VIDEO_GetScale(void) { return 1; }
 void VERA_VIDEO_Reset(void) {}

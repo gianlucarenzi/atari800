@@ -1939,16 +1939,24 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
     }
 }
 
-/* TRUE if a register write can change the picture.  Not the PSG voice
- * registers ($1F9C0-$1F9FF, a music player writes them every frame) nor the
- * FX registers ($09-$0C with DCSEL >= 2): a new version re-renders every line. */
+/* TRUE if a register write can change the picture: a new version re-renders
+ * every line.  Not the PSG voice registers ($1F9C0-$1F9FF, a music player
+ * writes them every frame) nor the FX registers ($09-$0C with DCSEL >= 2).
+ * A VRAM data write is TRUE only for tile data, palette and sprites; a write
+ * to a map or bitmap row marks just the lines that show it (vera_video.c). */
 static int vera_write_changes_picture(int offset)
 {
     if (offset == 0x03 || offset == 0x04)
     {
         int port = (offset == 0x04 ||
                     (fx_2bit_poke_mode && fx_addr1_mode != FX_MODE_NORMAL)) ? 1 : 0;
-        return (VERA_FULL_ADDR(port) & ~0x3Fu) != VERA_PSG_REG_BASE;
+        ULONG addr = VERA_FULL_ADDR(port);
+
+        if ((addr & ~0x3Fu) == VERA_PSG_REG_BASE)
+            return FALSE;
+        /* FX writes reach at most the aligned 32-bit word (cache write) */
+        addr &= 0x1FFFCu;
+        return VERA_VIDEO_VramWrite(addr, addr + 3u);
     }
     if (offset >= 0x09 && offset <= 0x0C)
         return ((vera_ctrl >> 1) & 0x3F) < 2;
