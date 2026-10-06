@@ -1611,7 +1611,8 @@ static void vera_chip_reset(const char *caller)
     vera_refresh_prefetch(0);
     vera_refresh_prefetch(1);
     VERA_VIDEO_Scanline(0);
-    vera_update_irq();
+    /* AFLOW is a live signal (FIFO < 1/4): empty FIFO after reset -> 1 */
+    vera_audio_update_aflow();
 
     VERAX16_LOG(1, "VeraX16: VERA chip soft-reset");
 }
@@ -2008,8 +2009,9 @@ static void vera_write_reg(int offset, UBYTE byte)
         vera_ien = byte & 0x0Fu;
         vera_update_irq();
         break;
-    case 0x07:  /* ISR — writing 1 clears corresponding status bit */
-        vera_isr &= (UBYTE)~byte;
+    case 0x07:  /* ISR — writing 1 clears VSYNC/LINE/SPRCOL only (HDL: bits 2:0);
+                 * AFLOW (bit 3) and the collision bits (7:4) are not clearable */
+        vera_isr &= (UBYTE)~(byte & 0x07u);
         vera_update_irq();
         break;
     case 0x08:
