@@ -105,7 +105,7 @@ static void JNICALL NativeResize(JNIEnv *env, jobject this, jint w, jint h, jflo
 	Android_ScreenH = h;
 	Android_DisplayDensity = density;
 	Android_SplitCalc();
-	Android_CovlHold = (Android_ScreenW < Android_ScreenH) ? 0 : Android_CovlHoldPref;
+	Android_CovlHold = 0;
 	Android_InitGraphics();
 }
 
@@ -179,6 +179,7 @@ static jint JNICALL NativeRunAtariProgram(JNIEnv *env, jobject this,
 	jobjectArray arr, xarr;
 	jstring str;
 	char tmp[128];
+	char cwd_buf[1024] = "";
 
 	if (reboot) {
 		NativeUnmountAll(env, this);
@@ -186,7 +187,18 @@ static jint JNICALL NativeRunAtariProgram(JNIEnv *env, jobject this,
 	}
 
 	img_utf = (*env)->GetStringUTFChars(env, img, NULL);
+	/* chdir to the image's directory so that gzip temp files (created by
+	   mkstemp with a relative path) land in a writable location. */
+	char *slash;
+	if (getcwd(cwd_buf, sizeof(cwd_buf)) != NULL
+		&& (slash = strrchr(img_utf, '/')) != NULL) {
+		*slash = '\0';
+		chdir(img_utf);
+		*slash = '/';
+	}
 	r = AFILE_OpenFile(img_utf, reboot, drv, FALSE);
+	if (cwd_buf[0] != '\0')
+		chdir(cwd_buf);
 	if ((r & 0xFF) == AFILE_ROM && (r >> 8) != 0) {
 		kb = r >> 8;
 		scls = (*env)->FindClass(env, "java/lang/String");
@@ -577,6 +589,17 @@ static void JNICALL NativeOSLSoundExit(JNIEnv *env, jobject this)
 	Sound_Exit();
 }
 
+static jintArray JNICALL NativeGetDriveStatus(JNIEnv *env, jobject this)
+{
+	jintArray result = (*env)->NewIntArray(env, 4);
+	jint buf[4];
+	int i;
+	for (i = 0; i < 4; i++)
+		buf[i] = SIO_drive_status[i];
+	(*env)->SetIntArrayRegion(env, result, 0, 4, buf);
+	return result;
+}
+
 
 	jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved)
 {
@@ -600,6 +623,7 @@ static void JNICALL NativeOSLSoundExit(JNIEnv *env, jobject this)
 		{ "NativeSetTopInset",		"(I)V",								NativeSetTopInset	  },
 		{ "NativeNeedsDownload",	"()Z",								NativeNeedsDownload	  },
 		{ "NativeGetROMURL",		"()Ljava/lang/String;",				NativeGetROMURL		  },
+		{ "NativeGetDriveStatus",	"()[I",								NativeGetDriveStatus  },
 	};
 	JNINativeMethod view_methods[] = {
 		{ "NativeTouch", 			"(IIIIII)I", 						NativeTouch			  },

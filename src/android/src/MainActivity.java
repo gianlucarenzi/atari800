@@ -69,6 +69,7 @@ import android.view.Gravity;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.util.DisplayMetrics;
 
 
 public final class MainActivity extends Activity
@@ -81,11 +82,13 @@ public final class MainActivity extends Activity
 	private static final int DLG_BRWSCONFRM = 2;
 	private static final int DLG_SELCARTTYPE = 3;
 	private static final int DLG_UPGRADE = 4;
+	private static final int ACTIVITY_DISK_BASE = 10;
 
 	public static String _pkgversion;
 	public static String _coreversion;
 	private static boolean _initialized = false;
 	private static String _curDiskFname = null;
+	private int _pendingDrive = 0;
 	private A800view _view = null;
 	private AudioThread _audio = null;
 	private InputMethodManager _imng;
@@ -93,6 +96,8 @@ public final class MainActivity extends Activity
 	private String _cartTypes[][] = null;
 	private static File _romsDir = null;
 	static File _savesDir = null;
+	private android.widget.TextView[] _driveBtns = new android.widget.TextView[4];
+	private int _driveCount = 4;
 
 	static {
 		System.loadLibrary("atari800");
@@ -154,7 +159,49 @@ public final class MainActivity extends Activity
 		});
 		topBar.addView(btnPrefs);
 
-		root.addView(topBar, new FrameLayout.LayoutParams(
+		/* Drive assignment buttons */
+		LinearLayout driveBar = new LinearLayout(this);
+		driveBar.setOrientation(LinearLayout.HORIZONTAL);
+		driveBar.setBackgroundColor(0x00000000);
+		driveBar.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+
+		DisplayMetrics dm = getResources().getDisplayMetrics();
+		float ratio = Math.max(dm.widthPixels, dm.heightPixels) / (float) Math.min(dm.widthPixels, dm.heightPixels);
+		_driveCount = ratio > 2.0f ? 4 : 3;
+		String[] driveLabels = {"\u2460", "\u2461", "\u2462", "\u2463"};
+		for (int d = 0; d < _driveCount; d++) {
+			final int drive = d + 1;
+			android.widget.TextView btn = new android.widget.TextView(this);
+			btn.setText(driveLabels[d]);
+			btn.setTextColor(0xFFFFFFFF);
+			btn.setTextSize(20);
+			btn.setBackgroundColor(0x00000000);
+			btn.setPadding(24, 4, 24, 4);
+			btn.setOnClickListener(new View.OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					_pendingDrive = drive;
+					startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT)
+						.addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+						.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+						ACTIVITY_DISK_BASE + drive);
+				}
+			});
+			driveBar.addView(btn);
+			_driveBtns[d] = btn;
+		}
+
+		LinearLayout menuContainer = new LinearLayout(this);
+		menuContainer.setOrientation(LinearLayout.VERTICAL);
+		menuContainer.setGravity(Gravity.LEFT | Gravity.TOP);
+		menuContainer.addView(topBar);
+		LinearLayout.LayoutParams driveBarLp = new LinearLayout.LayoutParams(
+			LinearLayout.LayoutParams.WRAP_CONTENT,
+			LinearLayout.LayoutParams.WRAP_CONTENT);
+		driveBarLp.topMargin = 32;
+		menuContainer.addView(driveBar, driveBarLp);
+
+		root.addView(menuContainer, new FrameLayout.LayoutParams(
 			FrameLayout.LayoutParams.WRAP_CONTENT,
 			FrameLayout.LayoutParams.WRAP_CONTENT,
 			Gravity.LEFT | Gravity.TOP));
@@ -165,13 +212,16 @@ public final class MainActivity extends Activity
 		getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 		getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
 		_view.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN |
-				View.STATUS_BAR_HIDDEN);
+				View.STATUS_BAR_HIDDEN |
+				View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+				View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 
 		root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
 			@Override
 			public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
 				int topInset = insets.getSystemWindowInsetTop();
-				topBar.setPadding(0, topInset, 0, 0);
+				boolean landscape = getResources().getDisplayMetrics().widthPixels > getResources().getDisplayMetrics().heightPixels;
+				menuContainer.setPadding(16, topInset + (landscape ? 16 : 0), 0, 0);
 				NativeSetTopInset(topInset);
 				return insets;
 			}
@@ -484,9 +534,25 @@ public final class MainActivity extends Activity
 		getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 		getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
 		_view.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN |
-				View.STATUS_BAR_HIDDEN);
+				View.STATUS_BAR_HIDDEN |
+				View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+				View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 		pauseEmulation(false);
+		updateDriveButtons();
 		super.onResume();
+	}
+
+	private void updateDriveButtons() {
+		int[] status = NativeGetDriveStatus();
+		for (int i = 0; i < _driveCount; i++) {
+			boolean mounted = (status[i] == 2 || status[i] == 3);
+			int flags = _driveBtns[i].getPaintFlags();
+			if (mounted)
+				flags |= android.graphics.Paint.UNDERLINE_TEXT_FLAG;
+			else
+				flags &= ~android.graphics.Paint.UNDERLINE_TEXT_FLAG;
+			_driveBtns[i].setPaintFlags(flags);
+		}
 	}
 
 	@Override 
@@ -502,6 +568,26 @@ public final class MainActivity extends Activity
 
 	@Override
 	protected void onActivityResult(int reqc, int resc, Intent data) {
+
+		if (reqc >= ACTIVITY_DISK_BASE && reqc <= ACTIVITY_DISK_BASE + 3) {
+			if (resc == RESULT_OK && data != null
+				&& Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && data.getData() != null
+				&& data.getData().getScheme() != null && data.getData().getScheme().equals("content")) {
+				String copyPath = copyContentUriToCache(data.getData());
+				if (copyPath != null) {
+					int drive = reqc - ACTIVITY_DISK_BASE;
+					int r = NativeRunAtariProgram(copyPath, drive, 0);
+					if (r < 0)
+						Toast.makeText(this, String.format(getString(R.string.errorboot),
+											copyPath.substring(copyPath.lastIndexOf("/") + 1)),
+									   Toast.LENGTH_SHORT)
+							 .show();
+					else
+						updateDriveButtons();
+				}
+			}
+			return;
+		}
 
 		switch (reqc) {
 		case ACTIVITY_FSEL:
@@ -520,6 +606,7 @@ public final class MainActivity extends Activity
 											_curDiskFname.substring(_curDiskFname.lastIndexOf("/") + 1)),
 									   Toast.LENGTH_SHORT)
 							 .show();
+					updateDriveButtons();
 				}
 				break;
 			}
@@ -570,6 +657,7 @@ public final class MainActivity extends Activity
 										   f.getName()),
 									   Toast.LENGTH_SHORT)
 							 .show();
+						updateDriveButtons();
 						return;
 					}
 					if (side != '9')
@@ -923,4 +1011,5 @@ public final class MainActivity extends Activity
 	private static native void NativeSetTopInset(int topInset);
 	private static native boolean NativeNeedsDownload();
 	private static native String NativeGetROMURL();
+	private static native int[] NativeGetDriveStatus();
 }
