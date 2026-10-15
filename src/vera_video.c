@@ -37,6 +37,13 @@ static unsigned int  vera_line_version[VERA_H];
  * data, palette and sprites only re-renders the lines that read it. */
 static ULONG         vera_line_lo[2][VERA_H];
 static ULONG         vera_line_hi[2][VERA_H];
+/* VRAM in 512-byte buckets: for each bucket the lines whose ranges above
+ * touch it, so a VRAM write only checks those lines (a stale bit costs a
+ * range check, never a missed line) */
+#define VERA_BUCKET_SHIFT 9
+#define VERA_BUCKETS      (0x20000u >> VERA_BUCKET_SHIFT)
+#define VERA_LINE_WORDS   ((VERA_H + 31) / 32)
+static Uint32        vera_bucket_lines[VERA_BUCKETS][VERA_LINE_WORDS];
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
 /* integer window size multiplier (-verax16-scale), for high-DPI screens */
@@ -362,8 +369,20 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
  * Render sprite layer.
  * ------------------------------------------------------------------ */
 static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
-                           int py, int xstart, int xend)
+                           const VERA_RegSnap *rs, int py, int ax0, int ay0,
+                           int xstart, int xend)
 {
+    /* sprite_renderer.v works in the composer's line buffer, before the
+     * output scaler: sprite X / Y are in the same scaled coordinates as the
+     * layers (320x240 at DC_HSCALE = DC_VSCALE = 64) */
+    int hscale = rs->dc[0][1];
+    int vscale = rs->dc[0][2];
+    int ly;
+
+    if (hscale == 0 || vscale == 0)
+        return;
+    ly = ((py - ay0) * vscale) >> 7;
+
     /* Sprite attributes are at $1FC00-$1FFFF (128 sprites × 8 bytes) */
     for (int i = 0; i < 128; i++) {
         ULONG addr = 0x1FC00u + (ULONG)i * 8u;
@@ -393,20 +412,20 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
         if (x >= 0x400 - width) x -= 0x400;
         if (y >= 0x400 - height) y -= 0x400;
         if (x >= VERA_W || y >= VERA_H || x + width <= 0 || y + height <= 0) continue;
-        if (py < y || py >= y + height) continue;
+        if (ly < y || ly >= y + height) continue;
 
         {
-            int sy = py - y;
+            int sy = ly - y;
             int eff_sy = vflip ? (height - 1 - sy) : sy;
             ULONG row_addr = sprite_addr + ((ULONG)eff_sy << (width_log2 - (1 - color_mode)));
 
-            for (int sx = 0; sx < width; sx++) {
-                int px = x + sx;
+            for (int px = xstart; px < xend; px++) {
+                int sx = (((px - ax0) * hscale) >> 7) - x;
                 int eff_sx;
                 ULONG pixel_addr;
                 UBYTE color_idx;
 
-                if (px < xstart || px >= xend) continue;
+                if (sx < 0 || sx >= width) continue;
 
                 eff_sx = hflip ? (width - 1 - sx) : sx;
                 if (color_mode == 0) {
@@ -432,7 +451,33 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
     }
 }
 
-static void render_scanline_range(int py, int xstart, int xend)
+/* set or clear line py in the buckets of the VRAM range [lo, hi] */
+static void vera_bucket_mark(int py, ULONG lo, ULONG hi, int set)
+{
+    Uint32 bit = 1u << (py & 31);
+    int word = py >> 5;
+    ULONG b, last;
+
+    if (lo > hi || lo > 0x1FFFFu)
+        return;
+    if (hi > 0x1FFFFu)
+        hi = 0x1FFFFu;
+    last = hi >> VERA_BUCKET_SHIFT;
+    for (b = lo >> VERA_BUCKET_SHIFT; b <= last; b++) {
+        if (set)
+            vera_bucket_lines[b][word] |= bit;
+        else
+            vera_bucket_lines[b][word] &= ~bit;
+    }
+}
+
+static void vera_line_buckets(int py, int set)
+{
+    vera_bucket_mark(py, vera_line_lo[0][py], vera_line_hi[0][py], set);
+    vera_bucket_mark(py, vera_line_lo[1][py], vera_line_hi[1][py], set);
+}
+
+static void render_scanline_range_inner(int py, int xstart, int xend)
 {
     VERA_RegSnap rs;
     const UBYTE *vram;
@@ -517,7 +562,7 @@ static void render_scanline_range(int py, int xstart, int xend)
             render_tile_layer(layer1_row, vram, 1, &rs, py, ax0, ay0, start, end);
     }
     if (rs.dc[0][0] & 0x40)
-        render_sprites(sprite_col_row, sprite_z_row, vram, py, start, end);
+        render_sprites(sprite_col_row, sprite_z_row, vram, &rs, py, ax0, ay0, start, end);
 
     for (int px = start; px < end; px++) {
         UBYTE color_idx = compose_pixel_index(sprite_z_row[px], sprite_col_row[px],
@@ -525,6 +570,16 @@ static void render_scanline_range(int py, int xstart, int xend)
         fb_row[px] = get_output_color(vram, rs.dc[0][0],
                                       color_idx ? color_idx : rs.dc[0][3]);
     }
+}
+
+/* the line's ranges change while it renders: keep the buckets in step */
+static void render_scanline_range(int py, int xstart, int xend)
+{
+    if (py < 0 || py >= VERA_H)
+        return;
+    vera_line_buckets(py, 0);
+    render_scanline_range_inner(py, xstart, xend);
+    vera_line_buckets(py, 1);
 }
 
 /* ------------------------------------------------------------------
@@ -535,18 +590,81 @@ static int vera_ranges_overlap(ULONG lo, ULONG hi, ULONG a_lo, ULONG a_hi)
     return lo <= a_hi && a_lo <= hi;
 }
 
+/* ------------------------------------------------------------------
+ * Sprite attribute writes: only the lines of the sprite, before and after
+ * ------------------------------------------------------------------ */
+static UBYTE vera_sprite_pending[128 / 8];
+static int   vera_sprite_pending_any = 0;
+
+/* lines whose layer line (scaled) crosses sprite i as VRAM holds it now */
+static void vera_sprite_invalidate(int i)
+{
+    VERA_RegSnap rs;
+    const UBYTE *vram = PBI_VERAX16_GetVRAMPtr();
+    ULONG a = 0x1FC00u + (ULONG)i * 8u;
+    int height = 1 << ((vram[a + 7] >> 6) + 3);
+    int y = vram[a + 4] | ((vram[a + 5] & 3) << 8);
+    int vscale, ay0, py;
+
+    if (((vram[a + 6] >> 2) & 3) == 0)
+        return;                                 /* disabled: draws nothing */
+    PBI_VERAX16_GetRegSnap(&rs);
+    vscale = rs.dc[0][2];
+    ay0 = (int)rs.dc[1][2] * 2;
+    if (y >= 0x400 - height) y -= 0x400;
+    for (py = ay0; py < VERA_H; py++) {
+        int ly = ((py - ay0) * vscale) >> 7;
+        if (ly >= y + height)
+            break;
+        if (ly >= y)
+            vera_line_version[py] = 0;
+    }
+}
+
+/* the new rectangles of the sprites written since the last line: VRAM
+ * holds the new attributes by now */
+static void vera_sprite_flush(void)
+{
+    int i;
+
+    vera_sprite_pending_any = 0;
+    for (i = 0; i < 128; i++) {
+        if (vera_sprite_pending[i >> 3] & (1u << (i & 7))) {
+            vera_sprite_pending[i >> 3] &= (UBYTE)~(1u << (i & 7));
+            vera_sprite_invalidate(i);
+        }
+    }
+}
+
 int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
 {
     VERA_RegSnap rs;
     UBYTE video;
-    int layer, py;
+    int layer, py, w;
+    ULONG b, last;
 
     PBI_VERAX16_GetRegSnap(&rs);
     video = rs.dc[0][0];
 
-    /* palette: every pixel; sprites: attributes and data can be anywhere */
-    if (vera_ranges_overlap(lo, hi, 0x1FA00u, 0x1FBFFu) || (video & 0x40))
+    /* palette: every pixel */
+    if (vera_ranges_overlap(lo, hi, 0x1FA00u, 0x1FBFFu))
         return 1;
+    /* sprites: their attributes change the lines of the sprite only (the
+     * old rectangle now, the new one once written: vera_sprite_flush);
+     * their data can be anywhere */
+    if (video & 0x40) {
+        if (lo < 0x1FC00u)
+            return 1;
+        if (lo <= 0x1FFFFu) {
+            int i, last_i = (int)(((hi > 0x1FFFFu ? 0x1FFFFu : hi) - 0x1FC00u) >> 3);
+
+            for (i = (int)((lo - 0x1FC00u) >> 3); i <= last_i; i++) {
+                vera_sprite_invalidate(i);
+                vera_sprite_pending[i >> 3] |= (UBYTE)(1u << (i & 7));
+            }
+            vera_sprite_pending_any = 1;
+        }
+    }
 
     /* tile data of an enabled tile layer: any line can show that tile */
     for (layer = 0; layer < 2; layer++) {
@@ -567,11 +685,22 @@ int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
 
     /* map or bitmap rows: only the lines that read them (a line that was not
      * rendered since a register change is out of date anyway) */
-    for (py = 0; py < VERA_H; py++) {
-        for (layer = 0; layer < 2; layer++) {
-            if (vera_ranges_overlap(lo, hi, vera_line_lo[layer][py], vera_line_hi[layer][py])) {
-                vera_line_version[py] = 0;
-                break;
+    if (lo > 0x1FFFFu)
+        return 0;
+    last = (hi > 0x1FFFFu ? 0x1FFFFu : hi) >> VERA_BUCKET_SHIFT;
+    for (b = lo >> VERA_BUCKET_SHIFT; b <= last; b++) {
+        for (w = 0; w < VERA_LINE_WORDS; w++) {
+            Uint32 m = vera_bucket_lines[b][w];
+
+            while (m != 0u) {
+                py = w * 32 + __builtin_ctz(m);
+                m &= m - 1u;
+                for (layer = 0; layer < 2; layer++) {
+                    if (vera_ranges_overlap(lo, hi, vera_line_lo[layer][py], vera_line_hi[layer][py])) {
+                        vera_line_version[py] = 0;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -590,11 +719,18 @@ void VERA_VIDEO_Reset(void)
     memset(vera_line_version, 0, sizeof(vera_line_version));
     memset(vera_line_lo, 0xFF, sizeof(vera_line_lo));
     memset(vera_line_hi, 0, sizeof(vera_line_hi));
+    memset(vera_bucket_lines, 0, sizeof(vera_bucket_lines));
+    memset(vera_sprite_pending, 0, sizeof(vera_sprite_pending));
+    vera_sprite_pending_any = 0;
 }
 
 void VERA_VIDEO_Scanline(UWORD scanline)
 {
-    unsigned int version = PBI_VERAX16_GetVideoVersion();
+    unsigned int version;
+
+    if (vera_sprite_pending_any)
+        vera_sprite_flush();
+    version = PBI_VERAX16_GetVideoVersion();
 
     if (scanline < VERA_H) {
         /* Nothing that affects the picture was written since this line was

@@ -1263,12 +1263,14 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
     UBYTE sprite_line_mask[640u];
     UBYTE collisions = 0;
     ULONG i;
-    int line_y = (int)py;
+    int line_y;
 
     if (py >= 480u)
         return 0;
-    if ((vera_dc[0][0] & 0x40u) == 0)
+    if ((vera_dc[0][0] & 0x40u) == 0 || vera_dc[0][2] == 0)
         return 0;
+    /* sprites live in the scaled layer coordinates (as vera_video.c) */
+    line_y = (((int)py - (int)vera_dc[1][2] * 2) * (int)vera_dc[0][2]) >> 7;
 
     memset(sprite_line_mask, 0, sizeof(sprite_line_mask));
     for (i = 0; i < 128u; i++)
