@@ -1272,9 +1272,14 @@ static void autoframeskip(double curtime, double lasttime)
 	}
 }
 
+/* real time at which the current frame started (the end of the last one) and
+ * the length of a frame, for Atari800_SyncPoint() */
+static double sync_lasttime = 0.0;
+static double sync_deltatime = 0.0;
+
 void Atari800_Sync(void)
 {
-	static double lasttime = 0;
+	double lasttime = sync_lasttime;
 	double deltatime = 1.0 / ((Atari800_tv_mode == Atari800_TV_PAL) ? Atari800_FPS_PAL : Atari800_FPS_NTSC);
 	double curtime;
 
@@ -1297,6 +1302,19 @@ void Atari800_Sync(void)
 
 	if ((lasttime + deltatime) < curtime)
 		lasttime = curtime;
+	sync_lasttime = lasttime;
+	sync_deltatime = deltatime;
+}
+
+/* Wait for the real time of a point inside the current frame (fraction 0-1
+ * of it).  Atari800_Sync() sleeps once per frame, after the whole frame has
+ * been emulated in a burst; a device with its own refresh (the VERA) calls
+ * this before showing a picture, so its pictures come at their own rate. */
+void Atari800_SyncPoint(double fraction)
+{
+	if (sync_deltatime <= 0.0 || (Atari800_turbo && Atari800_turbo_speed == 0))
+		return;
+	Util_sleep(sync_lasttime + fraction * sync_deltatime - Util_time());
 }
 
 #if defined(BASIC) || defined(VERY_SLOW) || defined(CURSES_BASIC)

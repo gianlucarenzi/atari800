@@ -22,8 +22,13 @@ int  VERA_VIDEO_Init(void);
 struct SDL_Window;
 struct SDL_Window *VERA_VIDEO_GetWindow(void);
 
-/* Called once per emulated frame to render the VERA display. */
+/* Shows the VERA picture now. */
 void VERA_VIDEO_Frame(void);
+
+/* The VERA reached its VSYNC (line 480, lines 0-479 rendered): shows the
+ * picture at the real time of this point of the Atari frame.  Showing it at
+ * the end of the Atari frame instead tears it where the VERA beam is. */
+void VERA_VIDEO_VSync(void);
 
 /* A VRAM write to [lo, hi] is about to happen. Returns 1 when every line
  * has to be rendered again (tile data, palette, sprites); otherwise it marks

@@ -1379,6 +1379,8 @@ static void vera_advance_scanline_once(void)
     vera_spi_step(16);
     vera_midline_x_fp = 0;
     VERA_VIDEO_Scanline(vera_scanline_raw);
+    if (vera_scanline_raw == 480u)
+        VERA_VIDEO_VSync();             /* lines 0-479 of this frame are done */
 }
 
 static void vera_audio_reset_state(void)

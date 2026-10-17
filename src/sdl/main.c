@@ -231,10 +231,7 @@ int main(int argc, char **argv)
 		Atari800_Frame();
 		if (Atari800_display_screen) {
 			PLATFORM_DisplayScreen();
-#ifdef PBI_VERAX16
-			if (PBI_VERAX16_enabled)
-				VERA_VIDEO_Frame();
-#endif
+			/* the VERA window is shown at the VERA VSYNC (VERA_VIDEO_VSync) */
 		}
 	}
 }

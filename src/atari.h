@@ -184,6 +184,9 @@ UNALIGNED_STAT_DECL(memory_write_aligned_word_stat)
 /* Sleeps until it's time to emulate next Atari frame. */
 void Atari800_Sync(void);
 
+/* Sleep until the real time of a point (0-1) inside the current frame. */
+void Atari800_SyncPoint(double fraction);
+
 /* Load a ROM image filename of size nbytes into buffer */
 int Atari800_LoadImage(const char *filename, UBYTE *buffer, int nbytes);
 

@@ -10,6 +10,7 @@
 
 #include "config.h"
 #include "atari.h"
+#include "antic.h"
 #include "log.h"
 #include "pbi_verax16.h"
 #include "vera_video.h"
@@ -130,7 +131,10 @@ static int vera_open_window(void)
         return 0;
     }
 
-    vera_renderer = SDL_CreateRenderer(vera_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    /* no PRESENTVSYNC: the pictures are timed by VERA_VIDEO_VSync(), a wait
+     * for the host refresh would stall the emulation in the middle of an
+     * Atari frame (the main window already waits for it once a frame) */
+    vera_renderer = SDL_CreateRenderer(vera_win, -1, SDL_RENDERER_ACCELERATED);
     if (!vera_renderer) {
         Log_print("VERA_VIDEO: SDL_CreateRenderer: %s", SDL_GetError());
         SDL_DestroyWindow(vera_win);
@@ -806,6 +810,17 @@ void VERA_VIDEO_Frame(void)
     SDL_RenderPresent(vera_renderer);
 }
 
+void VERA_VIDEO_VSync(void)
+{
+    if (!PBI_VERAX16_enabled) return;
+
+    /* the emulation runs a whole Atari frame in a burst and then sleeps:
+     * wait for the real time of this point of the frame, so the VERA
+     * pictures come every 1/59.94 s and not in bunches */
+    Atari800_SyncPoint((double)ANTIC_ypos / Atari800_tv_mode);
+    VERA_VIDEO_Frame();
+}
+
 int VERA_VIDEO_Init(void) { return 1; }
 
 void VERA_VIDEO_Exit(void)
@@ -826,5 +841,6 @@ void VERA_VIDEO_Scanline(UWORD scanline) { (void)scanline; }
 void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart) { (void)scanline; (void)xstart; }
 void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart) { (void)scanline; (void)xstart; }
 void VERA_VIDEO_Frame(void) {}
+void VERA_VIDEO_VSync(void) {}
 void VERA_VIDEO_Exit(void) {}
 #endif
