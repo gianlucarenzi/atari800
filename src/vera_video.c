@@ -140,7 +140,7 @@ static int vera_open_window(void)
 
     int scale = vera_fit_scale();
 
-    vera_win = SDL_CreateWindow("VeraX16 Video",
+    vera_win = SDL_CreateWindow("VERA [A8]",
                                 wx, wy,
                                 VERA_W * scale, VERA_H * scale,
                                 SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
