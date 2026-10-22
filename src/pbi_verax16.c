@@ -71,6 +71,7 @@
  */
 
 #include "atari.h"
+#include "antic.h"
 #include "pbi.h"
 #include "pbi_verax16.h"
 #include "vera_video.h"
@@ -264,7 +265,15 @@ static UBYTE vera_pcm_fifo[VERA_AUDIO_FIFO_SIZE];
 static unsigned int vera_pcm_fifo_read = 0;
 static unsigned int vera_pcm_fifo_write = 0;
 static unsigned int vera_pcm_fifo_count = 0;
-static double vera_pcm_phase = 0.0;
+/* PCM on VERA time (audio.v next_sample: one DAC sample every 512 clocks): the
+   FIFO drains, and AFLOW changes, as CPU time passes, mixer or not */
+static unsigned long long vera_pcm_done = 0;   /* VERA clock the PCM has run up to */
+static UBYTE vera_pcm_acc = 0;                 /* pcm.v sr_accum_r */
+#define VERA_PCM_RING 8192u
+static int vera_pcm_ring[VERA_PCM_RING][2];    /* DAC-rate samples for the mixer */
+static unsigned int vera_pcm_ring_wr = 0, vera_pcm_ring_cnt = 0;
+static double vera_pcm_out_phase = 0.0;
+static int vera_pcm_out_left = 0, vera_pcm_out_right = 0;
 static int vera_pcm_current_left = 0;
 static int vera_pcm_current_right = 0;
 static int vera_pcm_current_valid = FALSE;
@@ -311,7 +320,12 @@ static UBYTE vera_spi_tx = 0xFF;
 static int vera_spi_ss = FALSE;
 static int vera_spi_busy = FALSE;
 static int vera_spi_autotx = FALSE;
-static int vera_spi_cycles_until_done = 0;
+/* spictrl.v state: see vera_spi_clock() */
+static UBYTE vera_spi_miso = 0xFF;      /* what the card drives during this byte */
+static UBYTE vera_spi_bitcnt = 0;       /* bitcnt_r: busy while nonzero */
+static UBYTE vera_spi_div = 0;          /* div_cnt_r, 5 bits, free running */
+static int vera_spi_sck = FALSE;        /* clk_r */
+static unsigned long long vera_spi_done = 0;   /* VERA clock the SPI has run up to */
 
 enum {
     VERA_SD_CMD0   = 0,
@@ -759,15 +773,33 @@ static void vera_sd_set_response_r7(void)
     vera_sd_set_response_bytes(response, 5);
 }
 
+/* the CRC-16 (CCITT, init 0) a card sends after every data block: real cards
+   send it even with CRC checking off in SPI mode */
+static UWORD vera_sd_crc16(const UBYTE *p, int n)
+{
+    UWORD crc = 0;
+    int b;
+
+    while (n--)
+    {
+        crc ^= (UWORD)(*p++ << 8);
+        for (b = 0; b < 8; b++)
+            crc = (crc & 0x8000u) ? (UWORD)((crc << 1) ^ 0x1021u) : (UWORD)(crc << 1);
+    }
+    return crc;
+}
+
 static void vera_sd_set_response_csd(void)
 {
-    static UBYTE response[21] = {
+    static UBYTE response[23] = {
         0xFFu, 0xFFu, 0x00u, 0xFFu, 0xFEu,
         0x40u, 0x0Eu, 0x00u, 0x32u, 0x5Bu, 0x59u,
         0x00u, 0x00u, 0x00u, 0x00u, 0x7Fu, 0x80u,
-        0x0Au, 0x40u, 0x00u, 0x01u
+        0x0Au, 0x40u, 0x00u, 0x01u,
+        0x00u, 0x00u                    /* data CRC-16, filled in below */
     };
     uint64_t c_size = 0;
+    UWORD crc;
 
     if (verax16_sdcard_size >= (off_t)(512u * 1024u))
         c_size = ((uint64_t)verax16_sdcard_size >> 19) - 1u;
@@ -775,6 +807,9 @@ static void vera_sd_set_response_csd(void)
     response[12] = (UBYTE)((response[12] & 0xC0u) | ((c_size >> 16) & 0x3Fu));
     response[13] = (UBYTE)((c_size >> 8) & 0xFFu);
     response[14] = (UBYTE)(c_size & 0xFFu);
+    crc = vera_sd_crc16(response + 5, 16);
+    response[21] = (UBYTE)(crc >> 8);
+    response[22] = (UBYTE)(crc & 0xFFu);
     vera_sd_set_response_bytes(response, (int)sizeof(response));
 }
 
@@ -806,8 +841,12 @@ static int vera_sd_load_block(UBYTE *dest)
         VERAX16_LOG(2, "VeraX16: short SD read at LBA %lu", (unsigned long)vera_sd_lba);
         memset(dest + 1 + bytes_read, 0xFF, 512u - bytes_read);
     }
-    dest[513] = 0xFFu;
-    dest[514] = 0xFFu;
+    {
+        UWORD crc = vera_sd_crc16(dest + 1, 512);
+
+        dest[513] = (UBYTE)(crc >> 8);
+        dest[514] = (UBYTE)(crc & 0xFFu);
+    }
     return 515;
 }
 
@@ -1068,43 +1107,80 @@ static void vera_sdcard_detach(void)
     vera_sd_reset_protocol();
 }
 
-static void vera_spi_begin_transfer(UBYTE byte)
+/* SPI: spictrl.v of VERA 48.0.1, clock by clock on the 25 MHz VERA clock, brought
+ * up to the CPU's current cycle at every SPI register access.  A byte is 8 bits x
+ * 2 SCK edges: SCK toggles every clock (16 clocks per byte, 0.64 us) or, with
+ * SLOW, every 32 clocks of a free-running 5-bit divider (512 clocks, 20.48 us).
+ * MISO is sampled on the rising edge, MOSI shifts on the falling edge, BUSY = bit
+ * counter != 0, SPI_DATA reads the receive shift register (a read during a
+ * transfer sees the bits so far), a transfer requested while busy is ignored, and
+ * the clock runs whether or not the card is selected (MISO then reads 1s).  The SD
+ * card answers a whole byte at the start of each transfer. */
+static unsigned int atari_line_rate_x100(void);
+static void vera_pcm_sync(void);
+
+/* VERA time: 25 MHz clocks since power-on, from the CPU's cycle counter
+   (ANTIC_CPU_CLOCK, 114 cycles per Atari line), the remainder carried */
+static unsigned long long vera_time_now = 0;
+static unsigned int vera_time_last_cpu = 0;
+static unsigned long long vera_time_frac = 0;
+
+static void vera_time_sync(void)
 {
-    if (vera_spi_busy)
-        return;
+    unsigned int now = ANTIC_CPU_CLOCK;
+    unsigned int d = now - vera_time_last_cpu;
+    unsigned long long den = (unsigned long long)atari_line_rate_x100() * 114u; /* CPU Hz x 100 */
+    unsigned long long num;
 
-    if (!vera_spi_ss)
-    {
-        /* Clock runs anyway, nobody drives MISO: reads back $FF */
-        vera_spi_data = 0xFF;
-        return;
-    }
-
-    vera_spi_tx = byte;
-    if (!(vera_spi_ctrl & 0x02u))
-    {
-        /* spictrl.v fast mode: 8 bits in ~16 clk25 cycles (~0.64 us),
-         * about one 6502 cycle: complete at once */
-        vera_spi_data = vera_sd_handle(vera_spi_tx);
-        return;
-    }
-    /* slow mode (clock / 32, ~20 us): done at the next VERA line (~32 us) */
-    vera_spi_busy = TRUE;
-    vera_spi_cycles_until_done = 10;
+    vera_time_last_cpu = now;
+    num = (unsigned long long)d * 2500000000ull + vera_time_frac;  /* 25 MHz x 100 */
+    vera_time_frac = num % den;
+    vera_time_now += num / den;
 }
 
-static void vera_spi_step(int cycles)
+static void vera_spi_clock(unsigned int n)
 {
-    if (!vera_spi_busy)
-        return;
-
-    vera_spi_cycles_until_done -= cycles;
-    if (vera_spi_cycles_until_done <= 0)
+    while (n && vera_spi_bitcnt)
     {
-        vera_spi_busy = FALSE;
-        vera_spi_cycles_until_done = 0;
-        vera_spi_data = vera_sd_handle(vera_spi_tx);
+        if (!(vera_spi_ctrl & 0x02u) || vera_spi_div == 31u)
+        {
+            if (vera_spi_sck)
+            {
+                vera_spi_tx = (UBYTE)(vera_spi_tx << 1);    /* falling edge */
+                vera_spi_bitcnt--;
+            }
+            else
+            {
+                vera_spi_data = (UBYTE)((vera_spi_data << 1) |  /* rising edge */
+                                        ((vera_spi_miso >> (vera_spi_bitcnt - 1u)) & 1u));
+            }
+            vera_spi_sck = !vera_spi_sck;
+        }
+        vera_spi_div = (UBYTE)((vera_spi_div + 1u) & 31u);
+        n--;
     }
+    vera_spi_div = (UBYTE)((vera_spi_div + n) & 31u);  /* idle: only the divider runs */
+    vera_spi_busy = vera_spi_bitcnt != 0u;
+}
+
+static void vera_spi_sync(void)
+{
+    unsigned long long d;
+
+    vera_time_sync();
+    d = vera_time_now - vera_spi_done;
+    vera_spi_done = vera_time_now;
+    vera_spi_clock(d > 1000000u ? 1000000u : (unsigned int)d);  /* idle: more than a byte needs */
+}
+
+static void vera_spi_begin_transfer(UBYTE byte)
+{
+    if (vera_spi_bitcnt)
+        return;                         /* txstart is ignored while busy */
+    vera_spi_tx = byte;
+    vera_spi_bitcnt = 8u;
+    vera_spi_busy = TRUE;
+    vera_spi_miso = vera_spi_ss ? vera_sd_handle(byte) : 0xFFu;
 }
 
 static void vera_update_irq(void)
@@ -1298,7 +1374,7 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
     if ((vera_dc[0][0] & 0x40u) == 0 || vera_dc[0][2] == 0)
         return 0;
     /* sprites live in the scaled layer coordinates (as vera_video.c) */
-    line_y = (((int)py - (int)vera_dc[1][2] * 2) * (int)vera_dc[0][2]) >> 7;
+    line_y = VERA_VIDEO_SourceLine((int)py);    /* composer.v counter */
 
     memset(sprite_line_mask, 0, sizeof(sprite_line_mask));
     memset(sprite_line_z, 0, sizeof(sprite_line_z));
@@ -1397,6 +1473,7 @@ static void vera_update_isr_and_coll(UWORD y)
 
 static void vera_advance_scanline_once(void)
 {
+    vera_pcm_sync();                    /* AFLOW (and its IRQ) without register accesses */
     if (vera_scanline_raw < 480u)
         vera_sprite_frame_collisions |= vera_compute_sprite_line_collisions(vera_scanline_raw);
 
@@ -1413,7 +1490,6 @@ static void vera_advance_scanline_once(void)
     vera_update_isr_and_coll(vera_scanline_raw);
     vera_maybe_trigger_line_irq();
     vera_update_irq();
-    vera_spi_step(16);
     vera_midline_x_fp = 0;
     VERA_VIDEO_Scanline(vera_scanline_raw);
     if (vera_scanline_raw == 480u)
@@ -1427,11 +1503,16 @@ static void vera_audio_reset_state(void)
     vera_pcm_fifo_read = 0;
     vera_pcm_fifo_write = 0;
     vera_pcm_fifo_count = 0;
-    vera_pcm_phase = 0.0;
     vera_pcm_current_left = 0;
     vera_pcm_current_right = 0;
     vera_pcm_current_valid = FALSE;
     memset(vera_pcm_fifo, 0, sizeof(vera_pcm_fifo));
+    vera_time_sync();
+    vera_pcm_done = vera_time_now;
+    vera_pcm_acc = 0;
+    vera_pcm_ring_wr = vera_pcm_ring_cnt = 0;
+    vera_pcm_out_phase = 0.0;
+    vera_pcm_out_left = vera_pcm_out_right = 0;
 
     memset(vera_psg_state, 0, sizeof(vera_psg_state));
     for (i = 0; i < VERA_PSG_VOICE_COUNT; i++)
@@ -1459,7 +1540,6 @@ static void vera_pcm_reset_fifo(void)
     vera_pcm_fifo_read = 0;
     vera_pcm_fifo_write = 0;
     vera_pcm_fifo_count = 0;
-    vera_pcm_phase = 0.0;
     vera_pcm_current_left = 0;
     vera_pcm_current_right = 0;
     vera_pcm_current_valid = FALSE;
@@ -1586,37 +1666,64 @@ static int vera_pcm_load_current_sample(void)
     return TRUE;
 }
 
-static void vera_pcm_render_sample(int *left, int *right)
+/* one DAC sample (pcm.v): the rate accumulator steps by AUDIO_RATE as written; a
+   carry into bit 7 fetches the next sample from the FIFO; with the FIFO empty the
+   output is 0 */
+static void vera_pcm_dac_tick(void)
 {
-    double step;
-    UBYTE rate = vera_audio_rate;
+    UBYTE old = vera_pcm_acc;
     UBYTE volume = vera_pcm_volume_lut[vera_audio_ctrl & 0x0Fu];
+    int *out = vera_pcm_ring[vera_pcm_ring_wr];
 
-    *left = 0;
-    *right = 0;
-
-    if (vera_host_playback_freq == 0u || rate == 0u)
-        return;
-
-    if (!vera_pcm_current_valid && !vera_pcm_load_current_sample())
-        return;
-
-    *left = (int)(((double)((long)vera_pcm_current_left * (long)volume) / 64.0) * VERA_PCM_MIX_SCALE);
-    *right = (int)(((double)((long)vera_pcm_current_right * (long)volume) / 64.0) * VERA_PCM_MIX_SCALE);
-
-    step = (VERA_DAC_RATE * (double)rate) / (128.0 * (double)vera_host_playback_freq);
-    vera_pcm_phase += step;
-    while (vera_pcm_phase >= 1.0)
+    vera_pcm_acc = (UBYTE)(vera_pcm_acc + vera_audio_rate_raw);
+    if (((old ^ vera_pcm_acc) & 0x80u) && !vera_pcm_load_current_sample())
     {
-        vera_pcm_phase -= 1.0;
-        if (!vera_pcm_load_current_sample())
-        {
-            vera_pcm_current_valid = FALSE;
-            vera_pcm_current_left = 0;
-            vera_pcm_current_right = 0;
-            break;
-        }
+        vera_pcm_current_left = 0;
+        vera_pcm_current_right = 0;
     }
+    if (vera_pcm_fifo_count == 0u)
+    {
+        out[0] = out[1] = 0;
+    }
+    else
+    {
+        out[0] = (int)(((double)((long)vera_pcm_current_left * (long)volume) / 64.0) * VERA_PCM_MIX_SCALE);
+        out[1] = (int)(((double)((long)vera_pcm_current_right * (long)volume) / 64.0) * VERA_PCM_MIX_SCALE);
+    }
+    vera_pcm_ring_wr = (vera_pcm_ring_wr + 1u) % VERA_PCM_RING;
+    if (vera_pcm_ring_cnt < VERA_PCM_RING)
+        vera_pcm_ring_cnt++;            /* else the oldest is overwritten */
+}
+
+static void vera_pcm_sync(void)
+{
+    vera_time_sync();
+    if (vera_time_now - vera_pcm_done > 512ull * 100000u)
+        vera_pcm_done = vera_time_now - 512ull * 100000u;   /* at most ~2 s at once */
+    while (vera_time_now - vera_pcm_done >= 512u)
+    {
+        vera_pcm_done += 512u;
+        vera_pcm_dac_tick();
+    }
+}
+
+/* the mixer's PCM: the DAC-rate samples VERA time made, at the host rate */
+static void vera_pcm_mix_sample(int *left, int *right)
+{
+    vera_pcm_out_phase += VERA_DAC_RATE / (double)vera_host_playback_freq;
+    while (vera_pcm_out_phase >= 1.0 && vera_pcm_ring_cnt > 0u)
+    {
+        unsigned int rd = (vera_pcm_ring_wr + VERA_PCM_RING - vera_pcm_ring_cnt) % VERA_PCM_RING;
+
+        vera_pcm_out_phase -= 1.0;
+        vera_pcm_out_left = vera_pcm_ring[rd][0];
+        vera_pcm_out_right = vera_pcm_ring[rd][1];
+        vera_pcm_ring_cnt--;
+    }
+    if (vera_pcm_out_phase >= 1.0)
+        vera_pcm_out_phase = 1.0;       /* ahead of VERA time: hold the last one */
+    *left = vera_pcm_out_left;
+    *right = vera_pcm_out_right;
 }
 
 /* Soft reset: registers to defaults, VRAM contents preserved */
@@ -1682,13 +1789,18 @@ static void vera_chip_reset(const char *caller)
     vera_audio_rate = 0;
     vera_audio_rate_raw = 0;
     vera_audio_reset_state();
-    vera_spi_data   = 0xFF;
+    vera_spi_data   = 0x00;             /* rx_shift_r resets to 0 */
     vera_spi_ctrl   = 0;
-    vera_spi_tx     = 0xFF;
+    vera_spi_tx     = 0x00;
     vera_spi_ss     = FALSE;
     vera_spi_busy   = FALSE;
     vera_spi_autotx = FALSE;
-    vera_spi_cycles_until_done = 0;
+    vera_spi_miso   = 0xFF;
+    vera_spi_bitcnt = 0;
+    vera_spi_div    = 0;
+    vera_spi_sck    = FALSE;
+    vera_time_sync();
+    vera_spi_done   = vera_time_now;
     vera_sd_reset_protocol();
 
     VERA_VIDEO_Reset();
@@ -1779,6 +1891,7 @@ static UBYTE vera_dc_video_read(void)
 static UBYTE vera_spi_ctrl_read(void)
 {
     /* HDL: {busy, 4'b0, autotx, slow, select} */
+    vera_spi_sync();
     return (UBYTE)((vera_spi_busy ? 0x80u : 0x00u) |
                    (vera_spi_autotx ? 0x04u : 0x00u) |
                    (vera_spi_ctrl & 0x02u) |
@@ -1793,6 +1906,9 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
 {
     int addrsel = vera_ctrl & 0x01;
     int dcsel   = (vera_ctrl >> 1) & 0x3F;
+
+    if (offset == 0x07 || (offset >= 0x1B && offset <= 0x1D))
+        vera_pcm_sync();                /* ISR AFLOW, FIFO status as of now */
 
     switch (offset)
     {
@@ -1969,9 +2085,11 @@ static UBYTE vera_read_reg(int offset, int no_side_effects)
         if (offset == 0x1D) return 0x00;    /* AUDIO_DATA write-only */
         if (offset == 0x1E)
         {
-            UBYTE value = vera_spi_data;
+            UBYTE value;
 
-            if (!no_side_effects && vera_spi_autotx && vera_spi_ss && !vera_spi_busy)
+            vera_spi_sync();
+            value = vera_spi_data;
+            if (!no_side_effects && vera_spi_autotx)   /* auto-tx: select not needed */
                 vera_spi_begin_transfer(0xFFu);
             return value;
         }
@@ -2006,6 +2124,8 @@ static int vera_write_changes_picture(int offset)
 
 static void vera_write_reg(int offset, UBYTE byte)
 {
+    if (offset >= 0x1B && offset <= 0x1D)
+        vera_pcm_sync();                /* the audio up to now, with the old settings */
     if (vera_write_changes_picture(offset))
         vera_video_version++;
     int addrsel = vera_ctrl & 0x01;
@@ -2272,11 +2392,13 @@ static void vera_write_reg(int offset, UBYTE byte)
         else
         if (offset == 0x1E)
         {
+            vera_spi_sync();
             vera_spi_begin_transfer(byte);
         }
         else
         if (offset == 0x1F)
         {
+            vera_spi_sync();
             vera_spi_ctrl = byte & 0x07u;
             vera_spi_autotx = (byte & 0x04u) != 0u;
             if (vera_spi_ss != ((byte & 0x01u) != 0u))
@@ -2820,6 +2942,13 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
     if (frames <= 0)
         return;
 
+    vera_pcm_sync();
+    {   /* after turbo or a pause the ring holds a backlog: keep ~2 buffers */
+        unsigned int keep = (unsigned int)(frames * (VERA_DAC_RATE / (double)vera_host_playback_freq)) * 2u + 64u;
+        if (vera_pcm_ring_cnt > keep)
+            vera_pcm_ring_cnt = keep;
+    }
+
     for (voice = 0; voice < VERA_PSG_VOICE_COUNT; voice++)
     {
         ULONG base = VERA_PSG_REG_BASE + (ULONG)voice * 4u;
@@ -2848,7 +2977,7 @@ void PBI_VERAX16_SoundMix(void *buffer, int sndn, unsigned int channels, int sam
         long sum_left = 0;
         long sum_right = 0;
 
-        vera_pcm_render_sample(&pcm_left, &pcm_right);
+        vera_pcm_mix_sample(&pcm_left, &pcm_right);
 
         vera_psg_phase += psg_step;
         while (vera_psg_phase >= 1.0)

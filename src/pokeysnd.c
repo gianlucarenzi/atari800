@@ -42,6 +42,10 @@
 #if defined(PBI_XLD) || defined (VOICEBOX)
 #include "votraxsnd.h"
 #endif
+#if defined(PBI_VERAX16) && defined(SOUND)
+#include "pbi_verax16.h"
+#include "sound.h"
+#endif
 #include "antic.h"
 #include "gtia.h"
 #include "util.h"
@@ -317,6 +321,11 @@ int POKEYSND_UpdateProcessBuffer(void)
 
 #if defined(PBI_XLD) || defined (VOICEBOX)
 	VOTRAXSND_Process(POKEYSND_process_buffer, sndn);
+#endif
+#if defined(PBI_VERAX16) && defined(SOUND)
+	/* the VERA card's PSG + PCM, before the recording so that it has them too */
+	if (PBI_VERAX16_enabled && sndn > 0)
+		PBI_VERAX16_SoundMix(POKEYSND_process_buffer, sndn, Sound_out.channels, Sound_out.sample_size);
 #endif
 #if defined(AUDIO_RECORDING)
 	File_Export_WriteAudio((const unsigned char *)POKEYSND_process_buffer, sndn);

@@ -250,6 +250,45 @@ static inline UBYTE compose_pixel_index(UBYTE sprite_z, UBYTE sprite_col,
 }
 
 /* ------------------------------------------------------------------
+ * composer.v's scaled vertical counter, line by line: it restarts at 0 on the
+ * first line of the frame >= VSTART and steps (by VSCALE/128) on line y only if
+ * line y-1 was inside VSTART..VSTOP, while the index is below 480.  With
+ * constant registers this is ((py - VSTART*2) * VSCALE) >> 7; mid-frame
+ * changes of VSTART, VSTOP or VSCALE accumulate as on the chip.
+ * ------------------------------------------------------------------ */
+static int vera_src_fp = 0, vera_src_started = 0, vera_src_upto = -1;
+static int vera_src_idx[VERA_H];
+
+int VERA_VIDEO_SourceLine(int py)
+{
+    VERA_RegSnap rs;
+
+    if (py < 0 || py >= VERA_H)
+        return 0;
+    if (py < vera_src_upto)
+        vera_src_upto = -1;                     /* a new frame */
+    if (py > vera_src_upto) {
+        PBI_VERAX16_GetRegSnap(&rs);
+        while (vera_src_upto < py) {
+            int y = ++vera_src_upto;
+            int vstart = (int)rs.dc[1][2] * 2, vstop = (int)rs.dc[1][3] * 2;
+
+            if (y == 0)
+                vera_src_started = 0;
+            if (!vera_src_started && y >= vstart) {
+                vera_src_started = 1;
+                vera_src_fp = 0;
+            } else if (vera_src_started && (vera_src_fp >> 7) < 480
+                       && y - 1 >= vstart && y - 1 < vstop) {
+                vera_src_fp += rs.dc[0][2];
+            }
+            vera_src_idx[y] = vera_src_fp >> 7;
+        }
+    }
+    return vera_src_idx[py];
+}
+
+/* ------------------------------------------------------------------
  * Render a tile layer.
  * ------------------------------------------------------------------ */
 static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
@@ -277,7 +316,7 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
     ULONG map_base = (ULONG)l_mapbase * 512u;
 
     {
-        int ly_raw = ((py - ay0) * vscale) >> 7;
+        int ly_raw = VERA_VIDEO_SourceLine(py);    /* composer.v counter */
         int ly = (ly_raw + vscroll) & 0xFFF;
         int tile_row = (ly / tile_h) % map_h;
         int tile_fy = ly % tile_h;
@@ -430,7 +469,7 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
     int palette_offset = ((l[4] & 0x0F) << 4) | ((l_config & 0x08) ? 0x80 : 0);
 
     {
-        int ly = ((py - ay0) * vscale) >> 7;
+        int ly = VERA_VIDEO_SourceLine(py);        /* composer.v counter */
         ULONG row_bytes = (ULONG)bitmap_w * (ULONG)bpp / 8u;
         ULONG row_lo = bitmap_base + (ULONG)ly * row_bytes;
 
@@ -529,7 +568,7 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
 
     if (hscale == 0 || vscale == 0)
         return;
-    ly = ((py - ay0) * vscale) >> 7;
+    ly = VERA_VIDEO_SourceLine(py);                /* composer.v counter */
     VERA_VIDEO_SpriteDrawCounts(vram, ly, draw_n);
 
     /* Sprite attributes are at $1FC00-$1FFFF (128 sprites × 8 bytes) */
@@ -634,6 +673,12 @@ static int           vera_dup_src;
 static unsigned int  vera_dup_vver, vera_dup_wcount;
 static VERA_RegSnap  vera_dup_rs;
 
+/* the line whose buffers hold a full render, and the registers it used: a
+ * mid-line DC_VIDEO / HSTOP change recomposes from those buffers (the chip
+ * fetched the layers a line earlier) instead of re-reading VRAM */
+static int           vera_start_py = -1;
+static VERA_RegSnap  vera_start_rs;
+
 static void render_scanline_range_inner(int py, int xstart, int xend)
 {
     VERA_RegSnap rs;
@@ -679,9 +724,14 @@ static void render_scanline_range_inner(int py, int xstart, int xend)
      * (mid-line change) adds to it */
     if (start == 0 && end == VERA_W) {
         unsigned int vver = PBI_VERAX16_GetVideoVersion();
+
+        if (!vera_ref) {
+            vera_start_py = py;
+            vera_start_rs = rs;
+        }
         int inside = (py >= ay0 && py < ay1);
         int vscale = rs.dc[0][2];
-        int src = inside ? ((py - ay0) * vscale) >> 7 : -1;
+        int src = inside ? VERA_VIDEO_SourceLine(py) : -1;
 
         /* DC_VSCALE < 128 shows a source line on several output lines: when
          * the line above shows the same one and nothing was written since it
@@ -935,6 +985,9 @@ int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
  * ------------------------------------------------------------------ */
 void VERA_VIDEO_Reset(void)
 {
+    vera_src_upto = -1;
+    vera_src_started = 0;
+    vera_src_fp = 0;
     memset(vera_layer_fb, 0, sizeof(vera_layer_fb));
     memset(vera_sprite_col_fb, 0, sizeof(vera_sprite_col_fb));
     memset(vera_sprite_z_fb, 0, sizeof(vera_sprite_z_fb));
@@ -958,8 +1011,13 @@ void VERA_VIDEO_Scanline(UWORD scanline)
     if (scanline < VERA_H) {
         /* Nothing that affects the picture was written since this line was
          * last rendered: the buffers are still valid. */
-        if (vera_line_version[scanline] == version)
+        if (vera_line_version[scanline] == version) {
+            /* still valid: nothing visible was written, so the registers
+               are those it was rendered with */
+            vera_start_py = (int)scanline;
+            PBI_VERAX16_GetRegSnap(&vera_start_rs);
             return;
+        }
         vera_line_version[scanline] = version;
     }
     render_scanline_range((int)scanline, 0, VERA_W);
@@ -1015,8 +1073,61 @@ void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart)
     }
 }
 
+/* Recompose the tail of line py from its buffers with the composer registers as
+ * they are now (composer.v: enables, window, border and output mode act per
+ * pixel on the shown line).  Possible when the buffers already hold what the
+ * new settings show: same HSCALE and HSTART (the pixel mapping of this
+ * renderer), nothing enabled that was off at the line start, the window not
+ * wider than then.  Returns FALSE when the tail must be re-rendered. */
+static int vera_midline_recompose(int py, int xstart)
+{
+    VERA_RegSnap rs;
+    const VERA_RegSnap *s0 = &vera_start_rs;
+    const UBYTE *vram;
+    const Uint32 *pal;
+    int ax0, ax1, ay0, ay1, oax1, oay0, oay1, inside_now, inside_old;
+    UBYTE en, oen;
+    size_t row;
+
+    if (py != vera_start_py || py < 0 || py >= VERA_H)
+        return FALSE;
+    PBI_VERAX16_GetRegSnap(&rs);
+    en = rs.dc[0][0] & 0x70u;
+    oen = s0->dc[0][0] & 0x70u;
+    if (rs.dc[0][1] != s0->dc[0][1] || rs.dc[1][0] != s0->dc[1][0] || (en & ~oen))
+        return FALSE;
+    ax0 = (int)rs.dc[1][0] * 4;
+    ax1 = (int)rs.dc[1][1] * 4;   if (ax1 > VERA_W) ax1 = VERA_W;
+    oax1 = (int)s0->dc[1][1] * 4; if (oax1 > VERA_W) oax1 = VERA_W;
+    ay0 = (int)rs.dc[1][2] * 2;   ay1 = (int)rs.dc[1][3] * 2;
+    oay0 = (int)s0->dc[1][2] * 2; oay1 = (int)s0->dc[1][3] * 2;
+    if (ay1 > VERA_H) ay1 = VERA_H;
+    if (oay1 > VERA_H) oay1 = VERA_H;
+    inside_now = py >= ay0 && py < ay1;
+    inside_old = py >= oay0 && py < oay1;
+    if (inside_now && (!inside_old || ax1 > oax1))
+        return FALSE;
+
+    vram = PBI_VERAX16_GetVRAMPtr();
+    pal = vera_palette(vram, rs.dc[0][0]);
+    row = (size_t)py * VERA_W;
+    for (int px = xstart; px < VERA_W; px++) {
+        UBYTE color_idx = 0;
+
+        if (inside_now && px >= ax0 && px < ax1)
+            color_idx = compose_pixel_index((en & 0x40u) ? vera_sprite_z_fb[row + px] : 0,
+                                            vera_sprite_col_fb[row + px],
+                                            (en & 0x10u) ? vera_layer_fb[0][row + px] : 0,
+                                            (en & 0x20u) ? vera_layer_fb[1][row + px] : 0);
+        vera_fb[row + px] = pal[color_idx ? color_idx : rs.dc[0][3]];
+    }
+    return TRUE;
+}
+
 void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart)
 {
+    if (vera_midline_recompose((int)scanline, (int)xstart))
+        return;
     render_scanline_range((int)scanline, (int)xstart, VERA_W);
 }
 

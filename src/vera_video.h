@@ -61,4 +61,8 @@ void VERA_VIDEO_Exit(void);
  * 128 sprites get drawn on scaled sprite line ly (0 = none). */
 void VERA_VIDEO_SpriteDrawCounts(const UBYTE *vram, int ly, UBYTE draw_n[128]);
 
+/* composer.v's scaled vertical counter: the source (layer/sprite) line shown on
+ * output line py of the current frame, accumulated line by line. */
+int VERA_VIDEO_SourceLine(int py);
+
 #endif /* VERA_VIDEO_H_ */
