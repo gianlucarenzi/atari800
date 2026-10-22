@@ -466,6 +466,52 @@ static void render_bitmap_layer(UBYTE *row, const UBYTE *vram, int layer,
 }
 
 /* ------------------------------------------------------------------
+ * Sprite render time (sprite_renderer.v, VERA 48.0.1), timed per clock but
+ * event driven.  The finder takes one clock per attribute entry; a sprite on
+ * the line waits until the renderer is idle (render_busy = start_render_r ||
+ * state != IDLE), then takes 1 clock (SF_START_RENDER).  The renderer takes
+ * 1 clock in IDLE, then per 32-bit word 2 clocks of WAIT_FETCH and 1 clock per
+ * pixel (pixels past x=640 included).  Everything stops 798 clocks after the
+ * line render starts.  VRAM contention (the CPU and the layers have priority)
+ * is not modelled: a fetch is taken as granted at once.
+ * ------------------------------------------------------------------ */
+void VERA_VIDEO_SpriteDrawCounts(const UBYTE *vram, int ly, UBYTE draw_n[128])
+{
+    enum { SPRITE_CLOCKS = 798 };
+    unsigned int tf = 0;                /* finder clock */
+    unsigned int rfree = 0;             /* first clock the renderer is free */
+    int i;
+
+    memset(draw_n, 0, 128);
+    for (i = 0; i < 128 && tf < SPRITE_CLOCKS; i++, tf++) {
+        ULONG addr = 0x1FC00u + (ULONG)i * 8u;
+        UBYTE attr6 = vram[addr + 6];
+        UBYTE attr7 = vram[addr + 7];
+        int width = 8 << ((attr7 >> 4) & 0x03);
+        int height = 8 << (attr7 >> 6);
+        int ppw = (vram[addr + 1] & 0x80) ? 4 : 8;      /* pixels per 32-bit word */
+        int y = vram[addr + 4] | ((vram[addr + 5] & 3) << 8);
+        unsigned int ts, t;
+        int sx, n = 0;
+
+        if (((attr6 >> 2) & 3) == 0) continue;           /* disabled */
+        if (((ly - y) & 0x3FF) >= height) continue;      /* sprite_on_line (10-bit ydiff) */
+        ts = tf > rfree ? tf : rfree;                    /* SF_START_RENDER */
+        if (ts >= SPRITE_CLOCKS) break;
+        tf = ts;
+        t = ts + 2;                                      /* START, then IDLE */
+        for (sx = 0; sx < width; sx++) {
+            if (sx % ppw == 0) t += 2;                   /* WAIT_FETCH */
+            if (t >= SPRITE_CLOCKS) break;               /* render_time_done */
+            t++;
+            n++;
+        }
+        draw_n[i] = (UBYTE)n;
+        rfree = t;
+    }
+}
+
+/* ------------------------------------------------------------------
  * Render sprite layer.
  * ------------------------------------------------------------------ */
 static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
@@ -479,9 +525,12 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
     int vscale = rs->dc[0][2];
     int ly;
 
+    UBYTE draw_n[128];
+
     if (hscale == 0 || vscale == 0)
         return;
     ly = ((py - ay0) * vscale) >> 7;
+    VERA_VIDEO_SpriteDrawCounts(vram, ly, draw_n);
 
     /* Sprite attributes are at $1FC00-$1FFFF (128 sprites × 8 bytes) */
     for (int i = 0; i < 128; i++) {
@@ -525,7 +574,7 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
                 ULONG pixel_addr;
                 UBYTE color_idx;
 
-                if (sx < 0 || sx >= width) continue;
+                if (sx < 0 || sx >= width || sx >= draw_n[i]) continue;   /* render time */
 
                 eff_sx = hflip ? (width - 1 - sx) : sx;
                 if (color_mode == 0) {
@@ -540,6 +589,8 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
                 else {
                     pixel_addr = row_addr + (ULONG)eff_sx;
                     color_idx = vram[pixel_addr & 0x1FFFFu];
+                    if (color_idx != 0 && color_idx < 16)          /* as at 4 bpp */
+                        color_idx = (UBYTE)(color_idx + palette_offset);
                 }
 
                 if (color_idx != 0 && z_depth > z_row[px]) {

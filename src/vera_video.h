@@ -57,4 +57,8 @@ void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart);
 /* Release all SDL resources. */
 void VERA_VIDEO_Exit(void);
 
+/* sprite_renderer.v render time: how many pixels (in screen order) of each of the
+ * 128 sprites get drawn on scaled sprite line ly (0 = none). */
+void VERA_VIDEO_SpriteDrawCounts(const UBYTE *vram, int ly, UBYTE draw_n[128]);
+
 #endif /* VERA_VIDEO_H_ */
