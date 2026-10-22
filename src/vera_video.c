@@ -34,6 +34,10 @@ static UBYTE         vera_sprite_col_fb[VERA_W * VERA_H];
 static UBYTE         vera_sprite_z_fb[VERA_W * VERA_H];
 /* PBI_VERAX16_GetVideoVersion() value used by the last full render of each line */
 static unsigned int  vera_line_version[VERA_H];
+/* composer.v counter (VERA_VIDEO_SourceLine) each line was rendered with: it
+ * depends on the frame so far (a mid-frame VSTART/VSCALE write), not only on
+ * the registers, so an unchanged version is not enough to keep a line */
+static int           vera_line_src[VERA_H];
 /* VRAM each layer read on each line at its last render (one map row or one
  * bitmap row): [lo, hi], lo > hi = nothing. A VRAM write outside the tile
  * data, palette and sprites only re-renders the lines that read it. */
@@ -730,7 +734,6 @@ static void render_scanline_range_inner(int py, int xstart, int xend)
             vera_start_rs = rs;
         }
         int inside = (py >= ay0 && py < ay1);
-        int vscale = rs.dc[0][2];
         int src = inside ? VERA_VIDEO_SourceLine(py) : -1;
 
         /* DC_VSCALE < 128 shows a source line on several output lines: when
@@ -1009,9 +1012,11 @@ void VERA_VIDEO_Scanline(UWORD scanline)
     version = PBI_VERAX16_GetVideoVersion();
 
     if (scanline < VERA_H) {
+        int src = VERA_VIDEO_SourceLine((int)scanline);
+
         /* Nothing that affects the picture was written since this line was
-         * last rendered: the buffers are still valid. */
-        if (vera_line_version[scanline] == version) {
+         * last rendered, with the same source line: the buffers are still valid. */
+        if (vera_line_version[scanline] == version && vera_line_src[scanline] == src) {
             /* still valid: nothing visible was written, so the registers
                are those it was rendered with */
             vera_start_py = (int)scanline;
@@ -1019,6 +1024,7 @@ void VERA_VIDEO_Scanline(UWORD scanline)
             return;
         }
         vera_line_version[scanline] = version;
+        vera_line_src[scanline] = src;
     }
     render_scanline_range((int)scanline, 0, VERA_W);
 }
