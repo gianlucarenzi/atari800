@@ -1373,6 +1373,16 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
         return 0;
     if ((vera_dc[0][0] & 0x40u) == 0 || vera_dc[0][2] == 0)
         return 0;
+    /* no enabled sprite with a collision mask: nothing can collide (most
+       programs), skip the per-pixel pass */
+    for (i = 0; i < 128u; i++)
+    {
+        UBYTE attr6 = vera_vram[0x1FC06u + i * 8u];
+        if ((attr6 & 0xF0u) != 0u && (attr6 & 0x0Cu) != 0u)
+            break;
+    }
+    if (i == 128u)
+        return 0;
     /* sprites live in the scaled layer coordinates (as vera_video.c) */
     line_y = VERA_VIDEO_SourceLine((int)py);    /* composer.v counter */
 
