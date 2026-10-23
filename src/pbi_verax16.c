@@ -124,7 +124,7 @@ static off_t  verax16_sdcard_size       = 0;
 static int    verax16_sdcard_writable   = FALSE;
 
 int PBI_VERAX16_enabled = FALSE;
-static int verax16_cs    = FALSE;  /* chip select: TRUE after $D1FF written with device mask */
+static int verax16_cs    = FALSE;  /* card selected: TRUE after $D1FF written with device mask */
 
 /* ------------------------------------------------------------------ */
 /* VERA chip constants                                                  */
@@ -2706,6 +2706,10 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
 int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 {
     int offset = (int)addr - (int)VERA_REG_BASE;
+    /* Atari PBI rule: a device not selected through its $D1FF bit does
+     * not answer (the card asserts DEV_SEL_N only while selected). */
+    if (!verax16_cs)
+        return PBI_NOT_HANDLED;
     if (offset >= 0 && offset < (int)VERA_REG_COUNT)
     {
         if (vera_dead_lines)
@@ -2724,6 +2728,8 @@ int PBI_VERAX16_D1GetByte(UWORD addr, int no_side_effects)
 void PBI_VERAX16_D1PutByte(UWORD addr, UBYTE byte)
 {
     int offset = (int)addr - (int)VERA_REG_BASE;
+    if (!verax16_cs)
+        return;     /* not selected: the card ignores the bus */
     if (offset >= 0 && offset < (int)VERA_REG_COUNT)
     {
         if (vera_dead_lines)
@@ -2754,16 +2760,11 @@ int PBI_VERAX16_D1ffPutByte(UBYTE byte)
                 PBI_VERAX16_enabled = 1;
             }
             else
-            {
-                /* No ROM image: nothing to map at $D800 (the Math Pack
-                 * stays), but the VERA registers keep answering, as on
-                 * the real card. */
                 VERAX16_LOG(0, "VeraX16: no ROM loaded, $D800 not mapped");
-                verax16_cs = FALSE;
-                return PBI_NOT_HANDLED;
-            }
         }
-        return 0;
+        /* No ROM image: nothing to map at $D800 (the Math Pack stays),
+         * but the card is selected and the VERA registers answer. */
+        return verax16_rom != NULL ? 0 : PBI_NOT_HANDLED;
     }
 
     if (verax16_cs)
