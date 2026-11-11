@@ -35,6 +35,9 @@
 #include "pbi_verax16.h"
 #endif
 #include "util.h"
+#ifdef AUDIO_RECORDING
+#include "file_export.h"
+#endif
 
 #define DEBUG 0 || __MINT__
 
@@ -405,6 +408,12 @@ static void UpdateSyncBuffer(void)
 	}
 
 	if (Atari800_turbo && sync_est_fill > sync_max_fill) {
+#ifdef AUDIO_RECORDING
+		/* When recording, still produce the samples: they are written to
+		   the file as they are made. Only the sound output skips them. */
+		if (File_Export_IsRecording())
+			POKEYSND_UpdateProcessBuffer();
+#endif
 		PLATFORM_SoundUnlock();
 		return;
 	}

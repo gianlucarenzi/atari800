@@ -185,11 +185,12 @@ static void SetVideoMode(int w, int h, int bpp, int windowed)
 {
 #if SDL2
 	Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN;
-	if (!windowed) {
+	int new_fullscreen = !windowed;
+	if (new_fullscreen) {
 		flags |= SDL_WINDOW_FULLSCREEN;
 	}
 
-	if (SDL_VIDEO_wnd && (!SDL_VIDEO_screen || SDL_VIDEO_screen->flags != flags)) {
+	if (SDL_VIDEO_wnd && (!SDL_VIDEO_screen || fullscreen != new_fullscreen)) {
 		SDL_DestroyWindow(SDL_VIDEO_wnd);
 		SDL_VIDEO_wnd = 0;
 	}
@@ -201,13 +202,24 @@ static void SetVideoMode(int w, int h, int bpp, int windowed)
 			Log_flushlog();
 			exit(-1);
 		}
-		SDL_VIDEO_renderer = SDL_CreateRenderer(SDL_VIDEO_wnd, -1, SDL_RENDERER_PRESENTVSYNC);
+		SDL_VIDEO_renderer = SDL_CreateRenderer(SDL_VIDEO_wnd, -1, 0);
 		if (!SDL_VIDEO_renderer) {
 			Log_print("Creating a renderer failed: %s", SDL_GetError());
 			Log_flushlog();
 			exit(-1);
 		}
 	}
+	else {
+		int cw, ch;
+		SDL_GetWindowSize(SDL_VIDEO_wnd, &cw, &ch);
+		if (w != cw || h != ch)
+			SDL_SetWindowSize(SDL_VIDEO_wnd, w, h);
+	}
+
+	fullscreen = new_fullscreen;
+
+	SDL_VIDEO_vsync_available =
+		SDL_RenderSetVSync(SDL_VIDEO_renderer, SDL_VIDEO_vsync ? 1 : 0) == 0;
 
 	int width = 0, height = 0;
 	if (SDL_GetRendererOutputSize(SDL_VIDEO_renderer, &width, &height)) {
@@ -275,6 +287,7 @@ void SDL_VIDEO_SW_SetVideoMode(VIDEOMODE_resolution_t const *res, int windowed, 
 #if SDL2
 	SetVideoMode(res->width, res->height, 0, windowed);
 	SDL_VIDEO_SW_bpp = 32;
+	UpdatePaletteLookup(mode);
 	SDL_SetRenderDrawColor(SDL_VIDEO_renderer, 0, 0, 0, 255);
 	SDL_RenderClear(SDL_VIDEO_renderer);
 	SDL_RenderPresent(SDL_VIDEO_renderer);

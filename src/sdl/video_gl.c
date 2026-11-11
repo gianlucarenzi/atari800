@@ -672,6 +672,10 @@ static int SetVideoMode(int w, int h, int windowed)
 	}
 
 	if (!SDL_VIDEO_wnd) {
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+
 		SDL_VIDEO_wnd = SDL_CreateWindow(Atari800_TITLE, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
 		if (!SDL_VIDEO_wnd) {
 			Log_print("Creating an OpenGL window with size %dx%d failed: %s", w, h, SDL_GetError());
@@ -702,6 +706,8 @@ static int SetVideoMode(int w, int h, int windowed)
 		if (w != cw || h != ch) {
 			SDL_SetWindowSize(SDL_VIDEO_wnd, w, h);
 		}
+		SDL_VIDEO_screen->w = w;
+		SDL_VIDEO_screen->h = h;
 	}
 
 	int width = 0, height = 0;
@@ -711,11 +717,6 @@ static int SetVideoMode(int w, int h, int windowed)
 	screen_width = width;
 	screen_height = height;
 	VIDEOMODE_dest_scale_factor = (double)width / w;
-
-	SDL_VIDEO_vsync_available = TRUE;
-	if (SDL_VIDEO_vsync) {
-		SDL_GL_SetSwapInterval(1); // VSync
-	}
 
 #else
 	Uint32 flags = SDL_OPENGL | (windowed ? SDL_RESIZABLE : SDL_OpenGL_FULLSCREEN);
@@ -997,6 +998,11 @@ int SDL_VIDEO_GL_SetVideoMode(VIDEOMODE_resolution_t const *res, int windowed, V
 		InitGlContext();
 		context_updated = TRUE;
 	}
+
+#if SDL2
+	SDL_VIDEO_vsync_available =
+		SDL_GL_SetSwapInterval(SDL_VIDEO_vsync ? 1 : 0) == 0;
+#endif
 
 	if (isnew) {
 		FreeTexture();
