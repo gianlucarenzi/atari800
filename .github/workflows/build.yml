@@ -99,9 +99,9 @@ jobs:
         rm -f "$APPDIR"/usr/lib/libdrm*.so.* "$APPDIR"/usr/lib/libgbm*.so.* "$APPDIR"/usr/lib/libgallium*.so.* \
               "$APPDIR"/usr/lib/libGL.so.* "$APPDIR"/usr/lib/libGLX.so.* "$APPDIR"/usr/lib/libEGL.so.* "$APPDIR"/usr/lib/libGLdispatch.so.* 2>/dev/null || true
 
-        curl -sL "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64" \
+        curl -sL "https://github.com/gianlucarenzi/type2-runtime/releases/download/continuous/runtime-x86_64" \
           -o /tmp/runtime-x86_64
-        curl -sL "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" \
+        curl -sL "https://github.com/gianlucarenzi/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
           -o /tmp/appimagetool
         chmod +x /tmp/appimagetool
         APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool --runtime-file /tmp/runtime-x86_64 "$APPDIR" "Atari800-${V}-x86_64.AppImage"
@@ -349,9 +349,9 @@ jobs:
             rm -f \"\$APPDIR\"/usr/lib/libdrm*.so.* \"\$APPDIR\"/usr/lib/libgbm*.so.* \"\$APPDIR\"/usr/lib/libgallium*.so.* \
                   \"\$APPDIR\"/usr/lib/libGL.so.* \"\$APPDIR\"/usr/lib/libGLX.so.* \"\$APPDIR\"/usr/lib/libEGL.so.* \"\$APPDIR\"/usr/lib/libGLdispatch.so.* 2>/dev/null || true
 
-            curl -sL \"https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-i686\" \
+            curl -sL \"https://github.com/gianlucarenzi/type2-runtime/releases/download/continuous/runtime-i686\" \
               -o /tmp/runtime-i686
-            curl -sL \"https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-i686.AppImage\" \
+            curl -sL \"https://github.com/gianlucarenzi/appimagetool/releases/download/continuous/appimagetool-i686.AppImage\" \
               -o /tmp/appimagetool
             chmod +x /tmp/appimagetool
             APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool --runtime-file /tmp/runtime-i686 \"\$APPDIR\" \"Atari800-\${V}-i386.AppImage\"
