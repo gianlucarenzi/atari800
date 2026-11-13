@@ -16,6 +16,7 @@
 #include "vera_video.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef SDL2
 
@@ -54,15 +55,57 @@ static Uint32        vera_bucket_lines[VERA_BUCKETS][VERA_LINE_WORDS];
  * needs nothing written since that one was rendered */
 static unsigned int  vera_vram_wcount = 0;
 
-/* -DVERA_VIDEO_CHECK: every line is rendered again with the reference code
- * (no fast tile path, no line copy, palette decoded per pixel) and the two
- * are compared; without it vera_ref is the constant 0 */
-#ifdef VERA_VIDEO_CHECK
+/* vera_ref = 1: the reference code (no fast tile path, no line copy, palette
+ * decoded per pixel), slow, for the checks: -DVERA_VIDEO_CHECK renders again
+ * with it every line rendered with FAST and compares, and compares every frame
+ * shown with all its lines rendered again (vera_check_frame).  EXACT does not
+ * need it: the tile fast path and the palette cache give the same pixels
+ * (checked); EXACT only never keeps nor copies a line */
 static int           vera_ref = 0;
+#ifdef VERA_VIDEO_CHECK
 static unsigned long vera_check_lines = 0, vera_check_bad = 0;
-#else
-#define vera_ref 0
+static unsigned long vera_check_frames = 0, vera_check_frames_bad = 0;
 #endif
+
+/* VeraRenderer (vera_video.h): the mode asked for, and whether lines are
+ * rendered exactly now; AUTO measures EXACT for VERA_VIDEO_AUTO_FRAMES */
+#define VERA_VIDEO_AUTO_FRAMES 180              /* EXACT measured over 3 s */
+#define VERA_VIDEO_AUTO_PROBE  30               /* FAST: EXACT tried for 0.5 s */
+#define VERA_VIDEO_AUTO_PERIOD 600              /* every 10 s */
+#define VERA_VIDEO_AUTO_BUDGET 0.5              /* of a VERA frame (16.8 ms) */
+static int           vera_mode = VERA_RENDER_AUTO;
+static int           vera_exact = 1;
+static int           vera_auto_frames = 0;
+static double        vera_auto_ns = 0.0;
+static int           vera_auto_probe = 0;       /* 1: FAST trying EXACT */
+static int           vera_auto_shown = -1;      /* the mode last printed (-1: none yet) */
+
+static double vera_now_ns(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+}
+
+void VERA_VIDEO_SetRenderer(int mode)
+{
+    if (mode < VERA_RENDER_EXACT || mode > VERA_RENDER_AUTO)
+        return;
+    vera_mode = mode;
+    vera_exact = mode != VERA_RENDER_FAST;
+    vera_auto_frames = 0;
+    vera_auto_ns = 0.0;
+    vera_auto_probe = 0;
+    vera_auto_shown = mode == VERA_RENDER_AUTO ? -1 : vera_exact;
+    memset(vera_line_version, 0, sizeof(vera_line_version));   /* everything again */
+}
+
+int VERA_VIDEO_GetRenderer(void)
+{
+    return vera_exact ? VERA_RENDER_EXACT : VERA_RENDER_FAST;
+}
+
 
 /* 0 = not yet tried, 1 = open, -1 = permanently disabled */
 static int           vera_open = 0;
@@ -611,7 +654,17 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
             int eff_sy = vflip ? (height - 1 - sy) : sy;
             ULONG row_addr = sprite_addr + ((ULONG)eff_sy << (width_log2 - (1 - color_mode)));
 
-            for (int px = xstart; px < xend; px++) {
+            /* only the pixels the sprite can cover: sx = ((px - ax0) * hscale
+             * >> 7) - x is in [0, width) for px in [plo, phi) (the test below
+             * stays: the same pixels, without walking the whole line) */
+            int plo = ax0 + (int)(((long)x * 128 + hscale - 1) / hscale);
+            int phi = ax0 + (int)(((long)(x + width) * 128 + hscale - 1) / hscale);
+
+            if (x < 0)
+                plo = ax0 - (int)(((long)-x * 128) / hscale) - 1;
+            if (plo < xstart) plo = xstart;
+            if (phi > xend) phi = xend;
+            for (int px = plo; px < phi; px++) {
                 int sx = (((px - ax0) * hscale) >> 7) - x;
                 int eff_sx;
                 ULONG pixel_addr;
@@ -740,7 +793,7 @@ static void render_scanline_range_inner(int py, int xstart, int xend)
          * the line above shows the same one and nothing was written since it
          * was rendered (palette writes bump the video version), this line is
          * the same, copy it */
-        if (!vera_ref && vera_dup_py >= 0 && py == vera_dup_py + 1 && src == vera_dup_src
+        if (!vera_ref && !vera_exact && vera_dup_py >= 0 && py == vera_dup_py + 1 && src == vera_dup_src
             && vver == vera_dup_vver && vera_vram_wcount == vera_dup_wcount
             && memcmp(&rs, &vera_dup_rs, sizeof rs) == 0) {
             size_t o = (size_t)py * VERA_W;
@@ -828,9 +881,16 @@ static void render_scanline_range(int py, int xstart, int xend)
     if (py < 0 || py >= VERA_H)
         return;
     vera_line_buckets(py, 0);
-    render_scanline_range_inner(py, xstart, xend);
+    if (vera_mode == VERA_RENDER_AUTO && vera_exact) {
+        double t0 = vera_now_ns();
+
+        render_scanline_range_inner(py, xstart, xend);
+        vera_auto_ns += vera_now_ns() - t0;
+    } else {
+        render_scanline_range_inner(py, xstart, xend);
+    }
 #ifdef VERA_VIDEO_CHECK
-    {
+    if (!vera_exact) {
         static UBYTE l0[VERA_W], l1[VERA_W], sc[VERA_W], sz[VERA_W];
         static Uint32 fb[VERA_W];
         size_t o = (size_t)py * VERA_W;
@@ -843,6 +903,11 @@ static void render_scanline_range(int py, int xstart, int xend)
         vera_ref = 1;
         render_scanline_range_inner(py, xstart, xend);
         vera_ref = 0;
+        memcpy(vera_layer_fb[0] + o, l0, VERA_W);      /* the cached render stays: */
+        memcpy(vera_layer_fb[1] + o, l1, VERA_W);      /* the check shows its faults */
+        memcpy(vera_sprite_col_fb + o, sc, VERA_W);
+        memcpy(vera_sprite_z_fb + o, sz, VERA_W);
+        memcpy(vera_fb + o, fb, sizeof fb);
         ++vera_check_lines;
         if (memcmp(l0, vera_layer_fb[0] + o, VERA_W) || memcmp(l1, vera_layer_fb[1] + o, VERA_W)
             || memcmp(sc, vera_sprite_col_fb + o, VERA_W) || memcmp(sz, vera_sprite_z_fb + o, VERA_W)
@@ -1016,7 +1081,7 @@ void VERA_VIDEO_Scanline(UWORD scanline)
 
         /* Nothing that affects the picture was written since this line was
          * last rendered, with the same source line: the buffers are still valid. */
-        if (vera_line_version[scanline] == version && vera_line_src[scanline] == src) {
+        if (!vera_exact && vera_line_version[scanline] == version && vera_line_src[scanline] == src) {
             /* still valid: nothing visible was written, so the registers
                are those it was rendered with */
             vera_start_py = (int)scanline;
@@ -1137,9 +1202,116 @@ void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart)
     render_scanline_range((int)scanline, (int)xstart, VERA_W);
 }
 
+/* AUTO, at the end of every frame.  Two measures: the host time EXACT
+ * spends rendering, and the real time between two VERA frames (16.8 ms when
+ * the emulator keeps up; gaps over 100 ms = a pause, not counted).  EXACT is
+ * judged every VERA_VIDEO_AUTO_FRAMES frames and stays while it costs at most
+ * VERA_VIDEO_AUTO_BUDGET of a frame and the emulator keeps up (3 % slack),
+ * else FAST; FAST tries EXACT for VERA_VIDEO_AUTO_PROBE frames every
+ * VERA_VIDEO_AUTO_PERIOD and takes it back with a margin (under 70 % of the
+ * budget, keeping up).  A change of mode is printed. */
+#define VERA_FRAME_MS 16.8
+static double vera_auto_last = 0.0, vera_auto_wall = 0.0;
+static int    vera_auto_wn = 0;
+
+static void vera_auto_set(int exact, double ms, double wall)
+{
+    if (exact != vera_auto_shown)
+        fprintf(stderr, "VERA renderer auto: exact costs %.2f ms a frame, a frame every %.2f ms -> %s\n",
+                ms, wall, exact ? "exact" : "fast");
+    vera_auto_shown = exact;
+    vera_exact = exact;
+    vera_auto_frames = 0;
+    vera_auto_ns = 0.0;
+    vera_auto_wall = 0.0;
+    vera_auto_wn = 0;
+    memset(vera_line_version, 0, sizeof(vera_line_version));
+}
+
+static void vera_auto_frame(void)
+{
+    const double budget = VERA_VIDEO_AUTO_BUDGET * VERA_FRAME_MS;
+    double now = vera_now_ns(), ms, wall;
+    int behind;
+
+    if (vera_auto_last > 0.0 && now - vera_auto_last < 100e6) {
+        vera_auto_wall += now - vera_auto_last;
+        vera_auto_wn++;
+    }
+    vera_auto_last = now;
+    vera_auto_frames++;
+    if (vera_exact && vera_auto_frames >= (vera_auto_probe ? VERA_VIDEO_AUTO_PROBE : VERA_VIDEO_AUTO_FRAMES)) {
+        ms = vera_auto_ns / vera_auto_frames / 1e6;
+        wall = vera_auto_wn ? vera_auto_wall / vera_auto_wn / 1e6 : VERA_FRAME_MS;
+        behind = wall > VERA_FRAME_MS * 1.03;
+        if (vera_auto_probe) {
+            vera_auto_probe = 0;
+            vera_auto_set(ms < 0.7 * budget && !behind, ms, wall);
+        } else {
+            vera_auto_set(ms <= budget && !behind, ms, wall);
+        }
+    } else if (!vera_exact && vera_auto_frames >= VERA_VIDEO_AUTO_PERIOD) {
+        vera_exact = 1;                         /* the probe (vera_auto_shown stays FAST) */
+        vera_auto_probe = 1;
+        vera_auto_frames = 0;
+        vera_auto_ns = 0.0;
+        vera_auto_wall = 0.0;
+        vera_auto_wn = 0;
+        memset(vera_line_version, 0, sizeof(vera_line_version));
+    }
+}
+
+#ifdef VERA_VIDEO_CHECK
+/* the whole frame as shown against every line rendered again now from VRAM
+ * (FAST only): a line the cache kept or copied wrongly shows here.  Lines
+ * whose registers or VRAM changed during the frame differ by right: the
+ * count is a hint, the lines are printed for the first frames */
+static void vera_check_frame(void)
+{
+    static UBYTE l0[VERA_W], l1[VERA_W], sc[VERA_W], sz[VERA_W];
+    static uint32_t fb[VERA_W];
+    int py, bad = 0, first = -1, last = -1;
+
+    for (py = 0; py < VERA_H; py++) {
+        size_t o = (size_t)py * VERA_W;
+
+        memcpy(l0, vera_layer_fb[0] + o, VERA_W);
+        memcpy(l1, vera_layer_fb[1] + o, VERA_W);
+        memcpy(sc, vera_sprite_col_fb + o, VERA_W);
+        memcpy(sz, vera_sprite_z_fb + o, VERA_W);
+        memcpy(fb, vera_fb + o, sizeof fb);
+        vera_ref = 1;
+        render_scanline_range_inner(py, 0, VERA_W);
+        vera_ref = 0;
+        if (memcmp(fb, vera_fb + o, sizeof fb)) {
+            bad++;
+            if (first < 0)
+                first = py;
+            last = py;
+        }
+        memcpy(vera_layer_fb[0] + o, l0, VERA_W);
+        memcpy(vera_layer_fb[1] + o, l1, VERA_W);
+        memcpy(vera_sprite_col_fb + o, sc, VERA_W);
+        memcpy(vera_sprite_z_fb + o, sz, VERA_W);
+        memcpy(vera_fb + o, fb, sizeof fb);
+    }
+    vera_check_frames++;
+    if (bad && ++vera_check_frames_bad <= 50)
+        fprintf(stderr, "VERA_VIDEO_CHECK: frame %lu: %d lines differ (%d-%d)\n",
+                vera_check_frames, bad, first, last);
+}
+#endif
+
 void VERA_VIDEO_Frame(void)
 {
     if (!PBI_VERAX16_enabled) return;
+
+    if (vera_mode == VERA_RENDER_AUTO)
+        vera_auto_frame();
+#ifdef VERA_VIDEO_CHECK
+    if (!vera_exact)
+        vera_check_frame();
+#endif
 
     if (!vera_open_window()) return;
 
@@ -1182,4 +1354,6 @@ void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart) { (void)scanline; (void)xs
 void VERA_VIDEO_Frame(void) {}
 void VERA_VIDEO_VSync(void) {}
 void VERA_VIDEO_Exit(void) {}
+void VERA_VIDEO_SetRenderer(int mode) { (void)mode; }
+int  VERA_VIDEO_GetRenderer(void) { return VERA_RENDER_EXACT; }
 #endif

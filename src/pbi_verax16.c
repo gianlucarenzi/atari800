@@ -2437,6 +2437,19 @@ static void vera_write_reg(int offset, UBYTE byte)
 /* PBI device interface                                                 */
 /* ------------------------------------------------------------------ */
 
+/* -verax16-renderer / VERAX16_RENDERER: the mode asked for (vera_video.h) */
+static const char *const verax16_renderer_names[] = { "exact", "fast", "auto" };
+static int verax16_renderer = VERA_RENDER_AUTO;
+
+static int verax16_renderer_parse(const char *s)
+{
+    int i;
+    for (i = 0; i < 3; i++)
+        if (strcmp(s, verax16_renderer_names[i]) == 0)
+            return i;
+    return -1;
+}
+
 int PBI_VERAX16_Initialise(int *argc, char *argv[])
 {
     int i, j;
@@ -2520,6 +2533,17 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
             recognized = TRUE;
         }
         else
+        if (strcmp(argv[i], "-verax16-renderer") == 0 && i + 1 < *argc)
+        {
+            int n = verax16_renderer_parse(argv[i + 1]);
+            if (n >= 0) {
+                verax16_renderer = n;
+                VERA_VIDEO_SetRenderer(n);
+            } else
+                Log_print("VERAX16: invalid -verax16-renderer %s (exact, fast, auto)", argv[i + 1]);
+            i++;
+            recognized = TRUE;
+        }        else
         if (strcmp(argv[i], "-verax16-sdcard") == 0 && i + 1 < *argc)
         {
             Util_strlcpy(verax16_sdcard_filename, argv[i + 1],
@@ -2543,6 +2567,9 @@ int PBI_VERAX16_Initialise(int *argc, char *argv[])
                 Log_print("\t                    100 = full volume voice as loud as a POKEY channel at volume 15");
                 Log_print("\t-verax16-scale N    VERA window size multiplier, 1-4 (default: 1)");
                 Log_print("\t                    for high-DPI screens; reduced if the window would not fit");
+                Log_print("\t-verax16-renderer M VERA picture: exact = every line of every frame rendered as the chip does,");
+                Log_print("\t                    fast = lines kept until something they show changes, auto (default) =");
+                Log_print("\t                    exact while it costs at most half a frame and the emulator keeps up, else fast");
                 Log_print("\t-verax16-sdcard F   Raw SD image file (for example from dd) exposed through VERA SPI");
                 Log_print("\t                    The Atari driver handles MBR/GPT/filesystems on top of the raw 512-byte blocks");
             }
@@ -2668,6 +2695,15 @@ int PBI_VERAX16_ReadConfig(char *string, char *ptr)
             verax16_psg_volume = n;
     }
     else
+    if (strcmp(string, "VERAX16_RENDERER") == 0)
+    {
+        int n = verax16_renderer_parse(ptr);
+        if (n >= 0) {
+            verax16_renderer = n;
+            VERA_VIDEO_SetRenderer(n);
+        }
+    }
+    else
     if (strcmp(string, "VERAX16_SCALE") == 0)
     {
         int n = atoi(ptr);
@@ -2697,6 +2733,7 @@ void PBI_VERAX16_WriteConfig(FILE *fp)
     fprintf(fp, "VERAX16_CONFIG_MS=%d\n", verax16_config_ms);
     fprintf(fp, "VERAX16_PSG_VOLUME=%d\n", verax16_psg_volume);
     fprintf(fp, "VERAX16_SCALE=%d\n", VERA_VIDEO_GetScale());
+    fprintf(fp, "VERAX16_RENDERER=%s\n", verax16_renderer_names[verax16_renderer]);
 }
 
 /* ------------------------------------------------------------------ */

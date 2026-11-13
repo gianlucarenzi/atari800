@@ -57,6 +57,18 @@ void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart);
 /* Release all SDL resources. */
 void VERA_VIDEO_Exit(void);
 
+/* Renderer: EXACT renders every line of every frame from VRAM and the
+ * registers as the chip does (no line kept, no line copied); FAST keeps a
+ * line until something it shows is written; AUTO starts EXACT and keeps it
+ * while it costs at most half a VERA frame of host time and the emulator
+ * keeps up with real time, else FAST (tried again every 10 s; vera_video.c
+ * vera_auto_frame).  VERA_VIDEO_GetRenderer() = the mode in use now. */
+#define VERA_RENDER_EXACT 0
+#define VERA_RENDER_FAST  1
+#define VERA_RENDER_AUTO  2
+void VERA_VIDEO_SetRenderer(int mode);
+int  VERA_VIDEO_GetRenderer(void);
+
 /* sprite_renderer.v render time: how many pixels (in screen order) of each of the
  * 128 sprites get drawn on scaled sprite line ly (0 = none). */
 void VERA_VIDEO_SpriteDrawCounts(const UBYTE *vram, int ly, UBYTE draw_n[128]);

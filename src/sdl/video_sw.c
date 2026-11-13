@@ -218,8 +218,14 @@ static void SetVideoMode(int w, int h, int bpp, int windowed)
 
 	fullscreen = new_fullscreen;
 
+#if SDL_VERSION_ATLEAST(2, 0, 18)
 	SDL_VIDEO_vsync_available =
 		SDL_RenderSetVSync(SDL_VIDEO_renderer, SDL_VIDEO_vsync ? 1 : 0) == 0;
+#else
+	/* SDL < 2.0.18 (Debian 11: 2.0.14) has no SDL_RenderSetVSync: the vsync
+	   of the renderer stays as it was created */
+	SDL_VIDEO_vsync_available = FALSE;
+#endif
 
 	int width = 0, height = 0;
 	if (SDL_GetRendererOutputSize(SDL_VIDEO_renderer, &width, &height)) {
